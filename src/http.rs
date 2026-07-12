@@ -18,7 +18,11 @@ pub struct HttpResponse {
 impl HttpResponse {
     /// Создаёт ответ без `Retry-After` (удобно для транспортов/тестов, которым заголовок не нужен).
     pub fn new(status: u16, body: Vec<u8>) -> Self {
-        Self { status, body, retry_after: None }
+        Self {
+            status,
+            body,
+            retry_after: None,
+        }
     }
 }
 
@@ -32,7 +36,9 @@ pub trait HttpTransport: Send + Sync {
     /// не поддерживается — реализуйте, если нужны GET-методы SDK.
     fn get(&self, url: &str, headers: &[(String, String)]) -> Result<HttpResponse> {
         let _ = (url, headers);
-        Err(Error::Config("GET не поддерживается этим транспортом; реализуйте HttpTransport::get".into()))
+        Err(Error::Config(
+            "GET не поддерживается этим транспортом; реализуйте HttpTransport::get".into(),
+        ))
     }
 }
 
@@ -77,10 +83,23 @@ pub(crate) fn parse_response(
 
     // Конверт ошибки.
     if let Some(err) = parsed.get("error") {
-        let code = err.get("code").and_then(|c| c.as_str()).unwrap_or("unknown").to_string();
-        let message =
-            err.get("message").and_then(|m| m.as_str()).unwrap_or("Неизвестная ошибка").to_string();
-        return Err(Error::Api { code, message, status, raw: text.into_owned(), retry_after });
+        let code = err
+            .get("code")
+            .and_then(|c| c.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+        let message = err
+            .get("message")
+            .and_then(|m| m.as_str())
+            .unwrap_or("Неизвестная ошибка")
+            .to_string();
+        return Err(Error::Api {
+            code,
+            message,
+            status,
+            raw: text.into_owned(),
+            retry_after,
+        });
     }
 
     // Не-2xx без конверта ошибки. Сюда попадает и 429 (тело {"state":1,"message":"rate limit exceeded"}

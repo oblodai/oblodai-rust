@@ -9,7 +9,10 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn now() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
 }
 
 // ─────────────────────────── Мок-транспорт ───────────────────────────
@@ -30,13 +33,21 @@ struct MockTransport {
 
 impl MockTransport {
     fn new(responses: Vec<MockResponse>) -> Arc<Self> {
-        Arc::new(Self { responses: Mutex::new(responses), calls: Mutex::new(Vec::new()) })
+        Arc::new(Self {
+            responses: Mutex::new(responses),
+            calls: Mutex::new(Vec::new()),
+        })
     }
     fn call_count(&self) -> usize {
         self.calls.lock().unwrap().len()
     }
     fn last_headers(&self) -> Vec<(String, String)> {
-        self.calls.lock().unwrap().last().map(|c| c.1.clone()).unwrap_or_default()
+        self.calls
+            .lock()
+            .unwrap()
+            .last()
+            .map(|c| c.1.clone())
+            .unwrap_or_default()
     }
 }
 
@@ -48,7 +59,11 @@ impl MockTransport {
             String::from_utf8_lossy(body).to_string(),
         ));
         let mut r = self.responses.lock().unwrap();
-        let resp = if r.len() > 1 { r.remove(0) } else { r[0].clone() };
+        let resp = if r.len() > 1 {
+            r.remove(0)
+        } else {
+            r[0].clone()
+        };
         HttpResponse {
             status: resp.status,
             body: resp.body.into_bytes(),
@@ -73,12 +88,18 @@ impl HttpTransport for MockTransport {
 }
 
 fn ok(body: serde_json::Value) -> MockResponse {
-    MockResponse { status: 200, body: body.to_string(), retry_after: None }
+    MockResponse {
+        status: 200,
+        body: body.to_string(),
+        retry_after: None,
+    }
 }
 
 fn client_with(t: Arc<MockTransport>) -> Client {
     Client::with_transport(
-        Config::new("pub_1", "sec_1").base_url("https://api.test").retry(None),
+        Config::new("pub_1", "sec_1")
+            .base_url("https://api.test")
+            .retry(None),
         t,
     )
     .unwrap()
@@ -104,14 +125,20 @@ fn verify_webhook_accepts_valid() {
     let ts = now().to_string();
     let body = b"{\"type\":\"payment\",\"status\":\"paid\"}";
     let sig = compute_webhook_signature(secret, &ts, body);
-    let headers = WebhookHeaders { timestamp: &ts, signature: &sig };
+    let headers = WebhookHeaders {
+        timestamp: &ts,
+        signature: &sig,
+    };
     assert!(verify_webhook(secret, body, &headers, &VerifyOptions::default()).is_ok());
 }
 
 #[test]
 fn verify_webhook_rejects_bad_signature() {
     let ts = now().to_string();
-    let headers = WebhookHeaders { timestamp: &ts, signature: "deadbeef" };
+    let headers = WebhookHeaders {
+        timestamp: &ts,
+        signature: "deadbeef",
+    };
     let err = verify_webhook("wh", b"{}", &headers, &VerifyOptions::default());
     assert!(matches!(err, Err(Error::Signature(_))));
 }
@@ -122,14 +149,20 @@ fn verify_webhook_rejects_replay() {
     let old = (now() - 3600).to_string();
     let body = b"{\"status\":\"paid\"}";
     let sig = compute_webhook_signature(secret, &old, body);
-    let headers = WebhookHeaders { timestamp: &old, signature: &sig };
+    let headers = WebhookHeaders {
+        timestamp: &old,
+        signature: &sig,
+    };
 
     // с проверкой свежести — отклонить
     let err = verify_webhook(
         secret,
         body,
         &headers,
-        &VerifyOptions { max_age_seconds: 300, now: None },
+        &VerifyOptions {
+            max_age_seconds: 300,
+            now: None,
+        },
     );
     assert!(matches!(err, Err(Error::Signature(_))));
 
@@ -138,7 +171,10 @@ fn verify_webhook_rejects_replay() {
         secret,
         body,
         &headers,
-        &VerifyOptions { max_age_seconds: 0, now: None }
+        &VerifyOptions {
+            max_age_seconds: 0,
+            now: None
+        }
     )
     .is_ok());
 }
@@ -149,7 +185,10 @@ fn construct_event_parses_body() {
     let ts = now().to_string();
     let body = b"{\"type\":\"payment\",\"status\":\"paid\",\"uuid\":\"abc\"}";
     let sig = compute_webhook_signature(secret, &ts, body);
-    let headers = WebhookHeaders { timestamp: &ts, signature: &sig };
+    let headers = WebhookHeaders {
+        timestamp: &ts,
+        signature: &sig,
+    };
 
     let event: serde_json::Value =
         construct_event(secret, body, &headers, &VerifyOptions::default()).unwrap();
@@ -180,7 +219,11 @@ fn client_signs_and_unwraps() {
     let has = |name: &str| headers.iter().any(|(k, _)| k == name);
     assert!(has("X-Public-Id"));
     assert!(has("X-Timestamp"));
-    let sig = headers.iter().find(|(k, _)| k == "X-Signature").map(|(_, v)| v.clone()).unwrap();
+    let sig = headers
+        .iter()
+        .find(|(k, _)| k == "X-Signature")
+        .map(|(_, v)| v.clone())
+        .unwrap();
     assert_eq!(sig.len(), 64);
 }
 
@@ -188,7 +231,8 @@ fn client_signs_and_unwraps() {
 fn client_api_error() {
     let t = MockTransport::new(vec![MockResponse {
         status: 409,
-        body: json!({ "error": { "code": "payout.insufficient_funds", "message": "no" } }).to_string(),
+        body: json!({ "error": { "code": "payout.insufficient_funds", "message": "no" } })
+            .to_string(),
         retry_after: None,
     }]);
     let client = client_with(t);
@@ -226,11 +270,13 @@ fn client_retries_503_then_success() {
         ok(json!({ "state": 0, "result": { "balance": { "merchant": [] } } })),
     ]);
     let client = Client::with_transport(
-        Config::new("p", "s").base_url("https://api.test").retry(Some(oblodai::RetryConfig {
-            max_attempts: 3,
-            initial_delay: std::time::Duration::from_millis(1),
-            max_delay: std::time::Duration::from_millis(5),
-        })),
+        Config::new("p", "s")
+            .base_url("https://api.test")
+            .retry(Some(oblodai::RetryConfig {
+                max_attempts: 3,
+                initial_delay: std::time::Duration::from_millis(1),
+                max_delay: std::time::Duration::from_millis(5),
+            })),
         t.clone(),
     )
     .unwrap();
@@ -248,11 +294,13 @@ fn client_does_not_retry_400() {
         retry_after: None,
     }]);
     let client = Client::with_transport(
-        Config::new("p", "s").base_url("https://api.test").retry(Some(oblodai::RetryConfig {
-            max_attempts: 3,
-            initial_delay: std::time::Duration::from_millis(1),
-            max_delay: std::time::Duration::from_millis(5),
-        })),
+        Config::new("p", "s")
+            .base_url("https://api.test")
+            .retry(Some(oblodai::RetryConfig {
+                max_attempts: 3,
+                initial_delay: std::time::Duration::from_millis(1),
+                max_delay: std::time::Duration::from_millis(5),
+            })),
         t.clone(),
     )
     .unwrap();
@@ -396,7 +444,12 @@ fn rate_limit_429_surfaces_message() {
     let err = client.account().balance().unwrap_err();
     assert_eq!(err.retry_after(), Some(std::time::Duration::from_secs(60)));
     match err {
-        Error::Api { code, message, status, .. } => {
+        Error::Api {
+            code,
+            message,
+            status,
+            ..
+        } => {
             assert_eq!(code, "http.429");
             assert_eq!(status, 429);
             assert_eq!(message, "rate limit exceeded");
@@ -416,11 +469,13 @@ fn rate_limit_429_retries_after_advised_delay() {
         ok(json!({ "state": 0, "result": { "balance": { "merchant": [] } } })),
     ]);
     let client = Client::with_transport(
-        Config::new("p", "s").base_url("https://api.test").retry(Some(oblodai::RetryConfig {
-            max_attempts: 3,
-            initial_delay: std::time::Duration::from_millis(1),
-            max_delay: std::time::Duration::from_millis(5),
-        })),
+        Config::new("p", "s")
+            .base_url("https://api.test")
+            .retry(Some(oblodai::RetryConfig {
+                max_attempts: 3,
+                initial_delay: std::time::Duration::from_millis(1),
+                max_delay: std::time::Duration::from_millis(5),
+            })),
         t.clone(),
     )
     .unwrap();

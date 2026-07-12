@@ -32,7 +32,8 @@ impl Payments<'_> {
     }
     /// Информация о счёте. `POST /v1/payment/info`
     pub fn info(&self, uuid: Option<&str>, order_id: Option<&str>) -> Result<Payment> {
-        self.client.request("/v1/payment/info", &lookup(uuid, order_id))
+        self.client
+            .request("/v1/payment/info", &lookup(uuid, order_id))
     }
     /// Список платежей. `POST /v1/payment/history`
     pub fn history(&self, params: Value) -> Result<PaymentList> {
@@ -44,11 +45,13 @@ impl Payments<'_> {
     }
     /// QR-код депозит-адреса счёта. `POST /v1/payment/qr`
     pub fn qr(&self, uuid: Option<&str>, order_id: Option<&str>) -> Result<Value> {
-        self.client.request("/v1/payment/qr", &lookup(uuid, order_id))
+        self.client
+            .request("/v1/payment/qr", &lookup(uuid, order_id))
     }
     /// Переотправить вебхук платежа. `POST /v1/payment/resend`
     pub fn resend(&self, uuid: Option<&str>, order_id: Option<&str>) -> Result<Value> {
-        self.client.request("/v1/payment/resend", &lookup(uuid, order_id))
+        self.client
+            .request("/v1/payment/resend", &lookup(uuid, order_id))
     }
     /// Возврат средств платежа. `POST /v1/payment/refund`
     pub fn refund(&self, params: Value) -> Result<Value> {
@@ -60,7 +63,8 @@ impl Payments<'_> {
     }
     /// Заменить набор принимаемых валют. `POST /v1/payment/accepted/set`
     pub fn set_accepted(&self, accepted: Vec<AcceptedMethod>) -> Result<Value> {
-        self.client.request("/v1/payment/accepted/set", &json!({ "accepted": accepted }))
+        self.client
+            .request("/v1/payment/accepted/set", &json!({ "accepted": accepted }))
     }
     /// Прочитать допуск недоплаты. `POST /v1/payment/accuracy/get`
     pub fn get_accuracy(&self) -> Result<Value> {
@@ -72,7 +76,8 @@ impl Payments<'_> {
     }
     /// Прочитать настройки автовозврата. `POST /v1/payment/autorefund/get`
     pub fn get_autorefund(&self) -> Result<Value> {
-        self.client.request("/v1/payment/autorefund/get", &json!({}))
+        self.client
+            .request("/v1/payment/autorefund/get", &json!({}))
     }
     /// Задать настройки автовозврата. `POST /v1/payment/autorefund/set`
     pub fn set_autorefund(&self, params: Value) -> Result<Value> {
@@ -102,7 +107,11 @@ impl Payouts<'_> {
         self.client.request("/v1/payout", &params)
     }
     /// Массовая выплата (до 100). `POST /v1/payout/mass`
-    pub fn create_mass(&self, payouts: Vec<Value>, source: Option<&str>) -> Result<MassPayoutResult> {
+    pub fn create_mass(
+        &self,
+        payouts: Vec<Value>,
+        source: Option<&str>,
+    ) -> Result<MassPayoutResult> {
         let mut body = json!({ "payouts": payouts });
         if let Some(s) = source {
             body["source"] = json!(s);
@@ -111,7 +120,8 @@ impl Payouts<'_> {
     }
     /// Информация о выплате. `POST /v1/payout/info`
     pub fn info(&self, uuid: Option<&str>, order_id: Option<&str>) -> Result<Payout> {
-        self.client.request("/v1/payout/info", &lookup(uuid, order_id))
+        self.client
+            .request("/v1/payout/info", &lookup(uuid, order_id))
     }
     /// История выплат. `POST /v1/payout/history`
     pub fn history(&self, params: Value) -> Result<PayoutList> {
@@ -127,7 +137,8 @@ impl Payouts<'_> {
     }
     /// Подтвердить выплату в статусе pending. `POST /v1/payout/approve`
     pub fn approve(&self, uuid: &str) -> Result<Value> {
-        self.client.request("/v1/payout/approve", &json!({ "uuid": uuid }))
+        self.client
+            .request("/v1/payout/approve", &json!({ "uuid": uuid }))
     }
     /// Возврат средств платежа. `POST /v1/payment/refund`
     pub fn refund(&self, params: Value) -> Result<Value> {
@@ -139,15 +150,22 @@ impl Payouts<'_> {
     }
     /// Кто платит сетевую комиссию выплаты — запись. `POST /v1/payout/fee-config/set`
     pub fn set_fee_config(&self, fee_on_recipient: bool) -> Result<Value> {
-        self.client.request("/v1/payout/fee-config/set", &json!({ "fee_on_recipient": fee_on_recipient }))
+        self.client.request(
+            "/v1/payout/fee-config/set",
+            &json!({ "fee_on_recipient": fee_on_recipient }),
+        )
     }
     /// Кто несёт нашу комиссию при возврате — чтение. `POST /v1/payout/refund-fee-config/get`
     pub fn get_refund_fee_config(&self) -> Result<Value> {
-        self.client.request("/v1/payout/refund-fee-config/get", &json!({}))
+        self.client
+            .request("/v1/payout/refund-fee-config/get", &json!({}))
     }
     /// Кто несёт нашу комиссию при возврате — запись. `POST /v1/payout/refund-fee-config/set`
     pub fn set_refund_fee_config(&self, fee_on_customer: bool) -> Result<Value> {
-        self.client.request("/v1/payout/refund-fee-config/set", &json!({ "fee_on_customer": fee_on_customer }))
+        self.client.request(
+            "/v1/payout/refund-fee-config/set",
+            &json!({ "fee_on_customer": fee_on_customer }),
+        )
     }
 }
 
@@ -174,12 +192,15 @@ impl Wallets<'_> {
     }
     /// Возврат средств с кошелька на адрес. `POST /v1/wallet/blocked-address-refund`
     pub fn blocked_address_refund(&self, uuid: &str, address: &str) -> Result<Value> {
-        self.client
-            .request("/v1/wallet/blocked-address-refund", &json!({ "uuid": uuid, "address": address }))
+        self.client.request(
+            "/v1/wallet/blocked-address-refund",
+            &json!({ "uuid": uuid, "address": address }),
+        )
     }
     /// QR-код произвольного адреса. `POST /v1/wallet/qr`
     pub fn qr(&self, address: &str) -> Result<Value> {
-        self.client.request("/v1/wallet/qr", &json!({ "address": address }))
+        self.client
+            .request("/v1/wallet/qr", &json!({ "address": address }))
     }
 }
 
@@ -278,7 +299,8 @@ impl Settings<'_> {
     }
     /// Выключить автовывод для актива. `POST /v1/auto-withdraw/delete`
     pub fn delete_auto_withdraw(&self, currency: &str) -> Result<Value> {
-        self.client.request("/v1/auto-withdraw/delete", &json!({ "currency": currency }))
+        self.client
+            .request("/v1/auto-withdraw/delete", &json!({ "currency": currency }))
     }
     /// Список доверенных IP и статус. `POST /v1/api-allowlist/list`
     pub fn list_allowlist(&self) -> Result<Value> {
@@ -286,15 +308,18 @@ impl Settings<'_> {
     }
     /// Добавить IP или CIDR. `POST /v1/api-allowlist/add`
     pub fn add_allowlist(&self, cidr: &str) -> Result<Value> {
-        self.client.request("/v1/api-allowlist/add", &json!({ "cidr": cidr }))
+        self.client
+            .request("/v1/api-allowlist/add", &json!({ "cidr": cidr }))
     }
     /// Удалить IP или CIDR. `POST /v1/api-allowlist/remove`
     pub fn remove_allowlist(&self, cidr: &str) -> Result<Value> {
-        self.client.request("/v1/api-allowlist/remove", &json!({ "cidr": cidr }))
+        self.client
+            .request("/v1/api-allowlist/remove", &json!({ "cidr": cidr }))
     }
     /// Включить/выключить контроль. `POST /v1/api-allowlist/enable`
     pub fn enable_allowlist(&self, enabled: bool) -> Result<Value> {
-        self.client.request("/v1/api-allowlist/enable", &json!({ "enabled": enabled }))
+        self.client
+            .request("/v1/api-allowlist/enable", &json!({ "enabled": enabled }))
     }
 }
 

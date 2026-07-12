@@ -112,7 +112,9 @@ pub const ENV_BASE_URL: &str = "OBLODAI_BASE_URL";
 fn env_var(name: &str) -> Result<String> {
     match std::env::var(name) {
         Ok(v) if !v.is_empty() => Ok(v),
-        _ => Err(Error::Config(format!("переменная окружения {name} не задана"))),
+        _ => Err(Error::Config(format!(
+            "переменная окружения {name} не задана"
+        ))),
     }
 }
 
@@ -307,7 +309,10 @@ impl Client {
 
         let ms = started.elapsed().as_millis();
         let status = resp.status;
-        self.log(LogLevel::Debug, &format!("oblodai: <- {status} {method} {path} {ms}ms"));
+        self.log(
+            LogLevel::Debug,
+            &format!("oblodai: <- {status} {method} {path} {ms}ms"),
+        );
 
         parse_response(resp.status, &resp.body, resp.retry_after)
     }
@@ -387,9 +392,15 @@ impl ReqwestTransport {
         let resp = req.send().map_err(|e| Error::Connection(e.to_string()))?;
         let status = resp.status().as_u16();
         let retry_after = crate::http::parse_retry_after(
-            resp.headers().get(reqwest::header::RETRY_AFTER).and_then(|v| v.to_str().ok()),
+            resp.headers()
+                .get(reqwest::header::RETRY_AFTER)
+                .and_then(|v| v.to_str().ok()),
         );
         let bytes = resp.bytes().map_err(|e| Error::Connection(e.to_string()))?;
-        Ok(HttpResponse { status, body: bytes.to_vec(), retry_after })
+        Ok(HttpResponse {
+            status,
+            body: bytes.to_vec(),
+            retry_after,
+        })
     }
 }
