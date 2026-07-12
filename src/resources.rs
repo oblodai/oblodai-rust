@@ -16,11 +16,12 @@ use serde_json::{json, Value};
 fn ensure_order_id(params: Value) -> Value {
     match params {
         Value::Object(mut m) => {
-            let has = m
-                .get("order_id")
-                .and_then(|v| v.as_str())
-                .map(|s| !s.is_empty())
-                .unwrap_or(false);
+            // Считаем `order_id` заданным ТОЛЬКО если это непустая строка после trim.
+            // Отсутствие/null/""/пробелы, а также нестроковое значение (число/bool) → подставляем ключ.
+            let has = matches!(
+                m.get("order_id").and_then(|v| v.as_str()),
+                Some(s) if !s.trim().is_empty()
+            );
             if !has {
                 m.insert("order_id".into(), json!(format!("idem-{}", crate::random::hex16())));
             }

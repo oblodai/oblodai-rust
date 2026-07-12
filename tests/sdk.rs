@@ -517,6 +517,84 @@ fn payment_create_same_order_id_across_retries() {
 }
 
 #[test]
+fn payment_create_injects_order_id_when_whitespace_only() {
+    // Строка из одних пробелов должна нормализоваться и заменяться на сгенерированный ключ.
+    let t = MockTransport::new(vec![ok(payment_result())]);
+    let client = client_with(t.clone());
+
+    client
+        .payments()
+        .create(json!({ "amount": "10", "currency": "USD", "order_id": "   " }))
+        .unwrap();
+
+    let oid = body_order_id(&t, 0);
+    assert!(
+        oid.starts_with("idem-"),
+        "пробельный order_id должен нормализоваться в idem-ключ, получено {oid:?}"
+    );
+    assert!(oid.len() > "idem-".len(), "order_id не должен быть пустым");
+    assert_ne!(oid.trim(), "", "order_id не должен быть пробельным");
+}
+
+#[test]
+fn payment_create_injects_order_id_when_non_string() {
+    // Нестроковое значение order_id (число) не должно проходить «как есть».
+    let t = MockTransport::new(vec![ok(payment_result())]);
+    let client = client_with(t.clone());
+
+    client
+        .payments()
+        .create(json!({ "amount": "10", "currency": "USD", "order_id": 12345 }))
+        .unwrap();
+
+    let calls = t.calls.lock().unwrap();
+    let v: serde_json::Value = serde_json::from_str(&calls[0].2).unwrap();
+    let oid = v.get("order_id").and_then(|o| o.as_str());
+    assert!(
+        matches!(oid, Some(s) if s.starts_with("idem-")),
+        "нестроковый order_id должен заменяться на idem-строку, получено {:?}",
+        v.get("order_id")
+    );
+}
+
+#[test]
+fn payment_create_real_order_id_preserved_across_retries() {
+    // Реальный непустой order_id сохраняется и идентичен на повторе (503 → успех).
+    let t = MockTransport::new(vec![
+        MockResponse {
+            status: 503,
+            body: json!({ "error": { "code": "x.unavailable", "message": "later" } }).to_string(),
+            retry_after: None,
+        },
+        ok(payment_result()),
+    ]);
+    let client = Client::with_transport(
+        Config::new("p", "s")
+            .base_url("https://api.test")
+            .retry(Some(oblodai::RetryConfig {
+                max_attempts: 3,
+                initial_delay: std::time::Duration::from_millis(1),
+                max_delay: std::time::Duration::from_millis(5),
+            })),
+        t.clone(),
+    )
+    .unwrap();
+
+    client
+        .payments()
+        .create(json!({ "amount": "10", "currency": "USD", "order_id": "ord-1" }))
+        .unwrap();
+
+    assert_eq!(t.call_count(), 2, "должно быть 2 попытки: 503 + успех");
+    assert_eq!(body_order_id(&t, 0), "ord-1", "реальный order_id обязан сохраняться");
+    assert_eq!(
+        body_order_id(&t, 0),
+        body_order_id(&t, 1),
+        "order_id обязан совпадать на повторе"
+    );
+}
+
+#[test]
 fn transfer_to_personal_injects_order_id() {
     let t = MockTransport::new(vec![ok(json!({ "state": 0, "result": { "ok": true } }))]);
     let client = client_with(t.clone());
