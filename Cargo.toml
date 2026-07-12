@@ -1,6 +1,6 @@
 [package]
 name = "oblodai"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2021"
 description = "Официальный Rust SDK для платёжного шлюза Oblodai: приём платежей, выплаты, кошельки, вебхуки."
 license = "MIT"
@@ -22,5 +22,8 @@ serde_json = "1"
 hmac = "0.12"
 sha2 = "0.10"
 hex = "0.4"
+# Лёгкий источник ОС-случайности для идемпотентных ключей и джиттера повторов.
+# Уже присутствует в дереве транзитивно (reqwest/rustls) — прямая зависимость не добавляет вес.
+getrandom = "0.2"
 thiserror = "1"
 reqwest = { version = "0.11", features = ["blocking", "json", "rustls-tls"], default-features = false, optional = true }

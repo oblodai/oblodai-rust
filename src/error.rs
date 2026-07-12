@@ -47,9 +47,9 @@ impl Error {
     /// Временная ли ошибка (стоит ли повторять с backoff).
     pub fn is_retriable(&self) -> bool {
         match self {
-            Error::Api { status, code, .. } => {
-                *status >= 500 || *status == 429 || code == "payout.funds_maturing"
-            }
+            // Только транзиентные транспортные/лимитные ошибки. `payout.funds_maturing` терминальна:
+            // средства ещё «дозревают», немедленный повтор не поможет и лишь плодит нагрузку.
+            Error::Api { status, .. } => *status >= 500 || *status == 429,
             Error::Connection(_) => true,
             _ => false,
         }

@@ -432,6 +432,116 @@ fn list_discounts_covered() {
     assert!(calls[0].0.ends_with("/v1/payment/discount/list"));
 }
 
+// ─────────────────── Автоматический order_id (идемпотентность) ───────────────────
+
+/// Достаёт `order_id` из тела POST-запроса по индексу вызова.
+fn body_order_id(t: &MockTransport, call_idx: usize) -> String {
+    let calls = t.calls.lock().unwrap();
+    let body = &calls[call_idx].2;
+    let v: serde_json::Value = serde_json::from_str(body).unwrap();
+    v.get("order_id")
+        .and_then(|o| o.as_str())
+        .unwrap_or("")
+        .to_string()
+}
+
+fn payment_result() -> serde_json::Value {
+    json!({
+        "state": 0,
+        "result": { "uuid": "p1", "order_id": "auto", "amount": "10.00",
+                    "currency": "USD", "payment_status": "check", "address": "T123" }
+    })
+}
+
+#[test]
+fn payment_create_injects_order_id_when_missing() {
+    let t = MockTransport::new(vec![ok(payment_result())]);
+    let client = client_with(t.clone());
+
+    client
+        .payments()
+        .create(json!({ "amount": "10", "currency": "USD" }))
+        .unwrap();
+
+    let oid = body_order_id(&t, 0);
+    assert!(oid.starts_with("idem-"), "ожидался idem-ключ, получено {oid:?}");
+    assert!(oid.len() > "idem-".len(), "order_id не должен быть пустым");
+}
+
+#[test]
+fn payment_create_keeps_caller_order_id() {
+    let t = MockTransport::new(vec![ok(payment_result())]);
+    let client = client_with(t.clone());
+
+    client
+        .payments()
+        .create(json!({ "amount": "10", "currency": "USD", "order_id": "mine-1" }))
+        .unwrap();
+
+    assert_eq!(body_order_id(&t, 0), "mine-1");
+}
+
+#[test]
+fn payment_create_same_order_id_across_retries() {
+    // 503 (retriable) один раз, затем успех — тело должно быть идентичным на обеих попытках.
+    let t = MockTransport::new(vec![
+        MockResponse {
+            status: 503,
+            body: json!({ "error": { "code": "x.unavailable", "message": "later" } }).to_string(),
+            retry_after: None,
+        },
+        ok(payment_result()),
+    ]);
+    let client = Client::with_transport(
+        Config::new("p", "s")
+            .base_url("https://api.test")
+            .retry(Some(oblodai::RetryConfig {
+                max_attempts: 3,
+                initial_delay: std::time::Duration::from_millis(1),
+                max_delay: std::time::Duration::from_millis(5),
+            })),
+        t.clone(),
+    )
+    .unwrap();
+
+    client
+        .payments()
+        .create(json!({ "amount": "10", "currency": "USD" }))
+        .unwrap();
+
+    assert_eq!(t.call_count(), 2, "должно быть 2 попытки: 503 + успех");
+    let first = body_order_id(&t, 0);
+    let second = body_order_id(&t, 1);
+    assert!(first.starts_with("idem-"));
+    assert_eq!(first, second, "order_id обязан совпадать на повторе, иначе возможен дубль");
+}
+
+#[test]
+fn transfer_to_personal_injects_order_id() {
+    let t = MockTransport::new(vec![ok(json!({ "state": 0, "result": { "ok": true } }))]);
+    let client = client_with(t.clone());
+
+    client
+        .account()
+        .transfer_to_personal(json!({ "amount": "5", "currency": "USDT" }))
+        .unwrap();
+
+    let oid = body_order_id(&t, 0);
+    assert!(oid.starts_with("idem-"), "ожидался idem-ключ, получено {oid:?}");
+}
+
+#[test]
+fn funds_maturing_is_terminal() {
+    let e = Error::Api {
+        code: "payout.funds_maturing".into(),
+        message: String::new(),
+        status: 409,
+        raw: String::new(),
+        retry_after: None,
+    };
+    assert!(!e.is_retriable(), "payout.funds_maturing должна быть терминальной");
+}
+
 #[test]
 fn rate_limit_429_surfaces_message() {
     let t = MockTransport::new(vec![MockResponse {

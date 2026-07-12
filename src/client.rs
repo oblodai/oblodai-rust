@@ -252,7 +252,10 @@ impl Client {
                     }
                     if let Some(cfg) = &self.retry {
                         let delay = match advised {
-                            Some(d) => d.min(cfg.max_delay),
+                            // Уважаем совет сервера: НЕ обрезаем до max_delay (иначе `Retry-After: 60`
+                            // при max_delay=30 ждал бы лишь 30с и снова упёрся бы в лимит). Ограничиваем
+                            // лишь абсолютным потолком, чтобы не зависнуть на абсурдных значениях.
+                            Some(d) => d.min(Duration::from_secs(300)),
                             None => backoff(attempt, cfg),
                         };
                         let reason = retry_reason(last.as_ref().unwrap());
@@ -342,8 +345,9 @@ fn retry_reason(err: &Error) -> &'static str {
 fn backoff(attempt: u32, cfg: &RetryConfig) -> Duration {
     let base = (cfg.initial_delay.as_millis() as f64) * 2f64.powi(attempt as i32 - 1);
     let capped = base.min(cfg.max_delay.as_millis() as f64);
-    // Детерминированный «джиттер» без внешних зависимостей: доля от initial_delay.
-    let jitter = (cfg.initial_delay.as_millis() as f64) * 0.25;
+    // Реальный джиттер: случайная добавка в [0, initial_delay), чтобы разнести повторы
+    // конкурирующих клиентов (full jitter поверх ОС-RNG, без внешних тяжёлых зависимостей).
+    let jitter = (cfg.initial_delay.as_millis() as f64) * crate::random::unit_f64();
     Duration::from_millis((capped + jitter) as u64)
 }
 

@@ -7,6 +7,29 @@ use crate::error::Result;
 use crate::models::*;
 use serde_json::{json, Value};
 
+/// Гарантирует наличие непустого `order_id` в теле запроса.
+///
+/// Бэкенд дедуплицирует платежи/переводы по `order_id`. Клиент повторяет неидемпотентные POST'ы,
+/// переподписывая каждую попытку, поэтому без стабильного `order_id` таймаут+повтор может создать
+/// дубль. Если поле не задано (или пустое), подставляем стабильный ключ `idem-<hex>` ОДИН РАЗ —
+/// до отправки — так все повторы внутри одного вызова используют один и тот же `order_id`.
+fn ensure_order_id(params: Value) -> Value {
+    match params {
+        Value::Object(mut m) => {
+            let has = m
+                .get("order_id")
+                .and_then(|v| v.as_str())
+                .map(|s| !s.is_empty())
+                .unwrap_or(false);
+            if !has {
+                m.insert("order_id".into(), json!(format!("idem-{}", crate::random::hex16())));
+            }
+            Value::Object(m)
+        }
+        other => other,
+    }
+}
+
 fn lookup(uuid: Option<&str>, order_id: Option<&str>) -> Value {
     let mut m = serde_json::Map::new();
     if let Some(u) = uuid {
@@ -28,7 +51,7 @@ pub struct Payments<'a> {
 impl Payments<'_> {
     /// Создать платёжный счёт (инвойс). `POST /v1/payment`
     pub fn create(&self, params: Value) -> Result<Payment> {
-        self.client.request("/v1/payment", &params)
+        self.client.request("/v1/payment", &ensure_order_id(params))
     }
     /// Информация о счёте. `POST /v1/payment/info`
     pub fn info(&self, uuid: Option<&str>, order_id: Option<&str>) -> Result<Payment> {
@@ -227,7 +250,8 @@ impl Account<'_> {
     }
     /// Перевод на личный кошелёк владельца. `POST /v1/transfer/to-personal`
     pub fn transfer_to_personal(&self, params: Value) -> Result<Value> {
-        self.client.request("/v1/transfer/to-personal", &params)
+        self.client
+            .request("/v1/transfer/to-personal", &ensure_order_id(params))
     }
     /// Включить/выключить VRCS. `enabled` None — чтение. `POST /v1/vrcs`
     pub fn vrcs(&self, enabled: Option<bool>) -> Result<Value> {
