@@ -1,0 +1,26 @@
+[package]
+name = "oblodai"
+version = "1.0.0"
+edition = "2021"
+description = "Официальный Rust SDK для платёжного шлюза Oblodai: приём платежей, выплаты, кошельки, вебхуки."
+license = "MIT"
+authors = ["Oblodai"]
+repository = "https://github.com/oblodai/oblodai-rust"
+homepage = "https://github.com/oblodai/oblodai-rust"
+documentation = "https://docs.rs/oblodai"
+readme = "README.md"
+keywords = ["oblodai", "crypto", "payments", "payout", "webhook"]
+categories = ["api-bindings"]
+
+[features]
+default = ["reqwest-client"]
+reqwest-client = ["dep:reqwest"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
+thiserror = "1"
+reqwest = { version = "0.11", features = ["blocking", "json", "rustls-tls"], default-features = false, optional = true }
