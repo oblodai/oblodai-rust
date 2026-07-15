@@ -360,3 +360,348 @@ pub struct AutoWithdrawRule {
     #[serde(default)]
     pub min_minor: String,
 }
+
+// ─────────────────────────── Массовые операции (v1.1.0) ───────────────────────────
+
+/// Результат постановки пачки (`POST /v1/payment/batch`, `/v1/refund/batch`, `/v1/payout/batch`).
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct BatchSubmission {
+    #[serde(default)]
+    pub batch_id: String,
+    /// Вид пачки: `payment` / `refund` / `payout`.
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default)]
+    pub count: i64,
+    /// `pending` → `processing` → `completed`.
+    #[serde(default)]
+    pub status: String,
+}
+
+/// Элемент пачки в ответе `POST /v1/batch/info`.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct BatchItem {
+    #[serde(default)]
+    pub idx: i64,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub order_id: String,
+    /// Байт-в-байт сохранённый `result` единичного эндпоинта (если элемент успешен).
+    #[serde(default)]
+    pub result: serde_json::Value,
+    /// Ошибка элемента (если он неуспешен).
+    #[serde(default)]
+    pub error: serde_json::Value,
+}
+
+/// Состояние пачки и её элементы. `POST /v1/batch/info`
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct BatchInfo {
+    #[serde(default)]
+    pub batch_id: String,
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub on_error: String,
+    #[serde(default)]
+    pub total: i64,
+    #[serde(default)]
+    pub succeeded: i64,
+    #[serde(default)]
+    pub failed: i64,
+    #[serde(default)]
+    pub created_at: String,
+    #[serde(default)]
+    pub updated_at: String,
+    #[serde(default)]
+    pub items: Vec<BatchItem>,
+}
+
+// ─────────────────────────── Платёжные ссылки (v1.1.0) ───────────────────────────
+
+/// Платёж, привязанный к платёжной ссылке (в ответе `info`).
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct PaymentLinkPayment {
+    #[serde(default)]
+    pub uuid: String,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub amount: String,
+    #[serde(default)]
+    pub currency: String,
+    #[serde(default)]
+    pub created_at: String,
+    #[serde(default)]
+    pub order_id: String,
+}
+
+/// Платёжная ссылка (create/list/info/toggle).
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct PaymentLink {
+    #[serde(default)]
+    pub link_id: String,
+    #[serde(default)]
+    pub url: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub description: String,
+    /// `fixed` / `open` / `range`.
+    #[serde(default)]
+    pub amount_mode: String,
+    #[serde(default)]
+    pub currency: String,
+    #[serde(default)]
+    pub active: bool,
+    #[serde(default)]
+    pub created_at: String,
+    #[serde(default)]
+    pub amount_fixed: String,
+    #[serde(default)]
+    pub amount_min: String,
+    #[serde(default)]
+    pub amount_max: String,
+    #[serde(default)]
+    pub pinned_currency: String,
+    #[serde(default)]
+    pub pinned_network: String,
+    #[serde(default)]
+    pub expires_at: String,
+    /// Платежи по ссылке — только в ответе `info`.
+    #[serde(default)]
+    pub payments: Vec<PaymentLinkPayment>,
+}
+
+// ─────────────────────────── Сплит-платежи (v1.1.0) ───────────────────────────
+
+/// Правило сплита (create/list). Получатель — либо внешний `address`+`network`
+/// (необратимо), либо `merchant_id` на платформе (обратимо при возврате).
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct SplitRule {
+    #[serde(default)]
+    pub rule_id: String,
+    /// Доля в процентах (шаг 0.01%).
+    #[serde(default)]
+    pub percent: f64,
+    #[serde(default)]
+    pub active: bool,
+    #[serde(default)]
+    pub note: String,
+    #[serde(default)]
+    pub address: String,
+    #[serde(default)]
+    pub network: String,
+    #[serde(default)]
+    pub merchant_id: String,
+    /// `true` — доля отзывается при возврате (получатель-мерчант на платформе).
+    #[serde(default)]
+    pub reversible: bool,
+}
+
+/// Настройки сплитов. `POST /v1/split/config/get|set`
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct SplitConfig {
+    /// Окно удержания (в часах) перед исходящей маршрутизацией долей после settle.
+    #[serde(default)]
+    pub refund_hold_hours: i64,
+}
+
+// ─────────────────────────── Payout-ссылки (v1.1.0) ───────────────────────────
+
+/// Статус payout-ссылки («крипто-чека»).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PayoutLinkStatus {
+    /// Создана, резерв удержан, ждёт claim.
+    #[default]
+    Funded,
+    /// Claim в процессе: адрес зафиксирован, порождается выплата (транзиентный).
+    Claiming,
+    /// Выплата порождена (`payout_id` установлен) — терминальный.
+    Claimed,
+    /// Дедлайн прошёл без claim, резерв возвращён — терминальный.
+    Expired,
+    /// Отменена мерчантом до claim, резерв возвращён — терминальный.
+    Cancelled,
+    /// Неизвестный статус (совместимость с будущими версиями API).
+    #[serde(other)]
+    Unknown,
+}
+
+impl PayoutLinkStatus {
+    /// Строковое представление, как в API.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Funded => "funded",
+            Self::Claiming => "claiming",
+            Self::Claimed => "claimed",
+            Self::Expired => "expired",
+            Self::Cancelled => "cancelled",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+/// Payout-ссылка («крипто-чек»). `claim_token`/`claim_url` приходят ТОЛЬКО в ответе create —
+/// сохраните их сразу: в list/info их больше не будет.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct PayoutLink {
+    #[serde(default)]
+    pub link_id: String,
+    #[serde(default)]
+    pub status: PayoutLinkStatus,
+    #[serde(default)]
+    pub amount: String,
+    #[serde(default)]
+    pub currency: String,
+    #[serde(default)]
+    pub network: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub note: String,
+    #[serde(default)]
+    pub expires_at: String,
+    #[serde(default)]
+    pub created_at: String,
+    /// Ваш ключ дедупликации (уникален per-merchant).
+    #[serde(default)]
+    pub reference: String,
+    #[serde(default)]
+    pub email: String,
+    /// Секретный claim-токен — только в ответе create.
+    #[serde(default)]
+    pub claim_token: String,
+    /// Публичная ссылка на страницу claim — только в ответе create.
+    #[serde(default)]
+    pub claim_url: String,
+    /// Порождённая выплата (после claim).
+    #[serde(default)]
+    pub payout_id: String,
+    /// Адрес получателя (после claim).
+    #[serde(default)]
+    pub claim_address: String,
+    /// Общий id пачки (для ссылок из `create_batch`).
+    #[serde(default)]
+    pub batch_id: String,
+}
+
+/// Элемент результата пачки payout-ссылок (index-aligned с запросом).
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct PayoutLinkBatchItem {
+    #[serde(default)]
+    pub ok: bool,
+    /// Созданная ссылка (при `ok == true`), с `claim_token`/`claim_url` и `batch_id`.
+    #[serde(default)]
+    pub link: Option<PayoutLink>,
+    /// Код ошибки (при `ok == false`), напр. `payoutlink.insufficient_funds`.
+    #[serde(default)]
+    pub error: String,
+    #[serde(default)]
+    pub message: String,
+}
+
+/// Результат `POST /v1/payout/link/batch`.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct PayoutLinkBatch {
+    #[serde(default)]
+    pub created: i64,
+    #[serde(default)]
+    pub total: i64,
+    #[serde(default)]
+    pub results: Vec<PayoutLinkBatchItem>,
+}
+
+/// Публичные детали claim-страницы. `GET /v1/claim/{token}` (без подписи).
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct ClaimInfo {
+    #[serde(default)]
+    pub status: PayoutLinkStatus,
+    #[serde(default)]
+    pub amount: String,
+    #[serde(default)]
+    pub currency: String,
+    #[serde(default)]
+    pub network: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub note: String,
+    #[serde(default)]
+    pub expires_at: String,
+    /// `true`, если ссылку ещё можно получить (`funded` и срок не истёк).
+    #[serde(default)]
+    pub claimable: bool,
+}
+
+/// Результат публичного claim. `POST /v1/claim/{token}` (без подписи).
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct ClaimResult {
+    #[serde(default)]
+    pub status: PayoutLinkStatus,
+    #[serde(default)]
+    pub payout_id: String,
+    #[serde(default)]
+    pub amount: String,
+    #[serde(default)]
+    pub currency: String,
+    #[serde(default)]
+    pub network: String,
+    #[serde(default)]
+    pub address: String,
+}
+
+// ─────────────────────────── Resolve недоплаты (v1.1.0) ───────────────────────────
+
+/// Действие над недоплаченным платежом для [`crate::resources::Payments::resolve`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResolveAction {
+    /// Оставить частичную оплату себе (глушит авто-возврат).
+    Accept,
+    /// Вернуть средства плательщику.
+    Refund,
+}
+
+impl ResolveAction {
+    /// Строковое представление, как в API (`accept` / `refund`).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Accept => "accept",
+            Self::Refund => "refund",
+        }
+    }
+}
+
+/// Результат `POST /v1/payment/resolve`. При `resolution == "accepted"` заполнены
+/// `amount_kept`/`currency`; при `"refunded"` — поля рефанд-выплаты (`uuid`, `amount`,
+/// `address`, `status`, `is_final`).
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct Resolution {
+    #[serde(default)]
+    pub payment_uuid: String,
+    #[serde(default)]
+    pub order_id: String,
+    /// `accepted` или `refunded`.
+    #[serde(default)]
+    pub resolution: String,
+    #[serde(default)]
+    pub amount_kept: String,
+    #[serde(default)]
+    pub currency: String,
+    /// UUID рефанд-выплаты (только при `refunded`).
+    #[serde(default)]
+    pub uuid: String,
+    #[serde(default)]
+    pub amount: String,
+    #[serde(default)]
+    pub address: String,
+    /// Статус рефанд-выплаты: `check`/`process`/`paid`/`fail`/`cancel`.
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub is_final: bool,
+}

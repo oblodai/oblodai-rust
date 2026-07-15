@@ -3,6 +3,38 @@
 Значимые изменения этого пакета. Формат — [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 версии — [SemVer](https://semver.org/lang/ru/).
 
+## [1.1.0] — 2026-07-15
+
+### Изменено (ЛОМАЮЩЕЕ): идемпотентность
+- **Авто-подстановка `order_id` удалена.** SDK больше не вписывает `idem-<hex>` в
+  `payments().create(...)` и `account().transfer_to_personal(...)` — `order_id` уходит строго как
+  есть. Если вы полагались на сгенерированный ключ в ответе, задавайте `order_id` явно.
+- **Защита от дублей теперь заголовком `Idempotency-Key`.** Все создающие вызовы
+  (`/v1/payment`, `/v1/payment/refund`, `/v1/payment/resolve`, `/v1/payment/batch`,
+  `/v1/refund/batch`, `/v1/payout`, `/v1/payout/mass`, `/v1/payout/batch`,
+  `/v1/transfer/to-personal`) шлют UUID v4, сгенерированный один раз ДО повторов, — все внутренние
+  ретраи вызова идут с одним ключом. Заголовок в подпись запроса не входит.
+- **Свой ключ идемпотентности:** поле `idempotency_key` в параметрах создающего вызова уходит в
+  заголовок и не попадает в тело запроса.
+- Исключение: эндпоинты `/v1/payout/link*` заголовок не поддерживают — SDK его там не шлёт,
+  дедупликация через per-link `reference`.
+
+### Добавлено
+- **Массовые операции (до 5000 элементов):** `payments().create_batch(...)`,
+  `payments().refund_batch(...)`, `payouts().create_batch(...)` и `batches().info(...)`
+  (типы `BatchSubmission`, `BatchInfo`, `BatchItem`).
+- **Платёжные ссылки:** `payment_links().create/list/info/toggle`, публичные (без подписи)
+  `public_get` и `checkout` (тип `PaymentLink`).
+- **Сплит-платежи:** `splits().create_rule/list_rules/delete_rule/get_config/set_config`
+  (типы `SplitRule`, `SplitConfig`).
+- **Счёт на e-mail:** `payments().send_email(uuid, order_id, email)`.
+- **Payout-ссылки («крипто-чеки»):** `payout_links().create/create_batch(до 500)/list/info/cancel`
+  и публичные (без подписи) `claim_info(token)` / `claim(token, address, memo)` — типы
+  `PayoutLink`, `PayoutLinkStatus` (enum), `PayoutLinkBatch`, `ClaimInfo`, `ClaimResult`.
+  Внимание: `expires_in_hours` задавайте явно — при 0/отсутствии бэкенд клампит срок к 1 часу.
+- **Resolve недоплаты:** `payments().resolve(ResolveAction::Accept | ResolveAction::Refund, params)`
+  (типы `ResolveAction`, `Resolution`).
+
 ## [1.0.2] — 2026-07-12
 
 ### Исправлено (устойчивость)

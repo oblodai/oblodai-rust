@@ -121,7 +121,8 @@ fn env_var(name: &str) -> Result<String> {
 /// Клиент Oblodai API.
 ///
 /// Ресурсы доступны как методы: [`Client::payments`], [`Client::payouts`], [`Client::wallets`],
-/// [`Client::account`], [`Client::webhooks`], [`Client::settings`], [`Client::rates`].
+/// [`Client::account`], [`Client::webhooks`], [`Client::settings`], [`Client::rates`],
+/// [`Client::batches`], [`Client::payment_links`], [`Client::splits`], [`Client::payout_links`].
 pub struct Client {
     public_id: String,
     secret: String,
@@ -204,12 +205,45 @@ impl Client {
     pub fn rates(&self) -> crate::resources::Rates<'_> {
         crate::resources::Rates { client: self }
     }
+    /// Массовые операции (пачки платежей/возвратов/выплат).
+    pub fn batches(&self) -> crate::resources::Batches<'_> {
+        crate::resources::Batches { client: self }
+    }
+    /// Платёжные ссылки (переиспользуемые, «донатные»).
+    pub fn payment_links(&self) -> crate::resources::PaymentLinks<'_> {
+        crate::resources::PaymentLinks { client: self }
+    }
+    /// Сплит-платежи (правила и настройки).
+    pub fn splits(&self) -> crate::resources::Splits<'_> {
+        crate::resources::Splits { client: self }
+    }
+    /// Payout-ссылки («крипто-чеки»): резерв средств под claim по публичной ссылке.
+    pub fn payout_links(&self) -> crate::resources::PayoutLinks<'_> {
+        crate::resources::PayoutLinks { client: self }
+    }
 
     // ── Внутреннее ──
 
     /// Подписанный запрос с разбором результата в тип `T`.
     pub(crate) fn request<T: DeserializeOwned>(&self, path: &str, payload: &Value) -> Result<T> {
-        let value = self.execute("POST", path, payload, true)?;
+        let value = self.execute("POST", path, payload, true, None)?;
+        serde_json::from_value(value).map_err(|e| Error::Serialization(e.to_string()))
+    }
+
+    /// Подписанный запрос НА СОЗДАЮЩИЙ эндпоинт: добавляет заголовок `Idempotency-Key`.
+    ///
+    /// Ключ (`key`, либо сгенерированный UUID v4, если `key == None`) вычисляется ОДИН РАЗ — до
+    /// повторов — и идентичен во всех внутренних попытках вызова, поэтому таймаут+повтор не создаёт
+    /// дубль операции. Заголовок в подпись запроса НЕ входит (подписываются только
+    /// timestamp/метод/путь/тело).
+    pub(crate) fn request_idempotent<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        payload: &Value,
+        key: Option<String>,
+    ) -> Result<T> {
+        let key = key.unwrap_or_else(crate::random::uuid4);
+        let value = self.execute("POST", path, payload, true, Some(&key))?;
         serde_json::from_value(value).map_err(|e| Error::Serialization(e.to_string()))
     }
 
@@ -219,22 +253,37 @@ impl Client {
         path: &str,
         payload: &Value,
     ) -> Result<T> {
-        let value = self.execute("POST", path, payload, false)?;
+        let value = self.execute("POST", path, payload, false, None)?;
         serde_json::from_value(value).map_err(|e| Error::Serialization(e.to_string()))
     }
 
     /// Публичный GET-запрос без подписи (напр. `GET /v1/currencies`).
     pub(crate) fn request_public_get<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
-        let value = self.execute("GET", path, &Value::Null, false)?;
+        let value = self.execute("GET", path, &Value::Null, false, None)?;
         serde_json::from_value(value).map_err(|e| Error::Serialization(e.to_string()))
     }
 
-    fn execute(&self, method: &str, path: &str, payload: &Value, signed: bool) -> Result<Value> {
+    fn execute(
+        &self,
+        method: &str,
+        path: &str,
+        payload: &Value,
+        signed: bool,
+        idempotency_key: Option<&str>,
+    ) -> Result<Value> {
         let attempts = self.retry.as_ref().map(|r| r.max_attempts).unwrap_or(1);
         let mut last: Option<Error> = None;
 
         for attempt in 1..=attempts {
-            match self.once(method, path, payload, signed, attempt, attempts) {
+            match self.once(
+                method,
+                path,
+                payload,
+                signed,
+                idempotency_key,
+                attempt,
+                attempts,
+            ) {
                 Ok(v) => return Ok(v),
                 Err(e) => {
                     let retriable = e.is_retriable();
@@ -282,6 +331,7 @@ impl Client {
         path: &str,
         payload: &Value,
         signed: bool,
+        idempotency_key: Option<&str>,
         attempt: u32,
         attempts: u32,
     ) -> Result<Value> {
@@ -306,6 +356,11 @@ impl Client {
                 headers.push(("X-Public-Id".into(), self.public_id.clone()));
                 headers.push(("X-Timestamp".into(), ts));
                 headers.push(("X-Signature".into(), sig));
+            }
+            // Ключ идемпотентности стабилен между повторами (вычислен ДО цикла ретраев)
+            // и в подпись не входит.
+            if let Some(key) = idempotency_key {
+                headers.push(("Idempotency-Key".into(), key.to_string()));
             }
             self.transport.post(&url, &headers, body.as_bytes())?
         };

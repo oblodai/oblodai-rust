@@ -7,28 +7,44 @@ use crate::error::Result;
 use crate::models::*;
 use serde_json::{json, Value};
 
-/// Гарантирует наличие непустого `order_id` в теле запроса.
+/// Извлекает (и УДАЛЯЕТ из тела) явный ключ идемпотентности `idempotency_key`.
 ///
-/// Бэкенд дедуплицирует платежи/переводы по `order_id`. Клиент повторяет неидемпотентные POST'ы,
-/// переподписывая каждую попытку, поэтому без стабильного `order_id` таймаут+повтор может создать
-/// дубль. Если поле не задано (или пустое), подставляем стабильный ключ `idem-<hex>` ОДИН РАЗ —
-/// до отправки — так все повторы внутри одного вызова используют один и тот же `order_id`.
-fn ensure_order_id(params: Value) -> Value {
+/// Создающие методы шлют заголовок `Idempotency-Key`: либо переданный вами через поле
+/// `idempotency_key` в параметрах, либо (по умолчанию) сгенерированный UUID v4 — один раз до
+/// повторов. В тело запроса это поле НЕ уходит; `order_id` при этом передаётся как есть и больше
+/// НЕ подставляется автоматически.
+fn take_idempotency_key(params: Value) -> (Value, Option<String>) {
     match params {
         Value::Object(mut m) => {
-            // Считаем `order_id` заданным ТОЛЬКО если это непустая строка после trim.
-            // Отсутствие/null/""/пробелы, а также нестроковое значение (число/bool) → подставляем ключ.
-            let has = matches!(
-                m.get("order_id").and_then(|v| v.as_str()),
-                Some(s) if !s.trim().is_empty()
-            );
-            if !has {
-                m.insert("order_id".into(), json!(format!("idem-{}", crate::random::hex16())));
-            }
-            Value::Object(m)
+            let key = m
+                .remove("idempotency_key")
+                .and_then(|v| v.as_str().map(|s| s.trim().to_string()))
+                .filter(|s| !s.is_empty());
+            (Value::Object(m), key)
         }
-        other => other,
+        other => (other, None),
     }
+}
+
+/// Собирает тело пачки: `{"<field>": [...items], "on_error": "continue"|"stop"}`.
+fn batch_body(field: &str, items: Vec<Value>, on_error: Option<&str>) -> Value {
+    let mut body = json!({ field: items });
+    if let Some(mode) = on_error {
+        body["on_error"] = json!(mode);
+    }
+    body
+}
+
+/// Тело пагинации `{"limit","offset"}` (поля добавляются только если заданы).
+fn page(limit: Option<i64>, offset: Option<i64>) -> Value {
+    let mut m = serde_json::Map::new();
+    if let Some(l) = limit {
+        m.insert("limit".into(), json!(l));
+    }
+    if let Some(o) = offset {
+        m.insert("offset".into(), json!(o));
+    }
+    Value::Object(m)
 }
 
 fn lookup(uuid: Option<&str>, order_id: Option<&str>) -> Value {
@@ -51,8 +67,12 @@ pub struct Payments<'a> {
 
 impl Payments<'_> {
     /// Создать платёжный счёт (инвойс). `POST /v1/payment`
+    ///
+    /// Идемпотентен: шлётся заголовок `Idempotency-Key` (свой ключ — поле `idempotency_key`
+    /// в `params`, оно не попадает в тело). `order_id` уходит как есть и не подставляется.
     pub fn create(&self, params: Value) -> Result<Payment> {
-        self.client.request("/v1/payment", &ensure_order_id(params))
+        let (body, key) = take_idempotency_key(params);
+        self.client.request_idempotent("/v1/payment", &body, key)
     }
     /// Информация о счёте. `POST /v1/payment/info`
     pub fn info(&self, uuid: Option<&str>, order_id: Option<&str>) -> Result<Payment> {
@@ -78,8 +98,12 @@ impl Payments<'_> {
             .request("/v1/payment/resend", &lookup(uuid, order_id))
     }
     /// Возврат средств платежа. `POST /v1/payment/refund`
+    ///
+    /// Идемпотентен: шлётся заголовок `Idempotency-Key` (свой ключ — поле `idempotency_key`).
     pub fn refund(&self, params: Value) -> Result<Value> {
-        self.client.request("/v1/payment/refund", &params)
+        let (body, key) = take_idempotency_key(params);
+        self.client
+            .request_idempotent("/v1/payment/refund", &body, key)
     }
     /// Набор принимаемых валют. `POST /v1/payment/accepted/list`
     pub fn list_accepted(&self) -> Result<Value> {
@@ -116,6 +140,72 @@ impl Payments<'_> {
     pub fn list_discounts(&self) -> Result<Value> {
         self.client.request("/v1/payment/discount/list", &json!({}))
     }
+
+    /// Пачка платежей (до 5000) одним запросом. `POST /v1/payment/batch`
+    ///
+    /// Каждый элемент — обычное тело `create`; `order_id` обязателен на каждом элементе.
+    /// `on_error`: `"continue"` (по умолчанию) или `"stop"`. Обработка фоновая — результаты
+    /// забираются через [`Batches::info`] по `batch_id`. Идемпотентна (`Idempotency-Key`
+    /// генерируется на весь вызов).
+    pub fn create_batch(
+        &self,
+        payments: Vec<Value>,
+        on_error: Option<&str>,
+    ) -> Result<BatchSubmission> {
+        self.client.request_idempotent(
+            "/v1/payment/batch",
+            &batch_body("payments", payments, on_error),
+            None,
+        )
+    }
+
+    /// Пачка возвратов (до 5000). `POST /v1/refund/batch`
+    ///
+    /// На каждом элементе обязательны `reference` и `uuid`/`order_id` инвойса.
+    /// Идемпотентна (`Idempotency-Key`). Результаты — через [`Batches::info`].
+    pub fn refund_batch(
+        &self,
+        refunds: Vec<Value>,
+        on_error: Option<&str>,
+    ) -> Result<BatchSubmission> {
+        self.client.request_idempotent(
+            "/v1/refund/batch",
+            &batch_body("refunds", refunds, on_error),
+            None,
+        )
+    }
+
+    /// Отправить счёт на e-mail (письмо с кнопкой «Оплатить»). `POST /v1/payment/send-email`
+    ///
+    /// `email` `None` — письмо уйдёт на `payer_email` платежа. Лимит: 10 писем/час на адрес
+    /// получателя (`email.rate_limited`).
+    pub fn send_email(
+        &self,
+        uuid: Option<&str>,
+        order_id: Option<&str>,
+        email: Option<&str>,
+    ) -> Result<Value> {
+        let mut body = lookup(uuid, order_id);
+        if let Some(e) = email {
+            body["email"] = json!(e);
+        }
+        self.client.request("/v1/payment/send-email", &body)
+    }
+
+    /// Решить судьбу недоплаченного платежа (`wrong_amount`). `POST /v1/payment/resolve`
+    ///
+    /// [`ResolveAction::Accept`] — оставить частичную оплату (глушит авто-возврат);
+    /// [`ResolveAction::Refund`] — вернуть плательщику. В `params` — `uuid` или `order_id`
+    /// платежа; для refund опционально `address`/`network`/`reference`. Идемпотентен:
+    /// шлётся заголовок `Idempotency-Key` (свой ключ — поле `idempotency_key`).
+    pub fn resolve(&self, action: ResolveAction, params: Value) -> Result<Resolution> {
+        let (mut body, key) = take_idempotency_key(params);
+        if let Value::Object(m) = &mut body {
+            m.insert("action".into(), json!(action.as_str()));
+        }
+        self.client
+            .request_idempotent("/v1/payment/resolve", &body, key)
+    }
 }
 
 // ─────────────────────────────── Payouts ───────────────────────────────
@@ -127,10 +217,16 @@ pub struct Payouts<'a> {
 
 impl Payouts<'_> {
     /// Создать выплату. `POST /v1/payout`
+    ///
+    /// Идемпотентен: шлётся заголовок `Idempotency-Key` (свой ключ — поле `idempotency_key`
+    /// в `params`). `order_id` обязателен всегда (`payout.order_id_required`) и уходит как есть.
     pub fn create(&self, params: Value) -> Result<Payout> {
-        self.client.request("/v1/payout", &params)
+        let (body, key) = take_idempotency_key(params);
+        self.client.request_idempotent("/v1/payout", &body, key)
     }
     /// Массовая выплата (до 100). `POST /v1/payout/mass`
+    ///
+    /// Идемпотентна: заголовок `Idempotency-Key` генерируется на весь вызов.
     pub fn create_mass(
         &self,
         payouts: Vec<Value>,
@@ -140,7 +236,24 @@ impl Payouts<'_> {
         if let Some(s) = source {
             body["source"] = json!(s);
         }
-        self.client.request("/v1/payout/mass", &body)
+        self.client
+            .request_idempotent("/v1/payout/mass", &body, None)
+    }
+    /// Пачка выплат (до 5000) одним запросом. `POST /v1/payout/batch`
+    ///
+    /// Каждый элемент — обычное тело `create`; `order_id` обязателен на каждом элементе.
+    /// `on_error`: `"continue"` (по умолчанию) или `"stop"`. Результаты — через
+    /// [`Batches::info`]. Идемпотентна (`Idempotency-Key`).
+    pub fn create_batch(
+        &self,
+        payouts: Vec<Value>,
+        on_error: Option<&str>,
+    ) -> Result<BatchSubmission> {
+        self.client.request_idempotent(
+            "/v1/payout/batch",
+            &batch_body("payouts", payouts, on_error),
+            None,
+        )
     }
     /// Информация о выплате. `POST /v1/payout/info`
     pub fn info(&self, uuid: Option<&str>, order_id: Option<&str>) -> Result<Payout> {
@@ -165,8 +278,12 @@ impl Payouts<'_> {
             .request("/v1/payout/approve", &json!({ "uuid": uuid }))
     }
     /// Возврат средств платежа. `POST /v1/payment/refund`
+    ///
+    /// Идемпотентен: шлётся заголовок `Idempotency-Key` (свой ключ — поле `idempotency_key`).
     pub fn refund(&self, params: Value) -> Result<Value> {
-        self.client.request("/v1/payment/refund", &params)
+        let (body, key) = take_idempotency_key(params);
+        self.client
+            .request_idempotent("/v1/payment/refund", &body, key)
     }
     /// Кто платит сетевую комиссию выплаты — чтение. `POST /v1/payout/fee-config/get`
     pub fn get_fee_config(&self) -> Result<Value> {
@@ -250,9 +367,13 @@ impl Account<'_> {
         self.client.request("/v1/referral/info", &json!({}))
     }
     /// Перевод на личный кошелёк владельца. `POST /v1/transfer/to-personal`
+    ///
+    /// Идемпотентен: шлётся заголовок `Idempotency-Key` (свой ключ — поле `idempotency_key`
+    /// в `params`). `order_id` уходит как есть и не подставляется.
     pub fn transfer_to_personal(&self, params: Value) -> Result<Value> {
+        let (body, key) = take_idempotency_key(params);
         self.client
-            .request("/v1/transfer/to-personal", &ensure_order_id(params))
+            .request_idempotent("/v1/transfer/to-personal", &body, key)
     }
     /// Включить/выключить VRCS. `enabled` None — чтение. `POST /v1/vrcs`
     pub fn vrcs(&self, enabled: Option<bool>) -> Result<Value> {
@@ -374,5 +495,240 @@ impl Rates<'_> {
         }
         let w: Wrap = self.client.request_public_get("/v1/currencies")?;
         Ok(w.currencies)
+    }
+}
+
+// ─────────────────────────────── Batches ───────────────────────────────
+
+/// Состояние массовых операций (пачек). Постановка — в [`Payments::create_batch`],
+/// [`Payments::refund_batch`], [`Payouts::create_batch`].
+pub struct Batches<'a> {
+    pub(crate) client: &'a Client,
+}
+
+impl Batches<'_> {
+    /// Состояние пачки и результаты элементов. `POST /v1/batch/info`
+    ///
+    /// `limit` вне (0, 500] → 100 (дефолт бэкенда). Элементы index-aligned с запросом постановки.
+    pub fn info(
+        &self,
+        batch_id: &str,
+        limit: Option<i64>,
+        offset: Option<i64>,
+    ) -> Result<BatchInfo> {
+        let mut body = page(limit, offset);
+        body["batch_id"] = json!(batch_id);
+        self.client.request("/v1/batch/info", &body)
+    }
+}
+
+// ─────────────────────────────── Payment links ───────────────────────────────
+
+/// Платёжные ссылки: переиспользуемая ссылка, по которой платят много людей;
+/// каждый платёж — отдельный инвойс со своим адресом.
+pub struct PaymentLinks<'a> {
+    pub(crate) client: &'a Client,
+}
+
+impl PaymentLinks<'_> {
+    /// Создать платёжную ссылку. `POST /v1/payment/link`
+    ///
+    /// Поля: `title`, `description`, `amount_mode` (`fixed|open|range`), `currency`,
+    /// `amount_fixed`/`amount_min`/`amount_max`, `pinned_currency`, `pinned_network`,
+    /// `expires_in` (секунды; 0 — бессрочно).
+    pub fn create(&self, params: Value) -> Result<PaymentLink> {
+        self.client.request("/v1/payment/link", &params)
+    }
+    /// Список ссылок. `POST /v1/payment/link/list`
+    pub fn list(&self, limit: Option<i64>, offset: Option<i64>) -> Result<Vec<PaymentLink>> {
+        #[derive(serde::Deserialize)]
+        struct Wrap {
+            #[serde(default)]
+            items: Vec<PaymentLink>,
+        }
+        let w: Wrap = self
+            .client
+            .request("/v1/payment/link/list", &page(limit, offset))?;
+        Ok(w.items)
+    }
+    /// Детали ссылки (с платежами по ней). `POST /v1/payment/link/info`
+    pub fn info(&self, link_id: &str) -> Result<PaymentLink> {
+        self.client
+            .request("/v1/payment/link/info", &json!({ "link_id": link_id }))
+    }
+    /// Включить/выключить ссылку. `POST /v1/payment/link/toggle`
+    pub fn toggle(&self, link_id: &str, active: bool) -> Result<PaymentLink> {
+        self.client.request(
+            "/v1/payment/link/toggle",
+            &json!({ "link_id": link_id, "active": active }),
+        )
+    }
+    /// Публичные детали ссылки (без подписи). `GET /v1/link/{id}`
+    pub fn public_get(&self, link_id: &str) -> Result<Value> {
+        self.client
+            .request_public_get(&format!("/v1/link/{link_id}"))
+    }
+    /// Публичный checkout по ссылке (без подписи): создаёт инвойс. `POST /v1/link/{id}/checkout`
+    ///
+    /// Поля: `amount`, `currency`, `network`, `payer_email` (pinned-валюта/сеть ссылки побеждают).
+    /// Лимит: 30 инвойсов/мин на ссылку (`paylink.rate_limited`).
+    pub fn checkout(&self, link_id: &str, params: Value) -> Result<Payment> {
+        self.client
+            .request_public(&format!("/v1/link/{link_id}/checkout"), &params)
+    }
+}
+
+// ─────────────────────────────── Splits ───────────────────────────────
+
+/// Сплит-платежи: доля каждого входящего платежа автоматически уходит партнёру.
+pub struct Splits<'a> {
+    pub(crate) client: &'a Client,
+}
+
+impl Splits<'_> {
+    /// Создать правило сплита. `POST /v1/split/rule`
+    ///
+    /// Получатель — либо `{"address","network"}` (внешний, необратимо), либо `{"merchant_id"}`
+    /// (на платформе, обратимо). `percent` — доля в процентах (шаг 0.01, суммарно ≤ 100).
+    pub fn create_rule(&self, params: Value) -> Result<SplitRule> {
+        self.client.request("/v1/split/rule", &params)
+    }
+    /// Правило на внешний адрес (необратимо). Обёртка над [`create_rule`](Self::create_rule).
+    pub fn split_to_address(
+        &self,
+        address: &str,
+        network: &str,
+        percent: f64,
+        note: Option<&str>,
+    ) -> Result<SplitRule> {
+        let mut params = serde_json::json!({
+            "address": address, "network": network, "percent": percent,
+        });
+        if let Some(n) = note {
+            params["note"] = Value::String(n.to_owned());
+        }
+        self.create_rule(params)
+    }
+    /// Правило на мерчанта платформы (обратимо). Обёртка над [`create_rule`](Self::create_rule).
+    pub fn split_to_merchant(
+        &self,
+        merchant_id: &str,
+        percent: f64,
+        note: Option<&str>,
+    ) -> Result<SplitRule> {
+        let mut params = serde_json::json!({
+            "merchant_id": merchant_id, "percent": percent,
+        });
+        if let Some(n) = note {
+            params["note"] = Value::String(n.to_owned());
+        }
+        self.create_rule(params)
+    }
+    /// Список правил. `POST /v1/split/rule/list`
+    pub fn list_rules(&self) -> Result<Vec<SplitRule>> {
+        #[derive(serde::Deserialize)]
+        struct Wrap {
+            #[serde(default)]
+            items: Vec<SplitRule>,
+        }
+        let w: Wrap = self.client.request("/v1/split/rule/list", &json!({}))?;
+        Ok(w.items)
+    }
+    /// Удалить правило. `POST /v1/split/rule/delete`
+    pub fn delete_rule(&self, rule_id: &str) -> Result<Value> {
+        self.client
+            .request("/v1/split/rule/delete", &json!({ "rule_id": rule_id }))
+    }
+    /// Настройки сплитов — чтение. `POST /v1/split/config/get`
+    pub fn get_config(&self) -> Result<SplitConfig> {
+        self.client.request("/v1/split/config/get", &json!({}))
+    }
+    /// Настройки сплитов — запись окна удержания (часы). `POST /v1/split/config/set`
+    pub fn set_config(&self, refund_hold_hours: i64) -> Result<Value> {
+        self.client.request(
+            "/v1/split/config/set",
+            &json!({ "refund_hold_hours": refund_hold_hours }),
+        )
+    }
+}
+
+// ─────────────────────────────── Payout links ───────────────────────────────
+
+/// Payout-ссылки («крипто-чеки»): резервируете средства, получатель сам вводит адрес на
+/// публичной странице claim. Management-методы требуют payout-ключ; claim-методы — публичные.
+///
+/// Эти эндпоинты НЕ принимают заголовок `Idempotency-Key` — SDK его не шлёт. Дедупликация
+/// `create` — через ваш per-link `reference` (уникален per-merchant).
+pub struct PayoutLinks<'a> {
+    pub(crate) client: &'a Client,
+}
+
+impl PayoutLinks<'_> {
+    /// Создать payout-ссылку. `POST /v1/payout/link`
+    ///
+    /// Поля: `currency`, `network`, `amount` (строка) — обязательны; `reference` (ключ
+    /// дедупликации), `title`, `note`, `email` (отправить claim-письмо), `expires_in_hours`.
+    ///
+    /// **Рекомендуется задавать `expires_in_hours` явно** (1–720): при отсутствии/0 бэкенд
+    /// клампит срок к **1 часу**, а не к максимуму. Сохраните `claim_token`/`claim_url` из
+    /// ответа сразу — повторно они не выдаются.
+    ///
+    /// Заголовок `Idempotency-Key` НЕ шлётся (эндпоинт его не поддерживает) — дедуплицируйте
+    /// через `reference`.
+    pub fn create(&self, params: Value) -> Result<PayoutLink> {
+        self.client.request("/v1/payout/link", &params)
+    }
+    /// Пачка payout-ссылок (до 500). `POST /v1/payout/link/batch`
+    ///
+    /// Каждый элемент — обычное тело [`PayoutLinks::create`]; плохой элемент фейлит только себя.
+    /// Ответ index-aligned; все созданные ссылки получают общий `batch_id`. Про
+    /// `expires_in_hours` и отсутствие `Idempotency-Key` — см. [`PayoutLinks::create`].
+    pub fn create_batch(&self, links: Vec<Value>) -> Result<PayoutLinkBatch> {
+        self.client
+            .request("/v1/payout/link/batch", &json!({ "links": links }))
+    }
+    /// Список ссылок (без `claim_token`). `POST /v1/payout/link/list`
+    ///
+    /// `limit` вне (0, 200] → 50 (дефолт бэкенда). Сортировка: новые первыми.
+    pub fn list(&self, limit: Option<i64>, offset: Option<i64>) -> Result<Vec<PayoutLink>> {
+        #[derive(serde::Deserialize)]
+        struct Wrap {
+            #[serde(default)]
+            links: Vec<PayoutLink>,
+        }
+        let w: Wrap = self
+            .client
+            .request("/v1/payout/link/list", &page(limit, offset))?;
+        Ok(w.links)
+    }
+    /// Детали ссылки (после claim — с `payout_id`/`claim_address`). `POST /v1/payout/link/info`
+    pub fn info(&self, link_id: &str) -> Result<PayoutLink> {
+        self.client
+            .request("/v1/payout/link/info", &json!({ "link_id": link_id }))
+    }
+    /// Отменить непорученную (`funded`) ссылку — резерв вернётся. `POST /v1/payout/link/cancel`
+    ///
+    /// Уже полученную/истёкшую отменить нельзя (`payoutlink.not_funded`).
+    pub fn cancel(&self, link_id: &str) -> Result<PayoutLink> {
+        self.client
+            .request("/v1/payout/link/cancel", &json!({ "link_id": link_id }))
+    }
+    /// ПУБЛИЧНЫЕ детали claim-страницы (без подписи, по секретному токену). `GET /v1/claim/{token}`
+    pub fn claim_info(&self, token: &str) -> Result<ClaimInfo> {
+        self.client
+            .request_public_get(&format!("/v1/claim/{token}"))
+    }
+    /// ПУБЛИЧНЫЙ claim: получатель указывает адрес — порождается выплата. `POST /v1/claim/{token}`
+    ///
+    /// Запрос не подписывается (capability — сам токен). `memo` — dest tag/comment для сетей,
+    /// где он нужен (TON и т.п.). Повторный claim с тем же адресом идемпотентен; с другим —
+    /// `payoutlink.claim_in_progress`.
+    pub fn claim(&self, token: &str, address: &str, memo: Option<&str>) -> Result<ClaimResult> {
+        let mut body = json!({ "address": address });
+        if let Some(m) = memo {
+            body["memo"] = json!(m);
+        }
+        self.client
+            .request_public(&format!("/v1/claim/{token}"), &body)
     }
 }

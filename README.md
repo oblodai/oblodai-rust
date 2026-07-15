@@ -1,8 +1,9 @@
 # Oblodai Rust SDK
 
-Официальный Rust SDK для платёжного шлюза **Oblodai**: приём платежей, выплаты, статические кошельки,
-вебхуки. Автоподпись запросов, разбор ответов в типизированные структуры, обработка ошибок и
-автоматические повторы.
+Официальный Rust SDK для платёжного шлюза **Oblodai**: приём платежей, выплаты, массовые операции
+(пачки), платёжные и payout-ссылки, сплит-платежи, счета на e-mail, статические кошельки, вебхуки.
+Автоподпись запросов, разбор ответов в типизированные структуры, обработка ошибок и автоматические
+повторы с защитой от дублей (`Idempotency-Key`).
 
 > **Базовый URL.** По умолчанию — `https://api.oblodai.com`. При необходимости переопределите через `Config::base_url(...)` и свои ключи.
 
@@ -138,10 +139,32 @@ let config = Config::new("...", "...").retry(Some(RetryConfig {
 ```
 
 > **Важно про таймаут.** Таймаут не означает, что операция не прошла. Повтор безопасен благодаря
-> идемпотентности по `order_id`: если операция уже создана — вернётся она же, дубля не будет. Для
-> `payments().create(...)` и `account().transfer_to_personal(...)` SDK **автоматически** подставляет
-> стабильный `order_id` (`idem-<hex>`), если вы его не задали, — один и тот же ключ переиспользуется
-> на всех повторах одного вызова. Задайте свой `order_id` явно, чтобы дедуплицировать между вызовами.
+> заголовку `Idempotency-Key` (см. ниже): если операция уже создана — сервер вернёт её же, дубля
+> не будет.
+
+## Идемпотентность (v1.1.0, ломающее изменение)
+
+Создающие вызовы (`payments().create/refund/resolve/create_batch/refund_batch`,
+`payouts().create/create_mass/create_batch/refund`, `account().transfer_to_personal`) шлют заголовок
+**`Idempotency-Key`** — UUID v4, сгенерированный **один раз до повторов**: все внутренние ретраи
+одного вызова уходят с одним и тем же ключом, поэтому таймаут+повтор не создаёт дубль. Заголовок в
+подпись запроса не входит.
+
+- **`order_id` больше НЕ подставляется автоматически** (поведение v1.0.x удалено). Он уходит как
+  есть — это ваш бизнес-идентификатор, задавайте его явно, чтобы потом находить операцию через
+  `info`. Для выплат `order_id` обязателен всегда (`payout.order_id_required`).
+- **Свой ключ идемпотентности** (дедупликация между вызовами/процессами): передайте поле
+  `idempotency_key` в параметрах создающего вызова — оно уйдёт в заголовок и **не попадёт в тело**:
+
+```rust
+client.payments().create(json!({
+    "amount": "10", "currency": "USD", "order_id": "ord-1",
+    "idempotency_key": "3f8a2c1e-...-ваш-uuid",
+}))?;
+```
+
+- **`payout_links()` — исключение:** эндпоинты `/v1/payout/link*` заголовок не поддерживают, SDK его
+  не шлёт. Дедуплицируйте создание ссылок через per-link `reference`.
 
 ## Свой HTTP-транспорт
 
@@ -185,10 +208,15 @@ client.payments().refund(params)
 client.payments().set_accepted(methods) / list_accepted()
 client.payments().set_accuracy(params) / get_accuracy()
 client.payments().set_autorefund(params) / get_autorefund()
+client.payments().create_batch(payments, on_error)      // пачка платежей (до 5000)
+client.payments().refund_batch(refunds, on_error)       // пачка возвратов
+client.payments().send_email(uuid, order_id, email)     // счёт на e-mail
+client.payments().resolve(ResolveAction::Accept, params) // судьба недоплаты: Accept | Refund
 
 // Выплаты
 client.payouts().create(params)
 client.payouts().create_mass(payouts, source)
+client.payouts().create_batch(payouts, on_error)        // пачка выплат (до 5000)
 client.payouts().info(uuid, order_id)
 client.payouts().history(params)
 client.payouts().services()
@@ -219,16 +247,54 @@ client.webhooks().test_payment(params)
 client.settings().list_auto_withdraw() / set_auto_withdraw(params) / delete_auto_withdraw(currency)
 client.settings().list_allowlist() / add_allowlist(cidr) / remove_allowlist(cidr) / enable_allowlist(bool)
 
+// Массовые операции: состояние пачки
+client.batches().info(batch_id, limit, offset)
+
+// Платёжные ссылки (переиспользуемые, «донатные»)
+client.payment_links().create(params)
+client.payment_links().list(limit, offset) / info(link_id) / toggle(link_id, active)
+client.payment_links().public_get(link_id)              // публично, без подписи
+client.payment_links().checkout(link_id, params)        // публично, без подписи
+
+// Сплит-платежи
+client.splits().create_rule(params)                     // {address,network} ИЛИ {merchant_id} + percent
+client.splits().list_rules() / delete_rule(rule_id)
+client.splits().get_config() / set_config(refund_hold_hours)
+
+// Payout-ссылки («крипто-чеки», payout-ключ)
+client.payout_links().create(params)                    // задавайте expires_in_hours явно!
+client.payout_links().create_batch(links)               // до 500 ссылок
+client.payout_links().list(limit, offset) / info(link_id) / cancel(link_id)
+client.payout_links().claim_info(token)                 // публично, без подписи
+client.payout_links().claim(token, address, memo)       // публично, без подписи
+
 // Курсы (публично, без ключа)
 client.rates().list(Some("ETH"))
+```
+
+### Payout-ссылки: коротко
+
+Вы резервируете средства в ссылку, **не зная кошелька получателя**; получатель открывает публичную
+страницу `claim_url`, вводит адрес — порождается обычная выплата. `claim_token`/`claim_url`
+возвращаются **только в ответе `create`** — сохраните их сразу. **Задавайте `expires_in_hours`
+(1–720) явно**: при 0/отсутствии бэкенд клампит срок к **1 часу**. Непорученная ссылка возвращает
+резерв по истечении срока или при `cancel`.
+
+```rust
+let link = client.payout_links().create(json!({
+    "currency": "USDT", "network": "tron", "amount": "25",
+    "reference": "bonus-42",            // ваш ключ дедупликации
+    "expires_in_hours": 168,            // 7 дней; без этого поля — всего 1 час!
+    "email": "user@example.com",        // опционально: claim-письмо получателю
+}))?;
+println!("{}", link.claim_url); // отдайте получателю
 ```
 
 ## Замечания
 
 - **Суммы — строки** в единицах валюты (`"25.00"`), не числа. Так сохраняется точность.
-- **`order_id`/`reference` — ваш ключ идемпотентности.** Задавайте всегда для платежей и выплат.
-  Если для `payments().create` или `account().transfer_to_personal` вы его опустите, SDK подставит
-  автоматический `idem-<hex>`, чтобы повтор после таймаута не создал дубль.
+- **Дубли исключает заголовок `Idempotency-Key`** (см. раздел «Идемпотентность»). `order_id` —
+  ваш бизнес-идентификатор для поиска операции, задавайте его явно; SDK его не подставляет.
 - **Секрет — только на сервере.** SDK серверный; не встраивайте ключ в клиентские приложения.
 - **Тела запросов** принимаются как `serde_json::Value` — стройте макросом `json!`.
 

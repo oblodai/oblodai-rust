@@ -432,29 +432,54 @@ fn list_discounts_covered() {
     assert!(calls[0].0.ends_with("/v1/payment/discount/list"));
 }
 
-// ─────────────────── Автоматический order_id (идемпотентность) ───────────────────
+// ─────────────────── Идемпотентность: заголовок Idempotency-Key ───────────────────
 
-/// Достаёт `order_id` из тела POST-запроса по индексу вызова.
-fn body_order_id(t: &MockTransport, call_idx: usize) -> String {
+/// Достаёт значение заголовка по индексу вызова.
+fn header_of(t: &MockTransport, call_idx: usize, name: &str) -> Option<String> {
     let calls = t.calls.lock().unwrap();
-    let body = &calls[call_idx].2;
-    let v: serde_json::Value = serde_json::from_str(body).unwrap();
-    v.get("order_id")
-        .and_then(|o| o.as_str())
-        .unwrap_or("")
-        .to_string()
+    calls[call_idx]
+        .1
+        .iter()
+        .find(|(k, _)| k == name)
+        .map(|(_, v)| v.clone())
+}
+
+/// Тело вызова как JSON.
+fn body_json(t: &MockTransport, call_idx: usize) -> serde_json::Value {
+    let calls = t.calls.lock().unwrap();
+    serde_json::from_str(&calls[call_idx].2).unwrap()
+}
+
+/// URL вызова по индексу.
+fn url_of(t: &MockTransport, call_idx: usize) -> String {
+    t.calls.lock().unwrap()[call_idx].0.clone()
 }
 
 fn payment_result() -> serde_json::Value {
     json!({
         "state": 0,
-        "result": { "uuid": "p1", "order_id": "auto", "amount": "10.00",
+        "result": { "uuid": "p1", "order_id": "", "amount": "10.00",
                     "currency": "USD", "payment_status": "check", "address": "T123" }
     })
 }
 
+/// Клиент с быстрыми повторами (для ретрай-тестов).
+fn client_with_retries(t: Arc<MockTransport>) -> Client {
+    Client::with_transport(
+        Config::new("p", "s")
+            .base_url("https://api.test")
+            .retry(Some(oblodai::RetryConfig {
+                max_attempts: 3,
+                initial_delay: std::time::Duration::from_millis(1),
+                max_delay: std::time::Duration::from_millis(5),
+            })),
+        t,
+    )
+    .unwrap()
+}
+
 #[test]
-fn payment_create_injects_order_id_when_missing() {
+fn payment_create_sends_idempotency_key_and_no_auto_order_id() {
     let t = MockTransport::new(vec![ok(payment_result())]);
     let client = client_with(t.clone());
 
@@ -463,9 +488,17 @@ fn payment_create_injects_order_id_when_missing() {
         .create(json!({ "amount": "10", "currency": "USD" }))
         .unwrap();
 
-    let oid = body_order_id(&t, 0);
-    assert!(oid.starts_with("idem-"), "ожидался idem-ключ, получено {oid:?}");
-    assert!(oid.len() > "idem-".len(), "order_id не должен быть пустым");
+    // Заголовок есть и похож на UUID v4.
+    let key = header_of(&t, 0, "Idempotency-Key").expect("нет заголовка Idempotency-Key");
+    assert_eq!(key.len(), 36, "ожидался UUID, получено {key:?}");
+    assert_eq!(key.matches('-').count(), 4);
+
+    // Авто-order_id больше НЕ подставляется: тело уходит как есть.
+    let body = body_json(&t, 0);
+    assert!(
+        body.get("order_id").is_none(),
+        "order_id не должен подставляться автоматически, получено {body}"
+    );
 }
 
 #[test]
@@ -478,12 +511,12 @@ fn payment_create_keeps_caller_order_id() {
         .create(json!({ "amount": "10", "currency": "USD", "order_id": "mine-1" }))
         .unwrap();
 
-    assert_eq!(body_order_id(&t, 0), "mine-1");
+    assert_eq!(body_json(&t, 0)["order_id"], "mine-1");
 }
 
 #[test]
-fn payment_create_same_order_id_across_retries() {
-    // 503 (retriable) один раз, затем успех — тело должно быть идентичным на обеих попытках.
+fn payment_create_same_idempotency_key_across_retries() {
+    // 503 (retriable), затем успех — заголовок и тело обязаны совпадать на обеих попытках.
     let t = MockTransport::new(vec![
         MockResponse {
             status: 503,
@@ -492,93 +525,7 @@ fn payment_create_same_order_id_across_retries() {
         },
         ok(payment_result()),
     ]);
-    let client = Client::with_transport(
-        Config::new("p", "s")
-            .base_url("https://api.test")
-            .retry(Some(oblodai::RetryConfig {
-                max_attempts: 3,
-                initial_delay: std::time::Duration::from_millis(1),
-                max_delay: std::time::Duration::from_millis(5),
-            })),
-        t.clone(),
-    )
-    .unwrap();
-
-    client
-        .payments()
-        .create(json!({ "amount": "10", "currency": "USD" }))
-        .unwrap();
-
-    assert_eq!(t.call_count(), 2, "должно быть 2 попытки: 503 + успех");
-    let first = body_order_id(&t, 0);
-    let second = body_order_id(&t, 1);
-    assert!(first.starts_with("idem-"));
-    assert_eq!(first, second, "order_id обязан совпадать на повторе, иначе возможен дубль");
-}
-
-#[test]
-fn payment_create_injects_order_id_when_whitespace_only() {
-    // Строка из одних пробелов должна нормализоваться и заменяться на сгенерированный ключ.
-    let t = MockTransport::new(vec![ok(payment_result())]);
-    let client = client_with(t.clone());
-
-    client
-        .payments()
-        .create(json!({ "amount": "10", "currency": "USD", "order_id": "   " }))
-        .unwrap();
-
-    let oid = body_order_id(&t, 0);
-    assert!(
-        oid.starts_with("idem-"),
-        "пробельный order_id должен нормализоваться в idem-ключ, получено {oid:?}"
-    );
-    assert!(oid.len() > "idem-".len(), "order_id не должен быть пустым");
-    assert_ne!(oid.trim(), "", "order_id не должен быть пробельным");
-}
-
-#[test]
-fn payment_create_injects_order_id_when_non_string() {
-    // Нестроковое значение order_id (число) не должно проходить «как есть».
-    let t = MockTransport::new(vec![ok(payment_result())]);
-    let client = client_with(t.clone());
-
-    client
-        .payments()
-        .create(json!({ "amount": "10", "currency": "USD", "order_id": 12345 }))
-        .unwrap();
-
-    let calls = t.calls.lock().unwrap();
-    let v: serde_json::Value = serde_json::from_str(&calls[0].2).unwrap();
-    let oid = v.get("order_id").and_then(|o| o.as_str());
-    assert!(
-        matches!(oid, Some(s) if s.starts_with("idem-")),
-        "нестроковый order_id должен заменяться на idem-строку, получено {:?}",
-        v.get("order_id")
-    );
-}
-
-#[test]
-fn payment_create_real_order_id_preserved_across_retries() {
-    // Реальный непустой order_id сохраняется и идентичен на повторе (503 → успех).
-    let t = MockTransport::new(vec![
-        MockResponse {
-            status: 503,
-            body: json!({ "error": { "code": "x.unavailable", "message": "later" } }).to_string(),
-            retry_after: None,
-        },
-        ok(payment_result()),
-    ]);
-    let client = Client::with_transport(
-        Config::new("p", "s")
-            .base_url("https://api.test")
-            .retry(Some(oblodai::RetryConfig {
-                max_attempts: 3,
-                initial_delay: std::time::Duration::from_millis(1),
-                max_delay: std::time::Duration::from_millis(5),
-            })),
-        t.clone(),
-    )
-    .unwrap();
+    let client = client_with_retries(t.clone());
 
     client
         .payments()
@@ -586,26 +533,524 @@ fn payment_create_real_order_id_preserved_across_retries() {
         .unwrap();
 
     assert_eq!(t.call_count(), 2, "должно быть 2 попытки: 503 + успех");
-    assert_eq!(body_order_id(&t, 0), "ord-1", "реальный order_id обязан сохраняться");
+    let k1 = header_of(&t, 0, "Idempotency-Key").expect("нет заголовка на 1-й попытке");
+    let k2 = header_of(&t, 1, "Idempotency-Key").expect("нет заголовка на 2-й попытке");
     assert_eq!(
-        body_order_id(&t, 0),
-        body_order_id(&t, 1),
-        "order_id обязан совпадать на повторе"
+        k1, k2,
+        "Idempotency-Key обязан совпадать на повторе, иначе возможен дубль"
+    );
+    assert_eq!(
+        body_json(&t, 0),
+        body_json(&t, 1),
+        "тело обязано быть идентичным на повторе"
+    );
+    assert_eq!(
+        body_json(&t, 0)["order_id"],
+        "ord-1",
+        "order_id уходит как есть"
     );
 }
 
 #[test]
-fn transfer_to_personal_injects_order_id() {
-    let t = MockTransport::new(vec![ok(json!({ "state": 0, "result": { "ok": true } }))]);
+fn payment_create_explicit_idempotency_key_goes_to_header_only() {
+    let t = MockTransport::new(vec![ok(payment_result())]);
     let client = client_with(t.clone());
 
+    client
+        .payments()
+        .create(json!({ "amount": "10", "currency": "USD", "idempotency_key": "my-key-1" }))
+        .unwrap();
+
+    assert_eq!(
+        header_of(&t, 0, "Idempotency-Key").as_deref(),
+        Some("my-key-1"),
+        "явный ключ обязан уйти в заголовок"
+    );
+    let body = body_json(&t, 0);
+    assert!(
+        body.get("idempotency_key").is_none(),
+        "idempotency_key не должен попадать в тело, получено {body}"
+    );
+}
+
+#[test]
+fn payout_create_and_transfer_send_idempotency_key() {
+    let t = MockTransport::new(vec![
+        ok(json!({ "state": 0, "result": { "uuid": "po1", "status": "check" } })),
+        ok(json!({ "state": 0, "result": { "ok": true } })),
+    ]);
+    let client = client_with(t.clone());
+
+    client
+        .payouts()
+        .create(
+            json!({ "amount": "5", "currency": "USDT", "network": "tron",
+                        "address": "T1", "order_id": "w-1" }),
+        )
+        .unwrap();
     client
         .account()
         .transfer_to_personal(json!({ "amount": "5", "currency": "USDT" }))
         .unwrap();
 
-    let oid = body_order_id(&t, 0);
-    assert!(oid.starts_with("idem-"), "ожидался idem-ключ, получено {oid:?}");
+    assert!(header_of(&t, 0, "Idempotency-Key").is_some());
+    assert!(header_of(&t, 1, "Idempotency-Key").is_some());
+    // Авто-order_id не подставляется и здесь.
+    assert!(body_json(&t, 1).get("order_id").is_none());
+}
+
+#[test]
+fn info_endpoints_do_not_send_idempotency_key() {
+    let t = MockTransport::new(vec![ok(payment_result())]);
+    let client = client_with(t.clone());
+
+    client.payments().info(Some("p1"), None).unwrap();
+    assert!(
+        header_of(&t, 0, "Idempotency-Key").is_none(),
+        "read-only эндпоинты не должны слать Idempotency-Key"
+    );
+}
+
+// ─────────────────── Массовые операции (v1.1.0) ───────────────────
+
+fn batch_submit_result(kind: &str) -> serde_json::Value {
+    json!({ "state": 0, "result": {
+        "batch_id": "b-1", "kind": kind, "count": 2, "status": "pending"
+    }})
+}
+
+#[test]
+fn payment_batch_submit() {
+    let t = MockTransport::new(vec![ok(batch_submit_result("payment"))]);
+    let client = client_with(t.clone());
+
+    let sub = client
+        .payments()
+        .create_batch(
+            vec![
+                json!({ "amount": "10", "currency": "USD", "order_id": "a-1" }),
+                json!({ "amount": "20", "currency": "EUR", "order_id": "a-2" }),
+            ],
+            Some("stop"),
+        )
+        .unwrap();
+
+    assert_eq!(sub.batch_id, "b-1");
+    assert_eq!(sub.status, "pending");
+    assert!(url_of(&t, 0).ends_with("/v1/payment/batch"));
+    let body = body_json(&t, 0);
+    assert_eq!(body["payments"].as_array().unwrap().len(), 2);
+    assert_eq!(body["on_error"], "stop");
+    assert!(
+        header_of(&t, 0, "Idempotency-Key").is_some(),
+        "батч обязан быть идемпотентным"
+    );
+}
+
+#[test]
+fn refund_and_payout_batch_paths_and_fields() {
+    let t = MockTransport::new(vec![
+        ok(batch_submit_result("refund")),
+        ok(batch_submit_result("payout")),
+    ]);
+    let client = client_with(t.clone());
+
+    client
+        .payments()
+        .refund_batch(vec![json!({ "uuid": "p1", "reference": "r-1" })], None)
+        .unwrap();
+    client
+        .payouts()
+        .create_batch(vec![json!({ "amount": "5", "order_id": "w-1" })], None)
+        .unwrap();
+
+    assert!(url_of(&t, 0).ends_with("/v1/refund/batch"));
+    assert!(body_json(&t, 0).get("refunds").is_some());
+    assert!(
+        body_json(&t, 0).get("on_error").is_none(),
+        "on_error опционален"
+    );
+    assert!(url_of(&t, 1).ends_with("/v1/payout/batch"));
+    assert!(body_json(&t, 1).get("payouts").is_some());
+    assert!(header_of(&t, 1, "Idempotency-Key").is_some());
+}
+
+#[test]
+fn batch_info_parses_items() {
+    let t = MockTransport::new(vec![ok(json!({ "state": 0, "result": {
+        "batch_id": "b-1", "kind": "payment", "status": "completed", "on_error": "continue",
+        "total": 2, "succeeded": 1, "failed": 1,
+        "items": [
+            { "idx": 0, "status": "succeeded", "order_id": "a-1",
+              "result": { "uuid": "p1", "payment_status": "check" } },
+            { "idx": 1, "status": "failed", "order_id": "a-2",
+              "error": "payment.unknown_currency" }
+        ]
+    }}))]);
+    let client = client_with(t.clone());
+
+    let info = client.batches().info("b-1", Some(100), Some(0)).unwrap();
+    assert_eq!(info.status, "completed");
+    assert_eq!(info.total, 2);
+    assert_eq!(info.items.len(), 2);
+    assert_eq!(info.items[0].result["uuid"], "p1");
+    assert_eq!(info.items[1].error, json!("payment.unknown_currency"));
+
+    assert!(url_of(&t, 0).ends_with("/v1/batch/info"));
+    let body = body_json(&t, 0);
+    assert_eq!(body["batch_id"], "b-1");
+    assert_eq!(body["limit"], 100);
+    assert!(
+        header_of(&t, 0, "Idempotency-Key").is_none(),
+        "batch/info — read-only"
+    );
+}
+
+// ─────────────────── Платёжные ссылки (v1.1.0) ───────────────────
+
+#[test]
+fn payment_link_create_and_toggle() {
+    let t = MockTransport::new(vec![
+        ok(json!({ "state": 0, "result": { "link_id": "l-1", "url": "https://pay/link/l-1" } })),
+        ok(json!({ "state": 0, "result": { "link_id": "l-1", "active": false } })),
+    ]);
+    let client = client_with(t.clone());
+
+    let link = client
+        .payment_links()
+        .create(json!({ "title": "Донат", "amount_mode": "open", "currency": "USD" }))
+        .unwrap();
+    assert_eq!(link.link_id, "l-1");
+    assert_eq!(link.url, "https://pay/link/l-1");
+    assert!(url_of(&t, 0).ends_with("/v1/payment/link"));
+
+    let toggled = client.payment_links().toggle("l-1", false).unwrap();
+    assert!(!toggled.active);
+    assert!(url_of(&t, 1).ends_with("/v1/payment/link/toggle"));
+    assert_eq!(body_json(&t, 1)["active"], false);
+}
+
+#[test]
+fn payment_link_list_and_info() {
+    let t = MockTransport::new(vec![
+        ok(json!({ "state": 0, "result": { "items": [
+            { "link_id": "l-1", "amount_mode": "fixed", "amount_fixed": "5", "active": true }
+        ]}})),
+        ok(json!({ "state": 0, "result": {
+            "link_id": "l-1", "active": true,
+            "payments": [ { "uuid": "p1", "status": "paid", "amount": "5" } ]
+        }})),
+    ]);
+    let client = client_with(t.clone());
+
+    let items = client.payment_links().list(Some(10), None).unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].amount_fixed, "5");
+    assert!(url_of(&t, 0).ends_with("/v1/payment/link/list"));
+
+    let info = client.payment_links().info("l-1").unwrap();
+    assert_eq!(info.payments.len(), 1);
+    assert_eq!(info.payments[0].status, "paid");
+    assert!(url_of(&t, 1).ends_with("/v1/payment/link/info"));
+}
+
+#[test]
+fn payment_link_checkout_public_unsigned() {
+    let t = MockTransport::new(vec![ok(payment_result())]);
+    let client = client_with(t.clone());
+
+    let p = client
+        .payment_links()
+        .checkout(
+            "l-1",
+            json!({ "amount": "5", "currency": "USDT", "network": "tron" }),
+        )
+        .unwrap();
+    assert_eq!(p.uuid, "p1");
+
+    assert!(url_of(&t, 0).ends_with("/v1/link/l-1/checkout"));
+    let headers = t.last_headers();
+    assert!(
+        !headers.iter().any(|(k, _)| k == "X-Signature"),
+        "публичный checkout не должен подписываться"
+    );
+}
+
+// ─────────────────── Сплиты (v1.1.0) ───────────────────
+
+#[test]
+fn splits_rules_and_config() {
+    let t = MockTransport::new(vec![
+        ok(json!({ "state": 0, "result": { "rule_id": "r-1", "percent": 10.0 } })),
+        ok(json!({ "state": 0, "result": { "items": [
+            { "rule_id": "r-1", "percent": 10.0, "active": true,
+              "address": "T1", "network": "tron", "reversible": false }
+        ]}})),
+        ok(json!({ "state": 0, "result": { "deleted": true } })),
+        ok(json!({ "state": 0, "result": { "refund_hold_hours": 24 } })),
+    ]);
+    let client = client_with(t.clone());
+
+    let rule = client
+        .splits()
+        .create_rule(json!({ "address": "T1", "network": "tron", "percent": 10.0 }))
+        .unwrap();
+    assert_eq!(rule.rule_id, "r-1");
+
+    let rules = client.splits().list_rules().unwrap();
+    assert_eq!(rules.len(), 1);
+    assert!(!rules[0].reversible);
+
+    client.splits().delete_rule("r-1").unwrap();
+    assert_eq!(body_json(&t, 2)["rule_id"], "r-1");
+
+    let cfg = client.splits().get_config().unwrap();
+    assert_eq!(cfg.refund_hold_hours, 24);
+
+    assert!(url_of(&t, 0).ends_with("/v1/split/rule"));
+    assert!(url_of(&t, 1).ends_with("/v1/split/rule/list"));
+    assert!(url_of(&t, 2).ends_with("/v1/split/rule/delete"));
+    assert!(url_of(&t, 3).ends_with("/v1/split/config/get"));
+}
+
+// ─────────────────── Счёт на e-mail (v1.1.0) ───────────────────
+
+#[test]
+fn send_email_body_and_path() {
+    let t = MockTransport::new(vec![ok(json!({ "state": 0, "result": {
+        "sent": true, "email": "b@e.com", "uuid": "p1"
+    }}))]);
+    let client = client_with(t.clone());
+
+    let res = client
+        .payments()
+        .send_email(Some("p1"), None, Some("b@e.com"))
+        .unwrap();
+    assert_eq!(res["sent"], true);
+
+    assert!(url_of(&t, 0).ends_with("/v1/payment/send-email"));
+    let body = body_json(&t, 0);
+    assert_eq!(body["uuid"], "p1");
+    assert_eq!(body["email"], "b@e.com");
+    assert!(
+        header_of(&t, 0, "Idempotency-Key").is_none(),
+        "send-email без Idempotency-Key"
+    );
+}
+
+// ─────────────────── Payout-ссылки (v1.1.0) ───────────────────
+
+use oblodai::PayoutLinkStatus;
+
+fn payout_link_result() -> serde_json::Value {
+    json!({ "state": 0, "result": {
+        "link_id": "pl-1", "status": "funded", "amount": "0.005", "currency": "BTC",
+        "network": "bitcoin", "expires_at": "2026-08-14T17:00:00Z",
+        "claim_token": "Xk3vTOKEN", "claim_url": "https://pay/claim/Xk3vTOKEN"
+    }})
+}
+
+#[test]
+fn payout_link_create_no_idempotency_header() {
+    let t = MockTransport::new(vec![ok(payout_link_result())]);
+    let client = client_with(t.clone());
+
+    let link = client
+        .payout_links()
+        .create(
+            json!({ "currency": "BTC", "network": "bitcoin", "amount": "0.005",
+                        "reference": "bonus-42", "expires_in_hours": 720 }),
+        )
+        .unwrap();
+
+    assert_eq!(link.link_id, "pl-1");
+    assert_eq!(link.status, PayoutLinkStatus::Funded);
+    assert_eq!(link.claim_token, "Xk3vTOKEN");
+
+    assert!(url_of(&t, 0).ends_with("/v1/payout/link"));
+    assert!(
+        header_of(&t, 0, "Idempotency-Key").is_none(),
+        "/v1/payout/link не поддерживает Idempotency-Key — дедуп через reference"
+    );
+    // Но запрос подписан (management-эндпоинт).
+    assert!(t.last_headers().iter().any(|(k, _)| k == "X-Signature"));
+}
+
+#[test]
+fn payout_link_batch_index_aligned() {
+    let t = MockTransport::new(vec![ok(json!({ "state": 0, "result": {
+        "created": 1, "total": 2,
+        "results": [
+            { "ok": true, "link": { "link_id": "pl-1", "status": "funded",
+                                    "claim_token": "tkn", "batch_id": "bt-1" } },
+            { "ok": false, "error": "payoutlink.insufficient_funds",
+              "message": "available balance is less than the link amount" }
+        ]
+    }}))]);
+    let client = client_with(t.clone());
+
+    let res = client
+        .payout_links()
+        .create_batch(vec![
+            json!({ "currency": "BTC", "network": "bitcoin", "amount": "0.005" }),
+            json!({ "currency": "BTC", "network": "bitcoin", "amount": "99" }),
+        ])
+        .unwrap();
+
+    assert_eq!(res.created, 1);
+    assert_eq!(res.total, 2);
+    assert!(res.results[0].ok);
+    assert_eq!(res.results[0].link.as_ref().unwrap().batch_id, "bt-1");
+    assert!(!res.results[1].ok);
+    assert_eq!(res.results[1].error, "payoutlink.insufficient_funds");
+    assert!(res.results[1].link.is_none());
+
+    assert!(url_of(&t, 0).ends_with("/v1/payout/link/batch"));
+    assert_eq!(body_json(&t, 0)["links"].as_array().unwrap().len(), 2);
+    assert!(header_of(&t, 0, "Idempotency-Key").is_none());
+}
+
+#[test]
+fn payout_link_list_info_cancel() {
+    let t = MockTransport::new(vec![
+        ok(json!({ "state": 0, "result": { "links": [
+            { "link_id": "pl-1", "status": "claimed", "payout_id": "po-9", "claim_address": "bc1q" }
+        ]}})),
+        ok(json!({ "state": 0, "result": { "link_id": "pl-2", "status": "weird_future_status" } })),
+        ok(json!({ "state": 0, "result": { "link_id": "pl-3", "status": "cancelled" } })),
+    ]);
+    let client = client_with(t.clone());
+
+    let links = client.payout_links().list(Some(50), Some(0)).unwrap();
+    assert_eq!(links[0].status, PayoutLinkStatus::Claimed);
+    assert_eq!(links[0].payout_id, "po-9");
+    assert!(
+        links[0].claim_token.is_empty(),
+        "list не содержит claim_token"
+    );
+
+    // Неизвестный статус не ломает разбор (forward-совместимость).
+    let info = client.payout_links().info("pl-2").unwrap();
+    assert_eq!(info.status, PayoutLinkStatus::Unknown);
+
+    let cancelled = client.payout_links().cancel("pl-3").unwrap();
+    assert_eq!(cancelled.status, PayoutLinkStatus::Cancelled);
+
+    assert!(url_of(&t, 0).ends_with("/v1/payout/link/list"));
+    assert!(url_of(&t, 1).ends_with("/v1/payout/link/info"));
+    assert!(url_of(&t, 2).ends_with("/v1/payout/link/cancel"));
+    assert_eq!(body_json(&t, 2)["link_id"], "pl-3");
+}
+
+#[test]
+fn claim_info_public_get_unsigned() {
+    let t = MockTransport::new(vec![ok(json!({ "state": 0, "result": {
+        "status": "funded", "amount": "0.005", "currency": "BTC", "network": "bitcoin",
+        "expires_at": "2026-08-14T17:00:00Z", "claimable": true
+    }}))]);
+    let client = client_with(t.clone());
+
+    let info = client.payout_links().claim_info("Xk3vTOKEN").unwrap();
+    assert!(info.claimable);
+    assert_eq!(info.status, PayoutLinkStatus::Funded);
+
+    assert!(url_of(&t, 0).ends_with("/v1/claim/Xk3vTOKEN"));
+    let headers = t.last_headers();
+    assert!(
+        !headers
+            .iter()
+            .any(|(k, _)| k == "X-Signature" || k == "X-Public-Id"),
+        "GET /v1/claim/{{token}} — публичный, без подписи"
+    );
+}
+
+#[test]
+fn claim_public_post_unsigned() {
+    let t = MockTransport::new(vec![ok(json!({ "state": 0, "result": {
+        "status": "claimed", "payout_id": "po-1", "amount": "0.005",
+        "currency": "BTC", "network": "bitcoin", "address": "bc1qxyz"
+    }}))]);
+    let client = client_with(t.clone());
+
+    let res = client
+        .payout_links()
+        .claim("Xk3vTOKEN", "bc1qxyz", Some("memo-1"))
+        .unwrap();
+    assert_eq!(res.status, PayoutLinkStatus::Claimed);
+    assert_eq!(res.payout_id, "po-1");
+    assert_eq!(res.address, "bc1qxyz");
+
+    assert!(url_of(&t, 0).ends_with("/v1/claim/Xk3vTOKEN"));
+    let body = body_json(&t, 0);
+    assert_eq!(body["address"], "bc1qxyz");
+    assert_eq!(body["memo"], "memo-1");
+    let headers = t.last_headers();
+    assert!(
+        !headers
+            .iter()
+            .any(|(k, _)| k == "X-Signature" || k == "X-Public-Id"),
+        "POST /v1/claim/{{token}} — публичный, без подписи"
+    );
+    assert!(header_of(&t, 0, "Idempotency-Key").is_none());
+}
+
+// ─────────────────── Resolve недоплаты (v1.1.0) ───────────────────
+
+use oblodai::ResolveAction;
+
+#[test]
+fn resolve_accept_sends_action_and_idempotency() {
+    let t = MockTransport::new(vec![ok(json!({ "state": 0, "result": {
+        "payment_uuid": "p1", "order_id": "ord-1", "resolution": "accepted",
+        "amount_kept": "48.5", "currency": "USDT"
+    }}))]);
+    let client = client_with(t.clone());
+
+    let res = client
+        .payments()
+        .resolve(ResolveAction::Accept, json!({ "uuid": "p1" }))
+        .unwrap();
+    assert_eq!(res.resolution, "accepted");
+    assert_eq!(res.amount_kept, "48.5");
+
+    assert!(url_of(&t, 0).ends_with("/v1/payment/resolve"));
+    let body = body_json(&t, 0);
+    assert_eq!(body["action"], "accept");
+    assert_eq!(body["uuid"], "p1");
+    assert!(
+        header_of(&t, 0, "Idempotency-Key").is_some(),
+        "resolve обёрнут в withIdempotency"
+    );
+}
+
+#[test]
+fn resolve_refund_with_explicit_key() {
+    let t = MockTransport::new(vec![ok(json!({ "state": 0, "result": {
+        "payment_uuid": "p1", "order_id": "ord-1", "resolution": "refunded",
+        "uuid": "po-refund-1", "amount": "48.5", "currency": "USDT",
+        "address": "0xPayer", "status": "check", "is_final": false
+    }}))]);
+    let client = client_with(t.clone());
+
+    let res = client
+        .payments()
+        .resolve(
+            ResolveAction::Refund,
+            json!({ "order_id": "ord-1", "reference": "rf-1", "idempotency_key": "res-key-1" }),
+        )
+        .unwrap();
+    assert_eq!(res.resolution, "refunded");
+    assert_eq!(res.uuid, "po-refund-1");
+    assert!(!res.is_final);
+
+    let body = body_json(&t, 0);
+    assert_eq!(body["action"], "refund");
+    assert_eq!(body["reference"], "rf-1");
+    assert!(body.get("idempotency_key").is_none());
+    assert_eq!(
+        header_of(&t, 0, "Idempotency-Key").as_deref(),
+        Some("res-key-1")
+    );
 }
 
 #[test]
@@ -617,7 +1062,10 @@ fn funds_maturing_is_terminal() {
         raw: String::new(),
         retry_after: None,
     };
-    assert!(!e.is_retriable(), "payout.funds_maturing должна быть терминальной");
+    assert!(
+        !e.is_retriable(),
+        "payout.funds_maturing должна быть терминальной"
+    );
 }
 
 #[test]

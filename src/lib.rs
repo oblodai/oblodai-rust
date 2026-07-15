@@ -45,5 +45,6 @@ pub use client::{Client, Config, RetryConfig};
 pub use error::{Error, Result};
 pub use http::{HttpResponse, HttpTransport};
 pub use logging::{LogLevel, Logger, ENV_LOG};
+pub use models::{PayoutLinkStatus, ResolveAction};
 pub use signing::compute_webhook_signature;
 pub use webhooks::{construct_event, verify_webhook, VerifyOptions, WebhookHeaders};
