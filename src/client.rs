@@ -11,6 +11,9 @@ use std::time::{Duration, Instant};
 
 const DEFAULT_BASE_URL: &str = "https://api.oblodai.com";
 
+/// Таймаут одной HTTP-попытки по умолчанию.
+pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Настройки повторов с экспоненциальным backoff.
 #[derive(Debug, Clone)]
 pub struct RetryConfig {
@@ -40,12 +43,26 @@ impl Default for RetryConfig {
 pub struct Config {
     /// `public_id` — несекретный идентификатор ключа (обязателен).
     pub public_id: String,
-    /// `secret` для подписи запросов (обязателен).
+    /// Секрет API-ключа: подписывает ИСХОДЯЩИЕ запросы SDK (обязателен).
+    ///
+    /// Это НЕ секрет для проверки вебхуков — тот отдельный и возвращается
+    /// [`crate::resources::Webhooks::register`] в поле `secret`.
     pub secret: String,
     /// Базовый URL API (по умолчанию `https://api.oblodai.com`).
+    ///
+    /// Схема обязана быть `https://`. Единственное исключение — loopback (`localhost`,
+    /// `127.0.0.0/8`, `::1`): по нему поднимают локальные стенды, и там `http://` разрешён.
+    /// На любом другом хосте `http://` отвергается ошибкой [`Error::Config`]: подпись запроса
+    /// (`X-Signature`) и `X-Public-Id` ушли бы по открытому каналу.
     pub base_url: String,
     /// Настройки повторов. `None` — без повторов.
     pub retry: Option<RetryConfig>,
+    /// Таймаут ОДНОЙ HTTP-попытки (по умолчанию [`DEFAULT_TIMEOUT`] — 30 секунд).
+    ///
+    /// Это таймаут попытки, а не всего вызова: при включённых повторах суммарное время ожидания
+    /// равно `timeout * max_attempts` плюс задержки backoff. Значение применяет встроенный
+    /// reqwest-транспорт; свой [`HttpTransport`] волен трактовать его по-своему.
+    pub timeout: Duration,
     /// Опциональный логгер (по умолчанию `None` — логирование выключено). Если `None`, но задана
     /// переменная окружения `OBLODAI_LOG`, при создании клиента будет установлен встроенный
     /// stderr-логгер. Логи НИКОГДА не содержат секрет/подпись/тела — только метаданные запроса.
@@ -60,13 +77,20 @@ impl Config {
             secret: secret.into(),
             base_url: DEFAULT_BASE_URL.to_string(),
             retry: Some(RetryConfig::default()),
+            timeout: DEFAULT_TIMEOUT,
             logger: None,
         }
     }
 
-    /// Задаёт базовый URL.
+    /// Задаёт базовый URL. Схема — только `https://`, кроме loopback (см. [`Config::base_url`]).
     pub fn base_url(mut self, url: impl Into<String>) -> Self {
         self.base_url = url.into();
+        self
+    }
+
+    /// Задаёт таймаут одной HTTP-попытки (по умолчанию 30 секунд).
+    pub fn timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
         self
     }
 
@@ -99,9 +123,76 @@ impl Config {
             secret,
             base_url,
             retry: Some(RetryConfig::default()),
+            timeout: DEFAULT_TIMEOUT,
             logger: None,
         })
     }
+}
+
+// ─────────────────────────── Проверка базового URL ───────────────────────────
+
+/// Проверяет схему базового URL: разрешён только `https://`, кроме loopback-хостов
+/// (`localhost`, `127.0.0.0/8`, `::1`), где допустим и `http://` — там работают локальные стенды.
+///
+/// Причина запрета: SDK кладёт в заголовки `X-Public-Id`, `X-Timestamp` и `X-Signature`. По
+/// открытому HTTP их видит любой посредник, а подпись пригодна для повтора запроса.
+fn validate_base_url(raw: &str) -> Result<()> {
+    let trimmed = raw.trim();
+    let Some((scheme, rest)) = trimmed.split_once("://") else {
+        return Err(Error::Config(format!(
+            "base_url должен начинаться с https:// (получено: {trimmed:?})"
+        )));
+    };
+    let scheme = scheme.to_ascii_lowercase();
+    if scheme == "https" {
+        return Ok(());
+    }
+    if scheme != "http" {
+        return Err(Error::Config(format!(
+            "неподдерживаемая схема base_url: {scheme:?}; ожидается https://"
+        )));
+    }
+    let host = host_of(rest);
+    if is_loopback(&host) {
+        return Ok(());
+    }
+    Err(Error::Config(format!(
+        "base_url должен использовать https://, получен http:// на хосте {host:?}: \
+         по открытому каналу уходят X-Public-Id и подпись запроса X-Signature. \
+         http:// допустим только для loopback (localhost, 127.0.0.1, ::1) — локальных стендов"
+    )))
+}
+
+/// Достаёт хост из части URL после `://`: отбрасывает userinfo, путь/запрос/фрагмент и порт.
+/// IPv6 в скобках (`[::1]:8095`) разворачивается в `::1`.
+fn host_of(rest: &str) -> String {
+    let authority = rest
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or_default()
+        .rsplit('@')
+        .next()
+        .unwrap_or_default();
+    let host = if let Some(end) = authority.strip_prefix('[').and_then(|s| s.find(']')) {
+        &authority[1..=end]
+    } else {
+        authority.split(':').next().unwrap_or_default()
+    };
+    host.trim_end_matches(']').to_ascii_lowercase()
+}
+
+/// `true` для loopback-хостов: `localhost`, любой адрес из `127.0.0.0/8`, IPv6 `::1`.
+fn is_loopback(host: &str) -> bool {
+    if host == "localhost" || host == "::1" || host == "0:0:0:0:0:0:0:1" {
+        return true;
+    }
+    let mut octets = host.split('.');
+    let first = octets.next().unwrap_or_default();
+    if first != "127" {
+        return false;
+    }
+    let rest: Vec<&str> = octets.collect();
+    rest.len() == 3 && rest.iter().all(|o| o.parse::<u8>().is_ok())
 }
 
 /// Имена переменных окружения для [`Config::from_env`].
@@ -127,7 +218,37 @@ pub fn is_test_key(public_id: &str) -> bool {
 
 /// Клиент Oblodai API.
 ///
-/// Ресурсы доступны как методы: [`Client::payments`], [`Client::payouts`], [`Client::wallets`],
+/// # Клиент БЛОКИРУЮЩИЙ
+///
+/// Встроенный транспорт — `reqwest::blocking`, а паузы между повторами — `std::thread::sleep`.
+/// Каждый вызов блокирует поток, из которого сделан, на время запроса (до [`Config::timeout`]),
+/// а при включённых повторах — ещё и на время задержек backoff.
+///
+/// **Внутри async-приложения (tokio/async-std) не вызывайте методы SDK напрямую из задачи** —
+/// заблокированный поток исполнителя останавливает и все остальные задачи на нём. Уносите вызов
+/// на блокирующий пул:
+///
+/// ```ignore
+/// // (не компилируется в doctest: tokio не является зависимостью SDK)
+/// use oblodai::{Client, Config};
+/// use serde_json::json;
+///
+/// let payment = tokio::task::spawn_blocking(|| {
+///     let client = Client::new(Config::new("test_...", "oblodai_test_..."))?;
+///     client.payments().create(json!({
+///         "amount": "10", "currency": "USD", "order_id": "order-1",
+///         "to_currency": "USDT", "network": "tron",
+///     }))
+/// })
+/// .await??; // первый `?` — паника/отмена задачи, второй — ошибка SDK
+/// ```
+///
+/// [`Client`] — `Send + Sync`, поэтому его можно положить в `Arc` и переиспользовать из
+/// нескольких `spawn_blocking` вместо создания на каждый вызов.
+///
+/// # Ресурсы
+///
+/// Доступны как методы: [`Client::payments`], [`Client::payouts`], [`Client::wallets`],
 /// [`Client::account`], [`Client::webhooks`], [`Client::settings`], [`Client::rates`],
 /// [`Client::batches`], [`Client::payment_links`], [`Client::splits`], [`Client::payout_links`],
 /// [`Client::sandbox`].
@@ -136,15 +257,19 @@ pub struct Client {
     secret: String,
     base_url: String,
     retry: Option<RetryConfig>,
+    timeout: Duration,
     transport: Arc<dyn HttpTransport>,
     logger: Option<Logger>,
 }
 
 impl Client {
     /// Создаёт клиента со встроенным reqwest-транспортом (фича `reqwest-client`).
+    ///
+    /// Возвращает [`Error::Config`], если `base_url` не `https://` (кроме loopback —
+    /// см. [`Config::base_url`]).
     #[cfg(feature = "reqwest-client")]
     pub fn new(config: Config) -> Result<Self> {
-        let transport = Arc::new(ReqwestTransport::new()?);
+        let transport = Arc::new(ReqwestTransport::with_timeout(config.timeout)?);
         Self::with_transport(config, transport)
     }
 
@@ -163,17 +288,25 @@ impl Client {
         if config.secret.is_empty() {
             return Err(Error::Config("secret обязателен".into()));
         }
+        // Подпись запроса не должна уходить по открытому каналу; loopback — исключение для стендов.
+        validate_base_url(&config.base_url)?;
         // Логгер из конфига имеет приоритет; иначе — встроенный env-логгер по `OBLODAI_LOG`
         // (читается один раз при создании клиента).
         let logger = config.logger.or_else(env_logger);
         Ok(Self {
             public_id: config.public_id,
             secret: config.secret,
-            base_url: config.base_url.trim_end_matches('/').to_string(),
+            base_url: config.base_url.trim().trim_end_matches('/').to_string(),
             retry: config.retry,
+            timeout: config.timeout,
             transport,
             logger,
         })
+    }
+
+    /// Таймаут одной HTTP-попытки, с которым создан клиент (см. [`Config::timeout`]).
+    pub fn timeout(&self) -> Duration {
+        self.timeout
     }
 
     /// No-op, если логгер не задан; иначе вызывает колбэк. Env-логгер сам фильтрует по мин. уровню.
@@ -217,9 +350,17 @@ impl Client {
     pub fn batches(&self) -> crate::resources::Batches<'_> {
         crate::resources::Batches { client: self }
     }
-    /// Платёжные ссылки (переиспользуемые, «донатные»).
+    /// Платёжные ссылки (переиспользуемые, «донатные»). Канонические имя ресурса во всех SDK
+    /// Oblodai; короткий алиас — [`Client::links`].
     pub fn payment_links(&self) -> crate::resources::PaymentLinks<'_> {
         crate::resources::PaymentLinks { client: self }
+    }
+    /// Алиас [`Client::payment_links`]: тот же ресурс под коротким именем `links`.
+    ///
+    /// Существует, чтобы код переносился между SDK Oblodai без переименований — в разных языках
+    /// исторически прижились оба имени. Канон — `payment_links`.
+    pub fn links(&self) -> crate::resources::PaymentLinks<'_> {
+        self.payment_links()
     }
     /// Сплит-платежи (правила и настройки).
     pub fn splits(&self) -> crate::resources::Splits<'_> {
@@ -439,17 +580,28 @@ fn backoff(attempt: u32, cfg: &RetryConfig) -> Duration {
 #[cfg(feature = "reqwest-client")]
 pub struct ReqwestTransport {
     client: reqwest::blocking::Client,
+    timeout: Duration,
 }
 
 #[cfg(feature = "reqwest-client")]
 impl ReqwestTransport {
-    /// Создаёт транспорт с таймаутом 30с.
+    /// Создаёт транспорт с таймаутом по умолчанию ([`DEFAULT_TIMEOUT`] — 30 секунд).
     pub fn new() -> Result<Self> {
+        Self::with_timeout(DEFAULT_TIMEOUT)
+    }
+
+    /// Создаёт транспорт с заданным таймаутом одной попытки.
+    pub fn with_timeout(timeout: Duration) -> Result<Self> {
         let client = reqwest::blocking::Client::builder()
-            .timeout(Duration::from_secs(30))
+            .timeout(timeout)
             .build()
             .map_err(|e| Error::Config(format!("не удалось создать HTTP-клиент: {e}")))?;
-        Ok(Self { client })
+        Ok(Self { client, timeout })
+    }
+
+    /// Таймаут, с которым создан транспорт.
+    pub fn timeout(&self) -> Duration {
+        self.timeout
     }
 }
 

@@ -6,6 +6,180 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fmt;
+
+// ─────────────────────────── Словарь статусов ───────────────────────────
+
+/// Статус платежа (инвойса) — значения поля `payment_status`.
+///
+/// Разбирается из строки: поля моделей остаются `String` (шлюз может добавить новое значение,
+/// и разбор ответа от этого не сломается), а типизированный разбор доступен через
+/// [`Payment::status`] / [`PaymentStatus::from_api`]. Незнакомое значение даёт
+/// [`PaymentStatus::Unknown`].
+///
+/// ```
+/// use oblodai::models::PaymentStatus;
+/// assert_eq!(PaymentStatus::from_api("confirm_check"), PaymentStatus::ConfirmCheck);
+/// assert!(!PaymentStatus::WrongAmountWaiting.is_final());
+/// assert!(PaymentStatus::WrongAmount.is_final());
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PaymentStatus {
+    /// Счёт создан, оплаты ещё не видели.
+    #[default]
+    Check,
+    /// Оплата увидена в сети, ждём нужного числа подтверждений.
+    ConfirmCheck,
+    /// Увидена ЧАСТИЧНАЯ оплата, ждём доплату. НЕ терминальный: счёт ещё может стать `paid`.
+    /// `POST /v1/payment/resolve` здесь отвечает `409 resolution.not_underpaid`.
+    WrongAmountWaiting,
+    /// Счёт закрылся недоплаченным — терминальный. Вот теперь доступен
+    /// [`crate::resources::Payments::resolve`] (`accept` / `refund`).
+    WrongAmount,
+    /// Оплачен полностью — терминальный.
+    Paid,
+    /// Переплачен — терминальный. Излишек уходит в авто-возврат, если тот включён и сеть
+    /// его поддерживает (в UTXO-сетях авто-возврата нет).
+    PaidOver,
+    /// Истёк или отменён — терминальный.
+    Cancel,
+    /// Валюто-агностичный счёт: покупатель ещё не выбрал валюту и сеть
+    /// (см. [`crate::resources::Payments::public_select`]).
+    Select,
+    /// Значение, неизвестное этой версии SDK (совместимость с будущими версиями API).
+    #[serde(other)]
+    Unknown,
+}
+
+impl PaymentStatus {
+    /// Разбирает значение поля `payment_status`.
+    pub fn from_api(s: &str) -> Self {
+        match s {
+            "check" => Self::Check,
+            "confirm_check" => Self::ConfirmCheck,
+            "wrong_amount_waiting" => Self::WrongAmountWaiting,
+            "wrong_amount" => Self::WrongAmount,
+            "paid" => Self::Paid,
+            "paid_over" => Self::PaidOver,
+            "cancel" => Self::Cancel,
+            "select" => Self::Select,
+            _ => Self::Unknown,
+        }
+    }
+
+    /// Строковое представление, как в API.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Check => "check",
+            Self::ConfirmCheck => "confirm_check",
+            Self::WrongAmountWaiting => "wrong_amount_waiting",
+            Self::WrongAmount => "wrong_amount",
+            Self::Paid => "paid",
+            Self::PaidOver => "paid_over",
+            Self::Cancel => "cancel",
+            Self::Select => "select",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    /// Терминальный ли статус: дальнейших автоматических переходов не ждём.
+    ///
+    /// Совпадает с полем `is_final` в ответе; `Unknown` считается нетерминальным,
+    /// поэтому для незнакомых значений опирайтесь на `is_final` из ответа.
+    pub fn is_final(&self) -> bool {
+        matches!(
+            self,
+            Self::Paid | Self::PaidOver | Self::WrongAmount | Self::Cancel
+        )
+    }
+
+    /// Можно ли вызвать [`crate::resources::Payments::resolve`]. Только закрытая недоплата
+    /// (`wrong_amount`) разрешима: на `wrong_amount_waiting` шлюз отвечает
+    /// `409 resolution.not_underpaid`.
+    pub fn is_resolvable(&self) -> bool {
+        matches!(self, Self::WrongAmount)
+    }
+}
+
+impl fmt::Display for PaymentStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for PaymentStatus {
+    fn from(s: &str) -> Self {
+        Self::from_api(s)
+    }
+}
+
+/// Статус выплаты — значения поля `status` у [`Payout`].
+///
+/// Жизненный цикл: `check` (ждёт одобрения) → `process` (одобрена, уходит/ушла) → `paid`
+/// (подтверждена в сети); либо `fail` / `cancel`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PayoutStatus {
+    /// Создана и ждёт одобрения (ручной ревью / dual-control).
+    #[default]
+    Check,
+    /// Одобрена: транзакция формируется, вещается или уже ушла в сеть.
+    Process,
+    /// Подтверждена в сети — терминальный.
+    Paid,
+    /// Не удалась — терминальный.
+    Fail,
+    /// Отменена — терминальный.
+    Cancel,
+    /// Значение, неизвестное этой версии SDK (совместимость с будущими версиями API).
+    #[serde(other)]
+    Unknown,
+}
+
+impl PayoutStatus {
+    /// Разбирает значение поля `status` выплаты.
+    pub fn from_api(s: &str) -> Self {
+        match s {
+            "check" => Self::Check,
+            "process" => Self::Process,
+            "paid" => Self::Paid,
+            "fail" => Self::Fail,
+            "cancel" => Self::Cancel,
+            _ => Self::Unknown,
+        }
+    }
+
+    /// Строковое представление, как в API.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Check => "check",
+            Self::Process => "process",
+            Self::Paid => "paid",
+            Self::Fail => "fail",
+            Self::Cancel => "cancel",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    /// Терминальный ли статус. Совпадает с полем `is_final` в ответе; `Unknown` считается
+    /// нетерминальным.
+    pub fn is_final(&self) -> bool {
+        matches!(self, Self::Paid | Self::Fail | Self::Cancel)
+    }
+}
+
+impl fmt::Display for PayoutStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for PayoutStatus {
+    fn from(s: &str) -> Self {
+        Self::from_api(s)
+    }
+}
 
 /// Объект платежа (инвойса).
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -34,10 +208,15 @@ pub struct Payment {
     pub address: String,
     #[serde(default)]
     pub address_qr_code: String,
+    /// Статус инвойса строкой, как его отдаёт шлюз. Типизированный разбор — [`Payment::status`];
+    /// словарь значений — [`PaymentStatus`].
     #[serde(default)]
     pub payment_status: String,
     #[serde(default)]
     pub is_multi: bool,
+    /// Hosted-страница оплаты. Шлюз собирает её из своего публичного базового URL
+    /// (`GATEWAY_PUBLIC_BASE_URL`); на стенде, где тот не задан, поле приходит ПУСТОЙ строкой —
+    /// это не ошибка SDK. Собирайте ссылку сами из `uuid`: `{ваш_базовый_url}/pay/{uuid}`.
     #[serde(default)]
     pub url: String,
     #[serde(default)]
@@ -64,6 +243,19 @@ pub struct Payment {
     pub required_confirmations: i64,
     #[serde(default)]
     pub txid: String,
+}
+
+impl Payment {
+    /// Типизированный статус из поля `payment_status`.
+    ///
+    /// ```
+    /// # use oblodai::models::{Payment, PaymentStatus};
+    /// let p = Payment { payment_status: "wrong_amount".into(), ..Default::default() };
+    /// assert!(p.status().is_resolvable());
+    /// ```
+    pub fn status(&self) -> PaymentStatus {
+        PaymentStatus::from_api(&self.payment_status)
+    }
 }
 
 /// Пагинация в списковых ответах.
@@ -197,6 +389,8 @@ pub struct Payout {
     pub address: String,
     #[serde(default)]
     pub txid: String,
+    /// Статус выплаты строкой, как его отдаёт шлюз. Типизированный разбор — [`Payout::status`];
+    /// словарь значений — [`PayoutStatus`].
     #[serde(default)]
     pub status: String,
     #[serde(default)]
@@ -213,6 +407,13 @@ pub struct Payout {
     pub convert: Option<PayoutConvert>,
 }
 
+impl Payout {
+    /// Типизированный статус из поля `status` (см. [`PayoutStatus`]).
+    pub fn status(&self) -> PayoutStatus {
+        PayoutStatus::from_api(&self.status)
+    }
+}
+
 /// Элемент результата массовой выплаты.
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct MassPayoutItem {
@@ -222,6 +423,7 @@ pub struct MassPayoutItem {
     pub success: bool,
     #[serde(default)]
     pub uuid: String,
+    /// Статус выплаты строкой; типизированный разбор — [`MassPayoutItem::status`].
     #[serde(default)]
     pub status: String,
     #[serde(default)]
@@ -230,6 +432,13 @@ pub struct MassPayoutItem {
     pub approval_required: bool,
     #[serde(default)]
     pub message: String,
+}
+
+impl MassPayoutItem {
+    /// Типизированный статус из поля `status` (см. [`PayoutStatus`]).
+    pub fn status(&self) -> PayoutStatus {
+        PayoutStatus::from_api(&self.status)
+    }
 }
 
 /// Результат массовой выплаты.
@@ -310,12 +519,19 @@ pub struct Currency {
 }
 
 /// Результат регистрации endpoint вебхуков.
+///
+/// Эндпоинт у проекта ОДИН: повторная регистрация с другим `url` возвращает тот же `endpoint_id`
+/// и перенаправляет доставки (см. [`crate::resources::Webhooks::register`]).
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct WebhookRegistration {
     #[serde(default)]
     pub endpoint_id: String,
     #[serde(default)]
     pub url: String,
+    /// **Секрет ЭНДПОИНТА** — ключ, которым подписаны входящие вебхуки. Передавайте именно его в
+    /// [`crate::verify_webhook`] / [`crate::construct_event`]. Это НЕ секрет API-ключа
+    /// (`Config::secret`), которым подписываются исходящие запросы SDK. Выдаётся при первой
+    /// регистрации и переживает смену URL — сохраните его.
     #[serde(default)]
     pub secret: String,
 }
@@ -427,6 +643,10 @@ pub struct BatchInfo {
 pub struct PaymentLinkPayment {
     #[serde(default)]
     pub uuid: String,
+    /// ВНИМАНИЕ: здесь ВНУТРЕННИЙ литерал статуса инвойса, а не словарь [`PaymentStatus`]:
+    /// `created`, `select`, `confirm_check`, `paid`, `paid_over`, `wrong_amount`, `expired`,
+    /// `cancelled`. То есть `created` вместо `check` и `expired`/`cancelled` вместо `cancel`.
+    /// За каноническим статусом ходите в `payments().info(uuid, None)`.
     #[serde(default)]
     pub status: String,
     #[serde(default)]
@@ -576,7 +796,9 @@ pub struct PayoutLink {
     /// Секретный claim-токен — только в ответе create.
     #[serde(default)]
     pub claim_token: String,
-    /// Публичная ссылка на страницу claim — только в ответе create.
+    /// Публичная ссылка на страницу claim — только в ответе create. Может прийти ПУСТОЙ строкой,
+    /// если у шлюза не задан публичный базовый URL (типично для локального стенда): собирайте
+    /// ссылку сами из [`PayoutLink::claim_token`].
     #[serde(default)]
     pub claim_url: String,
     /// Порождённая выплата (после claim).
@@ -786,9 +1008,17 @@ pub struct Resolution {
     pub amount: String,
     #[serde(default)]
     pub address: String,
-    /// Статус рефанд-выплаты: `check`/`process`/`paid`/`fail`/`cancel`.
+    /// Статус рефанд-ВЫПЛАТЫ (словарь [`PayoutStatus`]): `check`/`process`/`paid`/`fail`/`cancel`.
     #[serde(default)]
     pub status: String,
     #[serde(default)]
     pub is_final: bool,
+}
+
+impl Resolution {
+    /// Типизированный статус рефанд-выплаты (см. [`PayoutStatus`]). Осмыслен только при
+    /// `resolution == "refunded"`.
+    pub fn payout_status(&self) -> PayoutStatus {
+        PayoutStatus::from_api(&self.status)
+    }
 }

@@ -1,4 +1,14 @@
 //! Проверка входящих вебхуков.
+//!
+//! # Каким секретом проверять
+//!
+//! Вебхуки подписаны **секретом эндпоинта** — отдельным значением, которое возвращает
+//! [`crate::resources::Webhooks::register`] в поле `secret` ([`crate::models::WebhookRegistration`]).
+//! Это **НЕ** секрет API-ключа (`Config::secret`), которым SDK подписывает исходящие запросы.
+//! Подставив сюда ключ API, вы отвергнете 100% вебхуков как «подпись не совпадает».
+//!
+//! Секрет эндпоинта выдаётся один раз при первой регистрации и переживает смену URL; сменить его
+//! можно только отдельным действием ротации на стороне шлюза.
 
 use crate::error::{Error, Result};
 use crate::logging::{log_env, LogLevel};
@@ -33,12 +43,16 @@ impl Default for VerifyOptions {
 
 /// Проверяет подпись и свежесть вебхука.
 ///
+/// `endpoint_secret` — секрет ЭНДПОИНТА вебхуков: поле `secret` из ответа
+/// [`crate::resources::Webhooks::register`]. Это НЕ секрет API-ключа (`Config::secret`), которым
+/// подписываются исходящие запросы SDK; подставив его, вы отвергнете все вебхуки.
+///
 /// ВАЖНО: `raw_body` должен быть СЫРЫМ телом запроса — тем же, что пришло по сети. Подпись считается
 /// по байтам; пересериализованный JSON не подойдёт.
 ///
 /// Пробные тела (`"is_test": true`) НЕ подписаны — их этой функцией проверять не нужно.
 pub fn verify_webhook(
-    secret: &str,
+    endpoint_secret: &str,
     raw_body: &[u8],
     headers: &WebhookHeaders,
     opts: &VerifyOptions,
@@ -54,7 +68,7 @@ pub fn verify_webhook(
         ));
     }
 
-    let expected = compute_webhook_signature(secret, headers.timestamp, raw_body);
+    let expected = compute_webhook_signature(endpoint_secret, headers.timestamp, raw_body);
 
     // Сравнение в постоянном времени. НИКОГДА не логируем ожидаемую/полученную подпись.
     if !constant_time_eq(expected.as_bytes(), headers.signature.as_bytes()) {
@@ -102,13 +116,20 @@ pub fn verify_webhook(
 }
 
 /// Проверяет вебхук и десериализует тело в тип `T`.
+///
+/// `endpoint_secret` — тот же секрет эндпоинта, что и у [`verify_webhook`]: поле `secret` из ответа
+/// [`crate::resources::Webhooks::register`], а не секрет API-ключа.
+///
+/// Поле `status` в теле события платежа — из словаря [`crate::models::PaymentStatus`], но БЕЗ
+/// `wrong_amount_waiting`: вебхуки шлют неуточнённый статус, поэтому частичная оплата приезжает как
+/// `confirm_check`. Уточнённое значение отдаёт только `payments().info(...)`.
 pub fn construct_event<T: DeserializeOwned>(
-    secret: &str,
+    endpoint_secret: &str,
     raw_body: &[u8],
     headers: &WebhookHeaders,
     opts: &VerifyOptions,
 ) -> Result<T> {
-    verify_webhook(secret, raw_body, headers, opts)?;
+    verify_webhook(endpoint_secret, raw_body, headers, opts)?;
     serde_json::from_slice(raw_body).map_err(|e| Error::Serialization(e.to_string()))
 }
 

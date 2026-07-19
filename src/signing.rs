@@ -1,8 +1,9 @@
 //! Подпись запросов и вебхуков (HMAC-SHA256).
 //!
-//! ВНИМАНИЕ: подпись ЗАПРОСА и подпись ВЕБХУКА — разные алгоритмы.
-//! - Запрос: `{timestamp}\n{METHOD}\n{path}\n{body}`.
-//! - Вебхук: `{timestamp}.{сырое_тело}` (точка-разделитель, без метода и пути).
+//! ВНИМАНИЕ: подпись ЗАПРОСА и подпись ВЕБХУКА — разные алгоритмы И РАЗНЫЕ КЛЮЧИ.
+//! - Запрос: `{timestamp}\n{METHOD}\n{path}\n{body}`, ключ — секрет API-ключа (`Config::secret`).
+//! - Вебхук: `{timestamp}.{сырое_тело}` (точка-разделитель, без метода и пути), ключ — секрет
+//!   ЭНДПОИНТА из ответа [`crate::resources::Webhooks::register`].
 
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
@@ -27,9 +28,17 @@ pub(crate) fn sign_request(secret: &str, method: &str, path: &str, body: &str, t
     hex::encode(mac.finalize().into_bytes())
 }
 
-/// Считает ожидаемую подпись вебхука: `hex(HMAC-SHA256(secret, "{ts}." + raw_body))`.
-pub fn compute_webhook_signature(secret: &str, timestamp: &str, raw_body: &[u8]) -> String {
-    let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC key of any size");
+/// Считает ожидаемую подпись вебхука: `hex(HMAC-SHA256(endpoint_secret, "{ts}." + raw_body))`.
+///
+/// Ключ — секрет ЭНДПОИНТА (поле `secret` из [`crate::resources::Webhooks::register`]),
+/// а не секрет API-ключа.
+pub fn compute_webhook_signature(
+    endpoint_secret: &str,
+    timestamp: &str,
+    raw_body: &[u8],
+) -> String {
+    let mut mac =
+        HmacSha256::new_from_slice(endpoint_secret.as_bytes()).expect("HMAC key of any size");
     mac.update(timestamp.as_bytes());
     mac.update(b".");
     mac.update(raw_body);

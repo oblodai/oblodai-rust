@@ -1604,3 +1604,331 @@ fn rate_limit_429_retries_after_advised_delay() {
     assert_eq!(bal.merchant.len(), 0);
     assert_eq!(t.call_count(), 2);
 }
+
+// ─────────────────────────── Статусы ───────────────────────────
+
+#[test]
+fn payment_status_parses_full_vocabulary() {
+    use oblodai::PaymentStatus::*;
+    let cases = [
+        ("check", Check),
+        ("confirm_check", ConfirmCheck),
+        ("wrong_amount_waiting", WrongAmountWaiting),
+        ("wrong_amount", WrongAmount),
+        ("paid", Paid),
+        ("paid_over", PaidOver),
+        ("cancel", Cancel),
+        ("select", Select),
+    ];
+    for (s, want) in cases {
+        assert_eq!(oblodai::PaymentStatus::from_api(s), want, "разбор {s}");
+        assert_eq!(want.as_str(), s, "обратное представление {s}");
+    }
+    // Незнакомое значение не должно ломать интеграцию.
+    assert_eq!(
+        oblodai::PaymentStatus::from_api("something_new"),
+        oblodai::PaymentStatus::Unknown
+    );
+}
+
+#[test]
+fn payment_status_terminality_matches_gateway() {
+    use oblodai::PaymentStatus::*;
+    for s in [Paid, PaidOver, WrongAmount, Cancel] {
+        assert!(s.is_final(), "{s} должен быть терминальным");
+    }
+    for s in [Check, ConfirmCheck, WrongAmountWaiting, Select, Unknown] {
+        assert!(!s.is_final(), "{s} не терминальный");
+    }
+}
+
+#[test]
+fn only_closed_underpayment_is_resolvable() {
+    use oblodai::PaymentStatus::*;
+    // wrong_amount_waiting — счёт ещё ЖИВ: resolve дал бы 409 resolution.not_underpaid.
+    assert!(!WrongAmountWaiting.is_resolvable());
+    assert!(WrongAmount.is_resolvable());
+    for s in [Check, ConfirmCheck, Paid, PaidOver, Cancel, Select, Unknown] {
+        assert!(!s.is_resolvable(), "{s} не разрешим");
+    }
+}
+
+#[test]
+fn payout_status_parses_and_reports_terminality() {
+    use oblodai::PayoutStatus::*;
+    for (s, want) in [
+        ("check", Check),
+        ("process", Process),
+        ("paid", Paid),
+        ("fail", Fail),
+        ("cancel", Cancel),
+    ] {
+        assert_eq!(oblodai::PayoutStatus::from_api(s), want);
+        assert_eq!(want.as_str(), s);
+    }
+    assert_eq!(
+        oblodai::PayoutStatus::from_api("broadcasting"),
+        oblodai::PayoutStatus::Unknown
+    );
+    assert!(Paid.is_final() && Fail.is_final() && Cancel.is_final());
+    assert!(!Check.is_final() && !Process.is_final() && !Unknown.is_final());
+}
+
+#[test]
+fn models_expose_typed_status_from_wire_string() {
+    let t = MockTransport::new(vec![ok(json!({
+        "state": 0,
+        "result": { "uuid": "u-1", "payment_status": "wrong_amount_waiting", "is_final": false }
+    }))]);
+    let client = Client::with_transport(
+        Config::new("p", "s")
+            .base_url("https://api.test")
+            .retry(None),
+        t,
+    )
+    .unwrap();
+
+    let p = client.payments().info(Some("u-1"), None).unwrap();
+    // Строка сохранена как есть, а разбор — типизированный.
+    assert_eq!(p.payment_status, "wrong_amount_waiting");
+    assert_eq!(p.status(), oblodai::PaymentStatus::WrongAmountWaiting);
+    assert!(!p.status().is_final());
+    assert!(!p.status().is_resolvable());
+}
+
+#[test]
+fn payout_model_exposes_typed_status() {
+    let t = MockTransport::new(vec![ok(json!({
+        "state": 0,
+        "result": { "uuid": "p-1", "status": "process", "is_final": false }
+    }))]);
+    let client = Client::with_transport(
+        Config::new("p", "s")
+            .base_url("https://api.test")
+            .retry(None),
+        t,
+    )
+    .unwrap();
+
+    let p = client.payouts().info(Some("p-1"), None).unwrap();
+    assert_eq!(p.status(), oblodai::PayoutStatus::Process);
+    assert!(!p.status().is_final());
+}
+
+#[test]
+fn webhook_verified_with_endpoint_secret_not_api_key() {
+    // Регистрация вебхука отдаёт ОТДЕЛЬНЫЙ секрет эндпоинта.
+    let t = MockTransport::new(vec![ok(json!({
+        "state": 0,
+        "result": { "endpoint_id": "e-1", "url": "https://shop.example/hooks", "secret": "endpoint-secret" }
+    }))]);
+    let client = Client::with_transport(
+        Config::new("p", "api-key-secret")
+            .base_url("https://api.test")
+            .retry(None),
+        t,
+    )
+    .unwrap();
+    let reg = client
+        .webhooks()
+        .register("https://shop.example/hooks")
+        .unwrap();
+    assert_eq!(reg.secret, "endpoint-secret");
+
+    let body = br#"{"type":"payment","status":"paid"}"#;
+    let ts = now().to_string();
+    let sig = compute_webhook_signature(&reg.secret, &ts, body);
+    let headers = WebhookHeaders {
+        timestamp: &ts,
+        signature: &sig,
+    };
+
+    // Секретом эндпоинта — проходит.
+    assert!(verify_webhook(&reg.secret, body, &headers, &VerifyOptions::default()).is_ok());
+    // Секретом API-ключа — отвергается (классическая ошибка интегратора).
+    assert!(matches!(
+        verify_webhook("api-key-secret", body, &headers, &VerifyOptions::default()),
+        Err(Error::Signature(_))
+    ));
+}
+
+// ─────────────────────── Базовый URL: только HTTPS ───────────────────────
+
+/// Сборка клиента с указанным base_url через мок-транспорт (сеть не трогается).
+fn build_with_base_url(url: &str) -> Result<Client, Error> {
+    let t = MockTransport::new(vec![ok(json!({"state": 0, "result": {}}))]);
+    Client::with_transport(Config::new("pub_1", "sec_1").base_url(url).retry(None), t)
+}
+
+#[test]
+fn http_base_url_on_external_host_is_rejected() {
+    // Подпись X-Signature ушла бы открытым текстом — конструктор обязан отказать.
+    for url in [
+        "http://api.oblodai.com",
+        "http://example.com:8095",
+        "http://user:pass@evil.example/v1",
+        "http://127.0.0.1.evil.com",
+        "http://localhost.evil.com",
+        "http://10.0.0.5:8095",
+        "http://[2001:db8::1]:8095",
+    ] {
+        let err = match build_with_base_url(url) {
+            Err(e) => e,
+            Ok(_) => panic!("{url} должен быть отвергнут"),
+        };
+        match err {
+            Error::Config(msg) => assert!(
+                msg.contains("https"),
+                "сообщение должно объяснять требование https, получено: {msg}"
+            ),
+            other => panic!("ожидалась Error::Config для {url}, получено: {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn http_base_url_on_loopback_is_allowed() {
+    // Локальные стенды (в т.ч. http://localhost:8095) обязаны продолжать работать.
+    for url in [
+        "http://localhost:8095",
+        "http://LOCALHOST:8095",
+        "http://127.0.0.1:8095",
+        "http://127.0.0.1",
+        "http://127.1.2.3:8095/",
+        "http://[::1]:8095",
+        "HTTP://localhost:8095",
+    ] {
+        assert!(
+            build_with_base_url(url).is_ok(),
+            "loopback {url} должен приниматься"
+        );
+    }
+}
+
+#[test]
+fn https_base_url_is_allowed() {
+    for url in [
+        "https://api.oblodai.com",
+        "https://api.oblodai.com/",
+        "https://localhost:8095",
+    ] {
+        assert!(build_with_base_url(url).is_ok(), "{url} должен приниматься");
+    }
+}
+
+#[test]
+fn base_url_without_scheme_is_rejected() {
+    assert!(matches!(
+        build_with_base_url("api.oblodai.com"),
+        Err(Error::Config(_))
+    ));
+    assert!(matches!(
+        build_with_base_url("ftp://api.oblodai.com"),
+        Err(Error::Config(_))
+    ));
+}
+
+#[test]
+fn from_env_base_url_is_validated() {
+    // http:// из переменной окружения тоже обязан отвергаться (проверка не в билдере Config,
+    // а в конструкторе клиента — значит, ловит оба пути).
+    let t = MockTransport::new(vec![]);
+    let mut cfg = Config::new("p", "s");
+    cfg.base_url = "http://api.oblodai.com".to_string();
+    assert!(matches!(
+        Client::with_transport(cfg, t),
+        Err(Error::Config(_))
+    ));
+}
+
+// ─────────────────────────── Таймаут из конфига ───────────────────────────
+
+#[test]
+fn timeout_defaults_to_30s() {
+    let cfg = Config::new("p", "s");
+    assert_eq!(cfg.timeout, std::time::Duration::from_secs(30));
+    assert_eq!(oblodai::DEFAULT_TIMEOUT, std::time::Duration::from_secs(30));
+
+    let t = MockTransport::new(vec![]);
+    let client = Client::with_transport(Config::new("p", "s"), t).unwrap();
+    assert_eq!(client.timeout(), std::time::Duration::from_secs(30));
+}
+
+#[test]
+fn timeout_from_config_reaches_client_and_transport() {
+    let want = std::time::Duration::from_millis(1234);
+    let t = MockTransport::new(vec![]);
+    let client =
+        Client::with_transport(Config::new("p", "s").timeout(want).retry(None), t).unwrap();
+    assert_eq!(client.timeout(), want);
+
+    #[cfg(feature = "reqwest-client")]
+    {
+        let transport = oblodai::ReqwestTransport::with_timeout(want).unwrap();
+        assert_eq!(transport.timeout(), want);
+    }
+}
+
+/// Реальная проверка, что таймаут применяется: слушатель принимает соединение и молчит,
+/// клиент с таймаутом 1с обязан упасть сетевой ошибкой заметно раньше дефолтных 30с.
+#[cfg(feature = "reqwest-client")]
+#[test]
+fn configured_timeout_actually_applies_to_requests() {
+    use std::io::Read;
+    use std::net::TcpListener;
+    use std::time::{Duration, Instant};
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    // Принимаем соединение и НЕ отвечаем — держим сокет открытым.
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            std::thread::spawn(move || {
+                let mut buf = [0u8; 1024];
+                let _ = stream.read(&mut buf);
+                std::thread::sleep(Duration::from_secs(60));
+            });
+        }
+    });
+
+    // http на loopback разрешён — тем же исключением, что и для локальных стендов.
+    let client = Client::new(
+        Config::new("p", "s")
+            .base_url(format!("http://127.0.0.1:{port}"))
+            .timeout(Duration::from_secs(1))
+            .retry(None),
+    )
+    .unwrap();
+
+    let started = Instant::now();
+    let err = client.rates().currencies().expect_err("ожидался таймаут");
+    let elapsed = started.elapsed();
+
+    assert!(matches!(err, Error::Connection(_)), "получено: {err:?}");
+    assert!(
+        elapsed < Duration::from_secs(10),
+        "таймаут из конфига не применился: прошло {elapsed:?} (дефолт 30с)"
+    );
+}
+
+// ─────────────────────── Алиас links == payment_links ───────────────────────
+
+#[test]
+fn links_is_alias_of_payment_links() {
+    let t = MockTransport::new(vec![
+        ok(json!({"state": 0, "result": {"link_id": "L1", "url": "https://pay.example/L1"}})),
+        ok(json!({"state": 0, "result": {"link_id": "L1", "url": "https://pay.example/L1"}})),
+    ]);
+    let client = client_with(t.clone());
+
+    let via_canonical = client.payment_links().info("L1").unwrap();
+    let via_alias = client.links().info("L1").unwrap();
+    assert_eq!(via_canonical.link_id, via_alias.link_id);
+
+    // Оба имени бьют в один и тот же эндпоинт.
+    let calls = t.calls.lock().unwrap();
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[0].0, calls[1].0);
+    assert!(calls[0].0.ends_with("/v1/payment/link/info"));
+}
