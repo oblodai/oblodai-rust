@@ -3,6 +3,27 @@
 Значимые изменения этого пакета. Формат — [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 версии — [SemVer](https://semver.org/lang/ru/).
 
+## [1.2.0] — 2026-07-19
+
+### Добавлено
+- **Песочница разработчика:** ресурс `client.sandbox()` — тестовые методы, доступные ТОЛЬКО
+  тестовому ключу (`public_id` с префиксом `test_`, секрет — `oblodai_test_`); боевой ключ
+  получает 403 `sandbox.live_key`. Бизнес-методы с тестовым ключом работают без изменений —
+  меняется только ключ.
+  - `sandbox().simulate_deposit(invoice_id, params)` — симуляция он-чейн депозита в инвойс
+    (`amount` — недоплата/переплата, `confirmations` — «висящий» депозит, повтор с тем же `txid` —
+    идемпотентность/углубление подтверждений). Тип `SandboxDeposit`.
+  - `sandbox().faucet(asset, amount, idempotency_key)` — тестовый баланс «из воздуха»
+    (потолок 1000000 за вызов; `idempotency_key` — поле тела, не заголовок). Тип `SandboxFaucet`.
+  - `sandbox().reset()` — отменить открытые инвойсы и обнулить балансы. Тип `SandboxReset`.
+  - `sandbox().list_webhooks()` — недавние доставки вебхуков (до 50, новые первыми) с сырым
+    `payload`. Тип `SandboxWebhookDelivery`.
+  - `sandbox().replay_webhook(delivery_id)` — поставить доставку на повтор. Тип `SandboxReplay`.
+- **Подписанный GET.** `GET /v1/sandbox/webhooks` подписывается той же канонической строкой,
+  что и POST, с пустым телом: `{ts}\nGET\n{path}\n`.
+- **Хелпер `oblodai::is_test_key(public_id)`** — `true` для тестовых ключей
+  (`test_...` / `oblodai_test_...`).
+
 ## [1.1.0] — 2026-07-15
 
 ### Изменено (ЛОМАЮЩЕЕ): идемпотентность

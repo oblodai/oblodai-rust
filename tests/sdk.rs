@@ -1053,6 +1053,174 @@ fn resolve_refund_with_explicit_key() {
     );
 }
 
+// ─────────────────── Песочница (v1.2.0) ───────────────────
+
+#[test]
+fn sandbox_deposit_path_body_and_unwrap() {
+    let t = MockTransport::new(vec![ok(json!({ "state": 0, "result": {
+        "invoice_id": "inv-1", "txid": "sbx-tx-1", "amount": "10.00", "confirmations": 0
+    }}))]);
+    let client = client_with(t.clone());
+
+    // Без опций: оплатить ровно причитающееся, сразу подтверждено.
+    let dep = client
+        .sandbox()
+        .simulate_deposit("inv-1", json!({}))
+        .unwrap();
+    assert_eq!(dep.invoice_id, "inv-1");
+    assert_eq!(dep.txid, "sbx-tx-1");
+    assert_eq!(dep.amount, "10.00");
+    assert_eq!(dep.confirmations, 0);
+
+    assert!(url_of(&t, 0).ends_with("/v1/sandbox/deposit"));
+    let body = body_json(&t, 0);
+    assert_eq!(body["invoice_id"], "inv-1");
+    assert!(
+        body.get("amount").is_none(),
+        "amount опционален и не подставляется"
+    );
+    assert!(
+        body.get("txid").is_none(),
+        "txid опционален и не подставляется"
+    );
+    // Запрос подписан (как все бизнес-методы), без Idempotency-Key.
+    assert!(header_of(&t, 0, "X-Signature").is_some());
+    assert!(header_of(&t, 0, "Idempotency-Key").is_none());
+}
+
+#[test]
+fn sandbox_deposit_replay_same_txid_deepens_confirmations() {
+    let t = MockTransport::new(vec![
+        ok(json!({ "state": 0, "result": {
+            "invoice_id": "inv-1", "txid": "tx-a", "amount": "5", "confirmations": 1 }})),
+        ok(json!({ "state": 0, "result": {
+            "invoice_id": "inv-1", "txid": "tx-a", "amount": "5", "confirmations": 12 }})),
+    ]);
+    let client = client_with(t.clone());
+
+    // Недоплата с мелким числом подтверждений...
+    let d1 = client
+        .sandbox()
+        .simulate_deposit(
+            "inv-1",
+            json!({ "amount": "5", "confirmations": 1, "txid": "tx-a" }),
+        )
+        .unwrap();
+    assert_eq!(d1.confirmations, 1);
+
+    // ...затем повтор с тем же txid и бОльшим числом — «углубление».
+    let d2 = client
+        .sandbox()
+        .simulate_deposit(
+            "inv-1",
+            json!({ "amount": "5", "confirmations": 12, "txid": "tx-a" }),
+        )
+        .unwrap();
+    assert_eq!(d2.confirmations, 12);
+
+    let b1 = body_json(&t, 0);
+    assert_eq!(b1["amount"], "5");
+    assert_eq!(b1["confirmations"], 1);
+    assert_eq!(b1["txid"], "tx-a");
+    assert_eq!(body_json(&t, 1)["txid"], "tx-a");
+}
+
+#[test]
+fn sandbox_faucet_idempotency_key_in_body() {
+    let t = MockTransport::new(vec![ok(json!({ "state": 0, "result": {
+        "asset": "USDT", "amount": "1000", "journal_id": "j-1"
+    }}))]);
+    let client = client_with(t.clone());
+
+    let res = client
+        .sandbox()
+        .faucet("USDT", "1000", Some("seed-1"))
+        .unwrap();
+    assert_eq!(res.asset, "USDT");
+    assert_eq!(res.amount, "1000");
+    assert_eq!(res.journal_id, "j-1");
+
+    assert!(url_of(&t, 0).ends_with("/v1/sandbox/faucet"));
+    let body = body_json(&t, 0);
+    assert_eq!(body["asset"], "USDT");
+    assert_eq!(body["amount"], "1000");
+    // В отличие от создающих бизнес-методов, у faucet idempotency_key — поле ТЕЛА, не заголовок.
+    assert_eq!(body["idempotency_key"], "seed-1");
+    assert!(header_of(&t, 0, "Idempotency-Key").is_none());
+}
+
+#[test]
+fn sandbox_reset_empty_body() {
+    let t = MockTransport::new(vec![ok(json!({ "state": 0, "result": {
+        "invoices_cancelled": 3, "balances_zeroed": 2
+    }}))]);
+    let client = client_with(t.clone());
+
+    let res = client.sandbox().reset().unwrap();
+    assert_eq!(res.invoices_cancelled, 3);
+    assert_eq!(res.balances_zeroed, 2);
+
+    assert!(url_of(&t, 0).ends_with("/v1/sandbox/reset"));
+    assert_eq!(body_json(&t, 0), json!({}), "reset шлёт пустое тело {{}}");
+}
+
+#[test]
+fn sandbox_list_webhooks_signed_get_empty_body() {
+    let t = MockTransport::new(vec![ok(json!({ "state": 0, "result": { "deliveries": [
+        { "id": "d-1", "event_type": "payment", "url": "https://x", "status": "failed",
+          "attempts": 3, "last_error": "connection refused",
+          "payload": { "type": "payment", "status": "paid", "uuid": "p1" },
+          "created_at": "2026-07-19T10:00:00Z", "updated_at": "2026-07-19T10:05:00Z" }
+    ]}}))]);
+    let client = client_with(t.clone());
+
+    let deliveries = client.sandbox().list_webhooks().unwrap();
+    assert_eq!(deliveries.len(), 1);
+    assert_eq!(deliveries[0].id, "d-1");
+    assert_eq!(deliveries[0].attempts, 3);
+    assert_eq!(deliveries[0].payload["uuid"], "p1", "payload — сырой JSON");
+
+    // GET с пустым телом.
+    assert!(url_of(&t, 0).ends_with("/v1/sandbox/webhooks"));
+    assert_eq!(t.calls.lock().unwrap()[0].2, "", "GET уходит без тела");
+
+    // Подпись обязана совпадать с эталоном: HMAC(secret, "{ts}\nGET\n/v1/sandbox/webhooks\n").
+    let ts = header_of(&t, 0, "X-Timestamp").expect("нет X-Timestamp");
+    let sig = header_of(&t, 0, "X-Signature").expect("нет X-Signature");
+    assert_eq!(header_of(&t, 0, "X-Public-Id").as_deref(), Some("pub_1"));
+
+    use hmac::{Hmac, Mac};
+    let signing = format!("{ts}\nGET\n/v1/sandbox/webhooks\n");
+    let mut mac = Hmac::<sha2::Sha256>::new_from_slice(b"sec_1").unwrap();
+    mac.update(signing.as_bytes());
+    let expected = hex::encode(mac.finalize().into_bytes());
+    assert_eq!(sig, expected, "подпись GET считается от пустого тела");
+}
+
+#[test]
+fn sandbox_replay_webhook() {
+    let t = MockTransport::new(vec![ok(json!({ "state": 0, "result": {
+        "delivery_id": "d-1", "requeued": true
+    }}))]);
+    let client = client_with(t.clone());
+
+    let res = client.sandbox().replay_webhook("d-1").unwrap();
+    assert_eq!(res.delivery_id, "d-1");
+    assert!(res.requeued);
+
+    assert!(url_of(&t, 0).ends_with("/v1/sandbox/webhooks/replay"));
+    assert_eq!(body_json(&t, 0)["delivery_id"], "d-1");
+}
+
+#[test]
+fn is_test_key_detects_prefixes() {
+    assert!(oblodai::is_test_key("test_abc123"));
+    assert!(oblodai::is_test_key("oblodai_test_abc123"));
+    assert!(!oblodai::is_test_key("oblodai_live_abc123"));
+    assert!(!oblodai::is_test_key("oblodai_abc123"));
+    assert!(!oblodai::is_test_key(""));
+}
+
 #[test]
 fn funds_maturing_is_terminal() {
     let e = Error::Api {

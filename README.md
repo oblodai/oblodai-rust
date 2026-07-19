@@ -1,7 +1,8 @@
 # Oblodai Rust SDK
 
 Официальный Rust SDK для платёжного шлюза **Oblodai**: приём платежей, выплаты, массовые операции
-(пачки), платёжные и payout-ссылки, сплит-платежи, счета на e-mail, статические кошельки, вебхуки.
+(пачки), платёжные и payout-ссылки, сплит-платежи, счета на e-mail, статические кошельки, вебхуки,
+песочница разработчика.
 Автоподпись запросов, разбор ответов в типизированные структуры, обработка ошибок и автоматические
 повторы с защитой от дублей (`Idempotency-Key`).
 
@@ -194,6 +195,77 @@ impl HttpTransport for MyTransport {
 let client = Client::with_transport(Config::new("p", "s"), Arc::new(MyTransport)).unwrap();
 ```
 
+## Песочница / тестирование
+
+**Интеграционный код не меняется между тестом и продом — меняется только ключ.** Все бизнес-методы
+SDK работают с тестовым ключом идентично боевому: тестовый `public_id` начинается с `test_`,
+тестовый секрет — с `oblodai_test_`. Хелпер `oblodai::is_test_key(public_id)` вернёт `true` для
+тестового ключа.
+
+Новое — пять вспомогательных методов `client.sandbox()`. Боевого аналога у них нет: они заменяют
+«клиент заплатил он-чейн». Боевой ключ на них получает 403 `sandbox.live_key`. **Вызовы песочницы —
+строго ТЕСТОВЫЙ код**; не вплетайте их в боевую интеграцию.
+
+```rust
+use oblodai::{Client, Config};
+use serde_json::json;
+
+fn main() -> oblodai::Result<()> {
+    // Тестовый ключ — тот же конструктор, тот же код.
+    let client = Client::new(Config::new("test_...", "oblodai_test_..."))?;
+
+    // 1. Создаём инвойс обычным бизнес-методом.
+    let payment = client.payments().create(json!({
+        "amount": "10", "currency": "USD", "order_id": "order-1",
+        "to_currency": "USDT", "network": "tron",
+    }))?;
+
+    // 2. Симулируем он-чейн оплату (без полей — ровно причитающееся, сразу подтверждено).
+    client.sandbox().simulate_deposit(&payment.uuid, json!({}))?;
+
+    // 3. Опрашиваем инвойс как в проде — он станет paid.
+    let paid = client.payments().info(Some(&payment.uuid), None)?;
+    println!("{}", paid.payment_status);
+
+    // 4. Баланс «из воздуха» — и обычная выплата с него.
+    client.sandbox().faucet("USDT", "1000", Some("seed-1"))?;
+    client.payouts().create(json!({
+        "amount": "25", "currency": "USDT", "network": "tron",
+        "address": "T...", "order_id": "w-1",
+    }))?;
+    Ok(())
+}
+```
+
+Сценарии посложнее:
+
+```rust
+// Недоплата, «висящая» на 1 подтверждении...
+client.sandbox().simulate_deposit(&payment.uuid, json!({
+    "amount": "5", "confirmations": 1, "txid": "tx-a",
+}))?;
+// ...повтор с тем же txid и бОльшим confirmations углубляет ТОТ ЖЕ депозит (идемпотентно).
+client.sandbox().simulate_deposit(&payment.uuid, json!({
+    "amount": "5", "confirmations": 12, "txid": "tx-a",
+}))?;
+
+client.sandbox().reset()?;                      // отменить открытые инвойсы, обнулить балансы
+let deliveries = client.sandbox().list_webhooks()?; // до 50 доставок, новые первыми, с payload
+client.sandbox().replay_webhook(&deliveries[0].id)?; // поставить доставку на повтор
+```
+
+Нюансы:
+
+- **Неглубокие подтверждения дозревают ~10 минут.** Депозит с малым `confirmations` шлюз доведёт до
+  подтверждённого сам примерно за 10 минут — либо ускорьте, повторив `simulate_deposit` с тем же
+  `txid` и бОльшим `confirmations`.
+- **UTXO-сети (Bitcoin и т.п.):** нет авто-возврата переплаты и нет адреса плательщика — поведение
+  идентично проду.
+- `faucet`: потолок 1000000 за вызов; `idempotency_key` у него — поле **тела** запроса (не заголовок
+  `Idempotency-Key`, в отличие от создающих бизнес-методов).
+- `list_webhooks` — единственный **подписанный GET**: подпись считается от той же канонической
+  строки с пустым телом (`{ts}\nGET\n/v1/sandbox/webhooks\n`).
+
 ## Обзор методов
 
 ```rust
@@ -270,6 +342,13 @@ client.payout_links().claim(token, address, memo)       // публично, б�
 
 // Курсы (публично, без ключа)
 client.rates().list(Some("ETH"))
+
+// Песочница (ТОЛЬКО тестовый ключ; боевой получит 403 sandbox.live_key)
+client.sandbox().simulate_deposit(invoice_id, params) // симуляция он-чейн депозита
+client.sandbox().faucet(asset, amount, idem)          // тестовый баланс (потолок 1000000)
+client.sandbox().reset()                              // отменить инвойсы, обнулить балансы
+client.sandbox().list_webhooks()                      // до 50 доставок (подписанный GET)
+client.sandbox().replay_webhook(delivery_id)          // поставить доставку на повтор
 ```
 
 ### Payout-ссылки: коротко

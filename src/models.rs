@@ -655,6 +655,76 @@ pub struct ClaimResult {
     pub address: String,
 }
 
+// ─────────────────────────── Песочница (v1.2.0) ───────────────────────────
+
+/// Результат симуляции депозита. `POST /v1/sandbox/deposit` (только тестовый ключ).
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct SandboxDeposit {
+    #[serde(default)]
+    pub invoice_id: String,
+    /// «Ончейн»-txid симуляции. Повторный вызов с тем же `txid` идемпотентен;
+    /// с бОльшим `confirmations` — «углубляет» подтверждения того же депозита.
+    #[serde(default)]
+    pub txid: String,
+    #[serde(default)]
+    pub amount: String,
+    #[serde(default)]
+    pub confirmations: i64,
+}
+
+/// Результат faucet-начисления. `POST /v1/sandbox/faucet` (только тестовый ключ).
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct SandboxFaucet {
+    #[serde(default)]
+    pub asset: String,
+    #[serde(default)]
+    pub amount: String,
+    #[serde(default)]
+    pub journal_id: String,
+}
+
+/// Результат сброса песочницы. `POST /v1/sandbox/reset` (только тестовый ключ).
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct SandboxReset {
+    #[serde(default)]
+    pub invoices_cancelled: i64,
+    #[serde(default)]
+    pub balances_zeroed: i64,
+}
+
+/// Запись журнала доставок песочницы (с сырым `payload`). `GET /v1/sandbox/webhooks`.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct SandboxWebhookDelivery {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub event_type: String,
+    #[serde(default)]
+    pub url: String,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub attempts: i64,
+    #[serde(default)]
+    pub last_error: String,
+    /// Сырое JSON-тело вебхука как его отправлял шлюз.
+    #[serde(default)]
+    pub payload: serde_json::Value,
+    #[serde(default)]
+    pub created_at: String,
+    #[serde(default)]
+    pub updated_at: String,
+}
+
+/// Результат постановки доставки на повтор. `POST /v1/sandbox/webhooks/replay`.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct SandboxReplay {
+    #[serde(default)]
+    pub delivery_id: String,
+    #[serde(default)]
+    pub requeued: bool,
+}
+
 // ─────────────────────────── Resolve недоплаты (v1.1.0) ───────────────────────────
 
 /// Действие над недоплаченным платежом для [`crate::resources::Payments::resolve`].

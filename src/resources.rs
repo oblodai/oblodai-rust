@@ -732,3 +732,78 @@ impl PayoutLinks<'_> {
             .request_public(&format!("/v1/claim/{token}"), &body)
     }
 }
+
+// ─────────────────────────────── Sandbox ───────────────────────────────
+
+/// Песочница разработчика — вспомогательные методы, доступные ТОЛЬКО тестовому ключу
+/// (`public_id` с префиксом `test_`, секрет — `oblodai_test_`). Они заменяют «клиент заплатил
+/// он-чейн»: боевого аналога у них нет, боевой ключ получит 403 `sandbox.live_key`.
+///
+/// Все бизнес-методы SDK с тестовым ключом работают БЕЗ изменений — интеграционный код одинаков
+/// для теста и прода, меняется только ключ. Вызовы песочницы держите строго в тестовом коде.
+pub struct Sandbox<'a> {
+    pub(crate) client: &'a Client,
+}
+
+impl Sandbox<'_> {
+    /// Симулировать он-чейн депозит в инвойс. `POST /v1/sandbox/deposit`
+    ///
+    /// Поля `params` (все опциональны):
+    /// - `amount` (строка) — не задано → оплатить ровно причитающееся; иное значение —
+    ///   недоплата/переплата;
+    /// - `confirmations` (число) — не задано/0 → сразу полностью подтверждён; малое значение →
+    ///   депозит «ещё висит»; повтор с тем же `txid` и бОльшим числом «углубляет» подтверждения;
+    /// - `txid` (строка) — не задано → новый; повторяйте для идемпотентности/углубления.
+    pub fn simulate_deposit(&self, invoice_id: &str, params: Value) -> Result<SandboxDeposit> {
+        let mut body = if params.is_object() {
+            params
+        } else {
+            json!({})
+        };
+        body["invoice_id"] = json!(invoice_id);
+        self.client.request("/v1/sandbox/deposit", &body)
+    }
+
+    /// Начислить тестовый баланс «из воздуха». `POST /v1/sandbox/faucet`
+    ///
+    /// `amount` — строка (потолок 1000000 за вызов). `idempotency_key` здесь — поле ТЕЛА запроса
+    /// (не заголовок): повтор с тем же ключом не начислит дважды.
+    pub fn faucet(
+        &self,
+        asset: &str,
+        amount: &str,
+        idempotency_key: Option<&str>,
+    ) -> Result<SandboxFaucet> {
+        let mut body = json!({ "asset": asset, "amount": amount });
+        if let Some(k) = idempotency_key {
+            body["idempotency_key"] = json!(k);
+        }
+        self.client.request("/v1/sandbox/faucet", &body)
+    }
+
+    /// Сбросить песочницу: отменить открытые инвойсы, обнулить балансы. `POST /v1/sandbox/reset`
+    pub fn reset(&self) -> Result<SandboxReset> {
+        self.client.request("/v1/sandbox/reset", &json!({}))
+    }
+
+    /// Недавние доставки вебхуков (до 50, новые первыми). `GET /v1/sandbox/webhooks`
+    ///
+    /// Подписанный GET с ПУСТЫМ телом: подпись считается от `{ts}\nGET\n/v1/sandbox/webhooks\n`.
+    pub fn list_webhooks(&self) -> Result<Vec<SandboxWebhookDelivery>> {
+        #[derive(serde::Deserialize)]
+        struct Wrap {
+            #[serde(default)]
+            deliveries: Vec<SandboxWebhookDelivery>,
+        }
+        let w: Wrap = self.client.request_get("/v1/sandbox/webhooks")?;
+        Ok(w.deliveries)
+    }
+
+    /// Поставить одну доставку на повторную отправку. `POST /v1/sandbox/webhooks/replay`
+    pub fn replay_webhook(&self, delivery_id: &str) -> Result<SandboxReplay> {
+        self.client.request(
+            "/v1/sandbox/webhooks/replay",
+            &json!({ "delivery_id": delivery_id }),
+        )
+    }
+}

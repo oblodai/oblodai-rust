@@ -118,11 +118,19 @@ fn env_var(name: &str) -> Result<String> {
     }
 }
 
+/// `true`, если ключ — тестовый (песочница): `public_id` с префиксом `test_` либо секрет с
+/// префиксом `oblodai_test_`. Тестовые и боевые ключи работают с одними и теми же бизнес-методами;
+/// методы [`Client::sandbox`] доступны ТОЛЬКО тестовому ключу (боевой получит 403 `sandbox.live_key`).
+pub fn is_test_key(public_id: &str) -> bool {
+    public_id.starts_with("test_") || public_id.starts_with("oblodai_test_")
+}
+
 /// Клиент Oblodai API.
 ///
 /// Ресурсы доступны как методы: [`Client::payments`], [`Client::payouts`], [`Client::wallets`],
 /// [`Client::account`], [`Client::webhooks`], [`Client::settings`], [`Client::rates`],
-/// [`Client::batches`], [`Client::payment_links`], [`Client::splits`], [`Client::payout_links`].
+/// [`Client::batches`], [`Client::payment_links`], [`Client::splits`], [`Client::payout_links`],
+/// [`Client::sandbox`].
 pub struct Client {
     public_id: String,
     secret: String,
@@ -221,6 +229,10 @@ impl Client {
     pub fn payout_links(&self) -> crate::resources::PayoutLinks<'_> {
         crate::resources::PayoutLinks { client: self }
     }
+    /// Песочница (только тестовые ключи): симуляция депозитов, faucet, reset, журнал вебхуков.
+    pub fn sandbox(&self) -> crate::resources::Sandbox<'_> {
+        crate::resources::Sandbox { client: self }
+    }
 
     // ── Внутреннее ──
 
@@ -260,6 +272,13 @@ impl Client {
     /// Публичный GET-запрос без подписи (напр. `GET /v1/currencies`).
     pub(crate) fn request_public_get<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
         let value = self.execute("GET", path, &Value::Null, false, None)?;
+        serde_json::from_value(value).map_err(|e| Error::Serialization(e.to_string()))
+    }
+
+    /// Подписанный GET-запрос (напр. `GET /v1/sandbox/webhooks`). Каноническая строка подписи —
+    /// та же, что у POST, с ПУСТЫМ телом: `{ts}\nGET\n{path}\n`.
+    pub(crate) fn request_get<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
+        let value = self.execute("GET", path, &Value::Null, true, None)?;
         serde_json::from_value(value).map_err(|e| Error::Serialization(e.to_string()))
     }
 
@@ -346,6 +365,14 @@ impl Client {
         let started = Instant::now();
 
         let resp = if method == "GET" {
+            if signed {
+                // Подписанный GET: та же каноническая строка, что у POST, но тело — ПУСТАЯ строка.
+                let ts = now_ts();
+                let sig = sign_request(&self.secret, method, path, "", &ts);
+                headers.push(("X-Public-Id".into(), self.public_id.clone()));
+                headers.push(("X-Timestamp".into(), ts));
+                headers.push(("X-Signature".into(), sig));
+            }
             self.transport.get(&url, &headers)?
         } else {
             let body =

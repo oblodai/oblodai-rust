@@ -41,7 +41,7 @@ pub mod webhooks;
 // Публичные реэкспорты для удобства.
 #[cfg(feature = "reqwest-client")]
 pub use client::ReqwestTransport;
-pub use client::{Client, Config, RetryConfig};
+pub use client::{is_test_key, Client, Config, RetryConfig};
 pub use error::{Error, Result};
 pub use http::{HttpResponse, HttpTransport};
 pub use logging::{LogLevel, Logger, ENV_LOG};

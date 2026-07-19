@@ -1,6 +1,6 @@
 [package]
 name = "oblodai"
-version = "1.1.0"
+version = "1.2.0"
 edition = "2021"
 description = "Официальный Rust SDK для платёжного шлюза Oblodai: приём платежей, выплаты, кошельки, вебхуки."
 license = "MIT"
