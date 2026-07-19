@@ -25,10 +25,13 @@ struct MockResponse {
     retry_after: Option<u64>,
 }
 
+/// Записанный запрос: url, заголовки, тело.
+type RecordedCall = (String, Vec<(String, String)>, String);
+
 /// Мок-транспорт: отдаёт заранее заданные ответы по очереди, запоминает запросы.
 struct MockTransport {
     responses: Mutex<Vec<MockResponse>>,
-    calls: Mutex<Vec<(String, Vec<(String, String)>, String)>>,
+    calls: Mutex<Vec<RecordedCall>>,
 }
 
 impl MockTransport {
@@ -851,7 +854,7 @@ fn payout_link_result() -> serde_json::Value {
 }
 
 #[test]
-fn payout_link_create_no_idempotency_header() {
+fn payout_link_create_sends_idempotency_key() {
     let t = MockTransport::new(vec![ok(payout_link_result())]);
     let client = client_with(t.clone());
 
@@ -868,11 +871,173 @@ fn payout_link_create_no_idempotency_header() {
     assert_eq!(link.claim_token, "Xk3vTOKEN");
 
     assert!(url_of(&t, 0).ends_with("/v1/payout/link"));
-    assert!(
-        header_of(&t, 0, "Idempotency-Key").is_none(),
-        "/v1/payout/link не поддерживает Idempotency-Key — дедуп через reference"
-    );
+    // Создание ссылки резервирует баланс — без ключа повтор профинансировал бы вторую ссылку.
+    let key = header_of(&t, 0, "Idempotency-Key")
+        .expect("/v1/payout/link обязан слать Idempotency-Key: он резервирует средства");
+    assert_eq!(key.len(), 36, "ожидался UUID v4, получено {key:?}");
     // Но запрос подписан (management-эндпоинт).
+    assert!(t.last_headers().iter().any(|(k, _)| k == "X-Signature"));
+}
+
+#[test]
+fn payout_link_create_explicit_idempotency_key_goes_to_header_only() {
+    let t = MockTransport::new(vec![ok(payout_link_result())]);
+    let client = client_with(t.clone());
+
+    client
+        .payout_links()
+        .create(
+            json!({ "currency": "BTC", "network": "bitcoin", "amount": "0.005",
+                        "idempotency_key": "link-key-1" }),
+        )
+        .unwrap();
+
+    assert_eq!(
+        header_of(&t, 0, "Idempotency-Key").as_deref(),
+        Some("link-key-1")
+    );
+    let body = body_json(&t, 0);
+    assert!(
+        body.get("idempotency_key").is_none(),
+        "idempotency_key не должен попадать в тело, получено {body}"
+    );
+}
+
+#[test]
+fn payout_link_create_same_idempotency_key_across_retries() {
+    // 503 (retriable), затем успех: ключ обязан совпасть, иначе повтор создаст ВТОРУЮ
+    // профинансированную ссылку и зарезервирует баланс дважды.
+    let t = MockTransport::new(vec![
+        MockResponse {
+            status: 503,
+            body: json!({ "error": { "code": "x.unavailable", "message": "later" } }).to_string(),
+            retry_after: None,
+        },
+        ok(payout_link_result()),
+    ]);
+    let client = client_with_retries(t.clone());
+
+    client
+        .payout_links()
+        .create(json!({ "currency": "BTC", "network": "bitcoin", "amount": "0.005" }))
+        .unwrap();
+
+    assert_eq!(t.call_count(), 2, "должно быть 2 попытки: 503 + успех");
+    let k1 = header_of(&t, 0, "Idempotency-Key").expect("нет заголовка на 1-й попытке");
+    let k2 = header_of(&t, 1, "Idempotency-Key").expect("нет заголовка на 2-й попытке");
+    assert_eq!(
+        k1, k2,
+        "ключ обязан совпадать на повторе, иначе дубль ссылки"
+    );
+    assert_eq!(body_json(&t, 0), body_json(&t, 1));
+}
+
+#[test]
+fn payout_link_batch_same_idempotency_key_across_retries() {
+    let batch_ok = ok(json!({ "state": 0, "result": {
+        "created": 1, "total": 1,
+        "results": [ { "ok": true, "link": { "link_id": "pl-1", "status": "funded" } } ]
+    }}));
+    let t = MockTransport::new(vec![
+        MockResponse {
+            status: 503,
+            body: json!({ "error": { "code": "x.unavailable", "message": "later" } }).to_string(),
+            retry_after: None,
+        },
+        batch_ok,
+    ]);
+    let client = client_with_retries(t.clone());
+
+    client
+        .payout_links()
+        .create_batch(vec![
+            json!({ "currency": "BTC", "network": "bitcoin", "amount": "0.005" }),
+        ])
+        .unwrap();
+
+    assert_eq!(t.call_count(), 2);
+    let k1 = header_of(&t, 0, "Idempotency-Key").expect("пачка обязана слать Idempotency-Key");
+    let k2 = header_of(&t, 1, "Idempotency-Key").expect("нет заголовка на повторе");
+    assert_eq!(k1, k2, "ключ пачки обязан совпадать на повторе");
+}
+
+/// `503 idempotency.unavailable` — стор идемпотентности недоступен, шлюз fail-closed и операцию
+/// НЕ выполняет. Это единственный код идемпотентного слоя, который надо повторять, причём с ТЕМ ЖЕ
+/// ключом: иначе повтор пройдёт как новая операция и профинансирует вторую ссылку.
+#[test]
+fn payout_link_retries_idempotency_unavailable_with_same_key() {
+    let t = MockTransport::new(vec![
+        MockResponse {
+            status: 503,
+            body: json!({ "error": { "code": "idempotency.unavailable",
+                                     "message": "idempotency store unavailable, retry" } })
+            .to_string(),
+            retry_after: None,
+        },
+        ok(payout_link_result()),
+    ]);
+    let client = client_with_retries(t.clone());
+
+    client
+        .payout_links()
+        .create(json!({ "currency": "BTC", "network": "bitcoin", "amount": "0.005" }))
+        .unwrap();
+
+    assert_eq!(
+        t.call_count(),
+        2,
+        "503 idempotency.unavailable обязан повторяться"
+    );
+    let k1 = header_of(&t, 0, "Idempotency-Key").unwrap();
+    let k2 = header_of(&t, 1, "Idempotency-Key").unwrap();
+    assert_eq!(k1, k2, "повтор после 503 обязан идти с тем же ключом");
+}
+
+/// Терминальные коды идемпотентного слоя: SDK обязан вернуть их вызывающему с ПЕРВОЙ попытки.
+/// `409 payoutlink.duplicate_reference` тут особенно важен — раньше шлюз отдавал на дубль
+/// `reference` 500, и SDK повторял его как транзиентный.
+#[test]
+fn payout_link_does_not_retry_terminal_idempotency_codes() {
+    for (status, code) in [
+        (409u16, "idempotency.in_progress"),
+        (409, "payoutlink.duplicate_reference"),
+        (400, "idempotency.key_reused"),
+        (400, "idempotency.bad_key"),
+    ] {
+        let t = MockTransport::new(vec![MockResponse {
+            status,
+            body: json!({ "error": { "code": code, "message": "no" } }).to_string(),
+            retry_after: None,
+        }]);
+        let client = client_with_retries(t.clone());
+
+        let err = client
+            .payout_links()
+            .create(json!({ "currency": "BTC", "network": "bitcoin", "amount": "0.005" }))
+            .unwrap_err();
+
+        assert_eq!(err.code(), Some(code));
+        assert!(!err.is_retriable(), "{code} обязан быть терминальным");
+        assert_eq!(t.call_count(), 1, "{code} не должен повторяться");
+    }
+}
+
+#[test]
+fn blocked_address_refund_relies_on_server_side_dedup() {
+    // Заголовок здесь НЕ шлётся сознательно: эндпоинт идемпотентен по состоянию (ссылка выплаты
+    // выводится из id кошелька и ищется под per-wallet блокировкой), что сильнее заголовка.
+    let t = MockTransport::new(vec![ok(
+        json!({ "state": 0, "result": { "uuid": "po-1" } }),
+    )]);
+    let client = client_with(t.clone());
+
+    client
+        .wallets()
+        .blocked_address_refund("w-1", "bc1qxyz")
+        .unwrap();
+
+    assert!(url_of(&t, 0).ends_with("/v1/wallet/blocked-address-refund"));
+    assert!(header_of(&t, 0, "Idempotency-Key").is_none());
     assert!(t.last_headers().iter().any(|(k, _)| k == "X-Signature"));
 }
 
@@ -907,7 +1072,10 @@ fn payout_link_batch_index_aligned() {
 
     assert!(url_of(&t, 0).ends_with("/v1/payout/link/batch"));
     assert_eq!(body_json(&t, 0)["links"].as_array().unwrap().len(), 2);
-    assert!(header_of(&t, 0, "Idempotency-Key").is_none());
+    assert!(
+        header_of(&t, 0, "Idempotency-Key").is_some(),
+        "пачка ссылок резервирует баланс — обязана слать Idempotency-Key"
+    );
 }
 
 #[test]

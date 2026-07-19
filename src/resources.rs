@@ -297,6 +297,12 @@ impl Payouts<'_> {
         self.client.request("/v1/payout/calculate", &params)
     }
     /// Подтвердить выплату в статусе pending. `POST /v1/payout/approve`
+    ///
+    /// Заголовок `Idempotency-Key` не шлётся и не нужен: это переход состояния, а не создание.
+    /// Одобряется только выплата в статусе pending, иначе шлюз отвечает
+    /// `409 payout.not_pending` — повторный approve не может одобрить или двинуть деньги дважды.
+    /// Читайте этот 409 как «уже одобрено» и уточняйте фактический статус через
+    /// [`Payouts::info`].
     pub fn approve(&self, uuid: &str) -> Result<Value> {
         self.client
             .request("/v1/payout/approve", &json!({ "uuid": uuid }))
@@ -356,6 +362,15 @@ impl Wallets<'_> {
         self.client.request("/v1/wallet/block", &body)
     }
     /// Возврат средств с кошелька на адрес. `POST /v1/wallet/blocked-address-refund`
+    ///
+    /// Заголовок `Idempotency-Key` не шлётся и не нужен: возврат идемпотентен ПО СОСТОЯНИЮ —
+    /// сервер выводит ссылку выплаты из id кошелька и ищет её под per-wallet блокировкой, поэтому
+    /// повтор (в т.ч. авто-повтор после таймаута) возвращает ТУ ЖЕ выплату, а не создаёт вторую.
+    /// Это строго сильнее заголовка: параллельные повторы сериализуются, а не получают конфликт
+    /// `idempotency.in_progress`.
+    ///
+    /// Оговорка: адрес в ссылку выплаты не входит, поэтому повтор с ДРУГИМ `address` вернёт первую
+    /// выплату — на ПЕРВЫЙ адрес. Смена адреса требует не повтора, а отдельного разбора.
     pub fn blocked_address_refund(&self, uuid: &str, address: &str) -> Result<Value> {
         self.client.request(
             "/v1/wallet/blocked-address-refund",
@@ -711,8 +726,11 @@ impl Splits<'_> {
 /// Payout-ссылки («крипто-чеки»): резервируете средства, получатель сам вводит адрес на
 /// публичной странице claim. Management-методы требуют payout-ключ; claim-методы — публичные.
 ///
-/// Эти эндпоинты НЕ принимают заголовок `Idempotency-Key` — SDK его не шлёт. Дедупликация
-/// `create` — через ваш per-link `reference` (уникален per-merchant).
+/// Оба создающих метода РЕЗЕРВИРУЮТ баланс, поэтому шлют заголовок `Idempotency-Key`: потерянный
+/// ответ и последующий авто-повтор не профинансируют вторую ссылку — сервер отдаст первый ответ.
+/// Дополнительно дедуплицируйте `create` через per-link `reference` (уникален per-merchant): это
+/// второй, durable слой — он работает и без заголовка, и когда ответ пачки не влез в 256-КБ кэш
+/// идемпотентности. Дубль `reference` — `409 payoutlink.duplicate_reference`.
 pub struct PayoutLinks<'a> {
     pub(crate) client: &'a Client,
 }
@@ -727,19 +745,39 @@ impl PayoutLinks<'_> {
     /// клампит срок к **1 часу**, а не к максимуму. Сохраните `claim_token`/`claim_url` из
     /// ответа сразу — повторно они не выдаются.
     ///
-    /// Заголовок `Idempotency-Key` НЕ шлётся (эндпоинт его не поддерживает) — дедуплицируйте
-    /// через `reference`.
+    /// Идемпотентен: шлётся заголовок `Idempotency-Key` (свой ключ — поле `idempotency_key`
+    /// в `params`, в тело оно не попадает). Ключ вычисляется один раз до повторов, поэтому
+    /// таймаут+авто-повтор не создаёт вторую профинансированную ссылку: шлюз реплеит первый
+    /// ответ (та же ссылка и тот же `claim_token`, заголовок `Idempotent-Replayed: true`),
+    /// а баланс дебетуется ровно один раз.
+    ///
+    /// Возможные ответы идемпотентного слоя: `400 idempotency.key_reused` (тот же ключ с другим
+    /// телом), `400 idempotency.bad_key`, `409 idempotency.in_progress` (первый запрос ещё
+    /// выполняется), `503 idempotency.unavailable` (стор недоступен, операция НЕ выполнена —
+    /// единственный из них, что SDK повторяет сам). Дубль `reference` — `409
+    /// payoutlink.duplicate_reference` (терминальный конфликт, не повторяется).
     pub fn create(&self, params: Value) -> Result<PayoutLink> {
-        self.client.request("/v1/payout/link", &params)
+        let (body, key) = take_idempotency_key(params);
+        self.client
+            .request_idempotent("/v1/payout/link", &body, key)
     }
     /// Пачка payout-ссылок (до 500). `POST /v1/payout/link/batch`
     ///
     /// Каждый элемент — обычное тело [`PayoutLinks::create`]; плохой элемент фейлит только себя.
     /// Ответ index-aligned; все созданные ссылки получают общий `batch_id`. Про
-    /// `expires_in_hours` и отсутствие `Idempotency-Key` — см. [`PayoutLinks::create`].
+    /// `expires_in_hours` — см. [`PayoutLinks::create`].
+    ///
+    /// Идемпотентна: `Idempotency-Key` генерируется на весь вызов. Учтите: частично неудачная
+    /// пачка реплеится КАК ЕСТЬ — упавшие элементы под тем же ключом не переотправятся, шлите их
+    /// новым вызовом (и задавайте per-item `reference`).
+    ///
+    /// **Ответ больше 256 КБ шлюз не кэширует**, и тогда повтор с тем же ключом выполнится
+    /// заново. На больших пачках это достижимо, поэтому проставляйте per-item `reference`:
+    /// уникальный индекс — второй, durable слой защиты, дубль даёт
+    /// `409 payoutlink.duplicate_reference`. Прочие коды — см. [`PayoutLinks::create`].
     pub fn create_batch(&self, links: Vec<Value>) -> Result<PayoutLinkBatch> {
         self.client
-            .request("/v1/payout/link/batch", &json!({ "links": links }))
+            .request_idempotent("/v1/payout/link/batch", &json!({ "links": links }), None)
     }
     /// Список ссылок (без `claim_token`). `POST /v1/payout/link/list`
     ///
@@ -808,6 +846,11 @@ impl Sandbox<'_> {
     /// - `confirmations` (число) — не задано/0 → сразу полностью подтверждён; малое значение →
     ///   депозит «ещё висит»; повтор с тем же `txid` и бОльшим числом «углубляет» подтверждения;
     /// - `txid` (строка) — не задано → новый; повторяйте для идемпотентности/углубления.
+    ///
+    /// Недобор подтверждений САМ НЕ РАССАСЫВАЕТСЯ: симулированный депозит никто не переэмитит,
+    /// цепочки за ним нет, и инвойс остаётся в `check` неограниченно долго. Довести до `paid`
+    /// можно только повтором с тем же `txid` и бОльшим `confirmations`. (Знаменитые «~10 минут»
+    /// — это про другое: про maturity-холд на ВЫПЛАТЕ, ошибку `payout.funds_maturing`.)
     pub fn simulate_deposit(&self, invoice_id: &str, params: Value) -> Result<SandboxDeposit> {
         let mut body = if params.is_object() {
             params
