@@ -206,6 +206,30 @@ impl Payments<'_> {
         self.client
             .request_idempotent("/v1/payment/resolve", &body, key)
     }
+
+    // — Публичный hosted-checkout (без подписи), как `/v1/link/{id}` и `/v1/claim/{token}` —
+
+    /// ПУБЛИЧНОЕ состояние счёта для своей checkout-страницы (без подписи). `GET /v1/pay/{id}`
+    ///
+    /// Возвращает только «клиентские» поля инвойса (адрес, сумма, QR, статус, срок) — приватные
+    /// поля мерчанта (`additional_data`, `payer_email`) бэкенд наружу не отдаёт. Можно дёргать
+    /// прямо со страницы оплаты: секрет не нужен. Для валюто-агностичного счёта в статусе
+    /// `select` ответ дополнительно содержит список методов на выбор.
+    pub fn public_get(&self, uuid: &str) -> Result<Payment> {
+        self.client.request_public_get(&format!("/v1/pay/{uuid}"))
+    }
+    /// ПУБЛИЧНЫЙ выбор валюты и сети для валюто-агностичного счёта (без подписи).
+    /// `POST /v1/pay/{id}/select`
+    ///
+    /// Фиксирует курс, выделяет депозит-адрес и переводит счёт из статуса `select` дальше по
+    /// обычному пути. Пара `currency`+`network` должна входить в принимаемый набор мерчанта
+    /// (`pay.method_not_accepted`). Возвращает финализированный инвойс.
+    pub fn public_select(&self, uuid: &str, currency: &str, network: &str) -> Result<Payment> {
+        self.client.request_public(
+            &format!("/v1/pay/{uuid}/select"),
+            &json!({ "currency": currency, "network": network }),
+        )
+    }
 }
 
 // ─────────────────────────────── Payouts ───────────────────────────────
@@ -347,7 +371,7 @@ impl Wallets<'_> {
 
 // ─────────────────────────────── Account ───────────────────────────────
 
-/// Баланс, рефералы, перевод на личный кошелёк, VRCS.
+/// Баланс, рефералы, переводы (на личный кошелёк и пользователям платформы), VRCS.
 pub struct Account<'a> {
     pub(crate) client: &'a Client,
 }
@@ -374,6 +398,36 @@ impl Account<'_> {
         let (body, key) = take_idempotency_key(params);
         self.client
             .request_idempotent("/v1/transfer/to-personal", &body, key)
+    }
+    /// Внутренний перевод (без комиссии) с баланса мерчанта на личный кошелёк ПОЛЬЗОВАТЕЛЯ
+    /// платформы. `POST /v1/transfer/to-user` (payout-ключ)
+    ///
+    /// Поля: `to_user_id` — id пользователя платформы (**UUID, не username**; username резолвится
+    /// в id через публичный профиль кабинета), `amount` и `currency` — строки, `order_id` —
+    /// опционален. Идемпотентен: шлётся заголовок `Idempotency-Key` (свой ключ — поле
+    /// `idempotency_key` в `params`); на бэкенде та же лестница, что у остальных денежных
+    /// эндпоинтов: заголовок → `order_id` → подпись запроса.
+    pub fn transfer_to_user(&self, params: Value) -> Result<UserTransfer> {
+        let (body, key) = take_idempotency_key(params);
+        self.client
+            .request_idempotent("/v1/transfer/to-user", &body, key)
+    }
+    /// Пачка переводов пользователям (до 5000) одним запросом. `POST /v1/transfer/batch`
+    ///
+    /// Каждый элемент — обычное тело [`Account::transfer_to_user`]. `on_error`: `"continue"`
+    /// (по умолчанию) или `"stop"`. Обработка фоновая — результаты забираются через
+    /// [`Batches::info`] по `batch_id`. Идемпотентна (`Idempotency-Key` генерируется на весь
+    /// вызов).
+    pub fn transfer_batch(
+        &self,
+        transfers: Vec<Value>,
+        on_error: Option<&str>,
+    ) -> Result<BatchSubmission> {
+        self.client.request_idempotent(
+            "/v1/transfer/batch",
+            &batch_body("transfers", transfers, on_error),
+            None,
+        )
     }
     /// Включить/выключить VRCS. `enabled` None — чтение. `POST /v1/vrcs`
     pub fn vrcs(&self, enabled: Option<bool>) -> Result<Value> {

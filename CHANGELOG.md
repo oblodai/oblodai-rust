@@ -23,6 +23,17 @@
   что и POST, с пустым телом: `{ts}\nGET\n{path}\n`.
 - **Хелпер `oblodai::is_test_key(public_id)`** — `true` для тестовых ключей
   (`test_...` / `oblodai_test_...`).
+- **Переводы пользователям:** `account().transfer_to_user(params)` — внутренний перевод без
+  комиссии с баланса мерчанта на личный кошелёк пользователя платформы (`to_user_id` — **UUID
+  пользователя, не username**). Идемпотентность — как у остальных денежных методов: заголовок
+  `Idempotency-Key` (свой ключ — поле `idempotency_key`), на бэкенде лестница
+  «заголовок → `order_id` → подпись». Тип `UserTransfer`.
+- **Пачка переводов:** `account().transfer_batch(transfers, on_error)` (до 5000,
+  `POST /v1/transfer/batch`) → `batch_id`; результаты — через `batches().info(...)`.
+- **Публичный pay для своего checkout:** `payments().public_get(uuid)` (`GET /v1/pay/{id}`) —
+  публичное состояние счёта, и `payments().public_select(uuid, currency, network)`
+  (`POST /v1/pay/{id}/select`) — выбор валюты+сети валюто-агностичного счёта. Оба без подписи,
+  как `/v1/link/{id}`; возвращают модель `Payment`.
 
 ## [1.1.0] — 2026-07-15
 

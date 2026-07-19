@@ -1212,6 +1212,154 @@ fn sandbox_replay_webhook() {
     assert_eq!(body_json(&t, 0)["delivery_id"], "d-1");
 }
 
+// ─────────────── Переводы пользователям + публичный pay (v1.2.0) ───────────────
+
+#[test]
+fn transfer_to_user_path_idempotency_and_result() {
+    let t = MockTransport::new(vec![ok(json!({ "state": 0, "result": {
+        "currency": "USDT", "amount": "25", "recipient_balance": "125.5",
+        "to_user_id": "5c3f8a2c-9b1d-4e6f-8a2c-1e9b7d5f3a10"
+    }}))]);
+    let client = client_with(t.clone());
+
+    let res = client
+        .account()
+        .transfer_to_user(json!({
+            "to_user_id": "5c3f8a2c-9b1d-4e6f-8a2c-1e9b7d5f3a10",
+            "amount": "25", "currency": "USDT", "order_id": "salary-7",
+        }))
+        .unwrap();
+
+    // Разворачивание конверта {state, result} в типовую модель.
+    assert_eq!(res.currency, "USDT");
+    assert_eq!(res.amount, "25");
+    assert_eq!(res.to_user_id, "5c3f8a2c-9b1d-4e6f-8a2c-1e9b7d5f3a10");
+    assert_eq!(res.recipient_balance, "125.5");
+
+    assert!(url_of(&t, 0).ends_with("/v1/transfer/to-user"));
+    let body = body_json(&t, 0);
+    assert_eq!(body["to_user_id"], "5c3f8a2c-9b1d-4e6f-8a2c-1e9b7d5f3a10");
+    assert_eq!(body["order_id"], "salary-7", "order_id уходит как есть");
+    // Денежный эндпоинт: заголовок Idempotency-Key обязан быть (UUID по умолчанию).
+    let key = header_of(&t, 0, "Idempotency-Key").expect("нет заголовка Idempotency-Key");
+    assert_eq!(key.len(), 36);
+    // И запрос подписан (payout-ключ).
+    assert!(header_of(&t, 0, "X-Signature").is_some());
+}
+
+#[test]
+fn transfer_to_user_explicit_idempotency_key_header_only() {
+    let t = MockTransport::new(vec![ok(json!({ "state": 0, "result": {
+        "currency": "USDT", "amount": "5", "to_user_id": "u-1", "recipient_balance": "5"
+    }}))]);
+    let client = client_with(t.clone());
+
+    client
+        .account()
+        .transfer_to_user(json!({
+            "to_user_id": "u-1", "amount": "5", "currency": "USDT",
+            "idempotency_key": "pay-run-42",
+        }))
+        .unwrap();
+
+    assert_eq!(
+        header_of(&t, 0, "Idempotency-Key").as_deref(),
+        Some("pay-run-42"),
+        "явный ключ обязан уйти в заголовок"
+    );
+    assert!(
+        body_json(&t, 0).get("idempotency_key").is_none(),
+        "idempotency_key не должен попадать в тело"
+    );
+}
+
+#[test]
+fn transfer_batch_path_fields_and_idempotency() {
+    let t = MockTransport::new(vec![ok(batch_submit_result("transfer"))]);
+    let client = client_with(t.clone());
+
+    let sub = client
+        .account()
+        .transfer_batch(
+            vec![
+                json!({ "to_user_id": "u-1", "amount": "25", "currency": "USDT", "order_id": "s-1" }),
+                json!({ "to_user_id": "u-2", "amount": "30", "currency": "USDT", "order_id": "s-2" }),
+            ],
+            Some("continue"),
+        )
+        .unwrap();
+
+    assert_eq!(sub.batch_id, "b-1");
+    assert_eq!(sub.status, "pending");
+    assert!(url_of(&t, 0).ends_with("/v1/transfer/batch"));
+    let body = body_json(&t, 0);
+    assert_eq!(body["transfers"].as_array().unwrap().len(), 2);
+    assert_eq!(body["on_error"], "continue");
+    assert!(
+        header_of(&t, 0, "Idempotency-Key").is_some(),
+        "батч обязан быть идемпотентным"
+    );
+}
+
+#[test]
+fn public_pay_get_unsigned() {
+    let t = MockTransport::new(vec![ok(json!({ "state": 0, "result": {
+        "uuid": "inv-1", "amount": "10.00", "currency": "USD",
+        "payment_status": "select", "is_multi": true, "url": "https://pay/inv-1"
+    }}))]);
+    let client = client_with(t.clone());
+
+    let p = client.payments().public_get("inv-1").unwrap();
+    assert_eq!(p.uuid, "inv-1");
+    assert_eq!(p.payment_status, "select");
+    assert!(p.is_multi);
+
+    assert!(url_of(&t, 0).ends_with("/v1/pay/inv-1"));
+    assert_eq!(t.calls.lock().unwrap()[0].2, "", "GET уходит без тела");
+    let headers = t.last_headers();
+    assert!(
+        !headers
+            .iter()
+            .any(|(k, _)| k == "X-Signature" || k == "X-Public-Id"),
+        "GET /v1/pay/{{id}} — публичный, без подписи"
+    );
+}
+
+#[test]
+fn public_pay_select_unsigned_finalizes_invoice() {
+    let t = MockTransport::new(vec![ok(json!({ "state": 0, "result": {
+        "uuid": "inv-1", "amount": "10.00", "currency": "USD",
+        "payer_amount": "10.05", "payer_currency": "USDT", "network": "tron",
+        "address": "TSelect1", "payment_status": "check"
+    }}))]);
+    let client = client_with(t.clone());
+
+    let p = client
+        .payments()
+        .public_select("inv-1", "USDT", "tron")
+        .unwrap();
+    assert_eq!(p.uuid, "inv-1");
+    assert_eq!(p.network, "tron");
+    assert_eq!(
+        p.address, "TSelect1",
+        "после select у счёта есть депозит-адрес"
+    );
+
+    assert!(url_of(&t, 0).ends_with("/v1/pay/inv-1/select"));
+    assert_eq!(
+        body_json(&t, 0),
+        json!({ "currency": "USDT", "network": "tron" })
+    );
+    let headers = t.last_headers();
+    assert!(
+        !headers
+            .iter()
+            .any(|(k, _)| k == "X-Signature" || k == "X-Public-Id"),
+        "POST /v1/pay/{{id}}/select — публичный, без подписи"
+    );
+    assert!(header_of(&t, 0, "Idempotency-Key").is_none());
+}
+
 #[test]
 fn is_test_key_detects_prefixes() {
     assert!(oblodai::is_test_key("test_abc123"));

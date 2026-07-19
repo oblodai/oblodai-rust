@@ -725,6 +725,23 @@ pub struct SandboxReplay {
     pub requeued: bool,
 }
 
+// ─────────────────────────── Переводы пользователям (v1.2.0) ───────────────────────────
+
+/// Результат внутреннего перевода пользователю платформы. `POST /v1/transfer/to-user`
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct UserTransfer {
+    #[serde(default)]
+    pub currency: String,
+    #[serde(default)]
+    pub amount: String,
+    /// Id пользователя-получателя (UUID платформы, НЕ username).
+    #[serde(default)]
+    pub to_user_id: String,
+    /// Баланс личного кошелька получателя после перевода.
+    #[serde(default)]
+    pub recipient_balance: String,
+}
+
 // ─────────────────────────── Resolve недоплаты (v1.1.0) ───────────────────────────
 
 /// Действие над недоплаченным платежом для [`crate::resources::Payments::resolve`].

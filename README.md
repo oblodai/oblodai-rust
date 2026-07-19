@@ -146,7 +146,8 @@ let config = Config::new("...", "...").retry(Some(RetryConfig {
 ## Идемпотентность (v1.1.0, ломающее изменение)
 
 Создающие вызовы (`payments().create/refund/resolve/create_batch/refund_batch`,
-`payouts().create/create_mass/create_batch/refund`, `account().transfer_to_personal`) шлют заголовок
+`payouts().create/create_mass/create_batch/refund`, `account().transfer_to_personal`,
+`account().transfer_to_user/transfer_batch`) шлют заголовок
 **`Idempotency-Key`** — UUID v4, сгенерированный **один раз до повторов**: все внутренние ретраи
 одного вызова уходят с одним и тем же ключом, поэтому таймаут+повтор не создаёт дубль. Заголовок в
 подпись запроса не входит.
@@ -266,6 +267,45 @@ client.sandbox().replay_webhook(&deliveries[0].id)?; // поставить до�
 - `list_webhooks` — единственный **подписанный GET**: подпись считается от той же канонической
   строки с пустым телом (`{ts}\nGET\n/v1/sandbox/webhooks\n`).
 
+## Переводы пользователям (v1.2.0)
+
+Внутренний перевод **без комиссии** с баланса мерчанта на личный кошелёк пользователя платформы
+(payout-ключ). `to_user_id` — id пользователя (**UUID, не username**): username резолвится в id
+через публичный профиль кабинета. Идемпотентность — как у остальных денежных методов: заголовок
+`Idempotency-Key` (свой ключ — поле `idempotency_key`); на бэкенде лестница
+«заголовок → `order_id` → подпись».
+
+```rust
+let res = client.account().transfer_to_user(json!({
+    "to_user_id": "5c3f8a2c-9b1d-4e6f-8a2c-1e9b7d5f3a10",
+    "amount": "25", "currency": "USDT", "order_id": "salary-7",
+}))?;
+println!("{}", res.recipient_balance);
+
+// Пачка (payroll, до 5000): результаты — через batches().info(batch_id, ...)
+let sub = client.account().transfer_batch(vec![
+    json!({ "to_user_id": "…", "amount": "25", "currency": "USDT", "order_id": "s-1" }),
+    json!({ "to_user_id": "…", "amount": "30", "currency": "USDT", "order_id": "s-2" }),
+], Some("continue"))?;
+println!("{}", sub.batch_id);
+```
+
+## Публичный pay для своей checkout-страницы (v1.2.0)
+
+`GET /v1/pay/{id}` и `POST /v1/pay/{id}/select` — публичные (без подписи), как `/v1/link/{id}` и
+`/v1/claim/{token}`: их можно дёргать прямо со страницы оплаты, секрет не нужен. `public_get`
+возвращает клиентские поля инвойса — адрес, сумму, QR, статус, срок (приватные `additional_data` /
+`payer_email` бэкенд наружу не отдаёт); для валюто-агностичного счёта в статусе `select` — ещё и
+список методов на выбор. `public_select` фиксирует валюту+сеть, курс и депозит-адрес.
+
+```rust
+let state = client.payments().public_get(&payment.uuid)?;   // статус для поллинга
+if state.payment_status == "select" {
+    let finalized = client.payments().public_select(&payment.uuid, "USDT", "tron")?;
+    println!("{}", finalized.address);
+}
+```
+
 ## Обзор методов
 
 ```rust
@@ -284,6 +324,8 @@ client.payments().create_batch(payments, on_error)      // пачка плате
 client.payments().refund_batch(refunds, on_error)       // пачка возвратов
 client.payments().send_email(uuid, order_id, email)     // счёт на e-mail
 client.payments().resolve(ResolveAction::Accept, params) // судьба недоплаты: Accept | Refund
+client.payments().public_get(uuid)                      // публично, без подписи (свой checkout)
+client.payments().public_select(uuid, currency, network) // публично: выбор валюты+сети
 
 // Выплаты
 client.payouts().create(params)
@@ -308,6 +350,8 @@ client.wallets().qr(address)
 client.account().balance()
 client.account().referral()
 client.account().transfer_to_personal(params)
+client.account().transfer_to_user(params)               // перевод пользователю (без комиссии)
+client.account().transfer_batch(transfers, on_error)    // пачка переводов (до 5000)
 client.account().vrcs(enabled)
 
 // Вебхуки

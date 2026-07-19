@@ -197,7 +197,7 @@ impl Client {
     pub fn wallets(&self) -> crate::resources::Wallets<'_> {
         crate::resources::Wallets { client: self }
     }
-    /// Баланс, рефералы, перевод, VRCS.
+    /// Баланс, рефералы, переводы (на личный кошелёк и пользователям), VRCS.
     pub fn account(&self) -> crate::resources::Account<'_> {
         crate::resources::Account { client: self }
     }
