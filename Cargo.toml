@@ -2,7 +2,7 @@
 name = "oblodai"
 version = "1.2.0"
 edition = "2021"
-description = "Официальный Rust SDK для платёжного шлюза Oblodai: приём платежей, выплаты, кошельки, вебхуки."
+description = "Official Rust SDK for the Oblodai payment gateway: payments, payouts, wallets, webhooks."
 license = "MIT"
 authors = ["Oblodai"]
 repository = "https://github.com/oblodai/oblodai-rust"

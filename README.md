@@ -1,23 +1,25 @@
 # Oblodai Rust SDK
 
-Официальный Rust SDK для платёжного шлюза **Oblodai**: приём платежей, выплаты, массовые операции
-(пачки), платёжные и payout-ссылки, сплит-платежи, счета на e-mail, статические кошельки, вебхуки,
-песочница разработчика.
-Автоподпись запросов, разбор ответов в типизированные структуры, обработка ошибок и автоматические
-повторы с защитой от дублей (`Idempotency-Key`).
+> [Читать по-русски →](README.ru.md)
 
-> **Клиент БЛОКИРУЮЩИЙ.** Транспорт — `reqwest::blocking`, паузы между повторами —
-> `std::thread::sleep`. Каждый вызов блокирует поток, из которого сделан. **Async-приложениям
-> (tokio, async-std) нельзя вызывать SDK напрямую из задачи** — заблокированный поток исполнителя
-> останавливает и все прочие задачи на нём. Уносите вызов на блокирующий пул: см.
-> [Async-приложения](#async-приложения-tokio).
+The official Rust SDK for the **Oblodai** payment gateway: accepting payments, payouts, bulk
+operations (batches), payment and payout links, split payments, e-mail invoices, static wallets,
+webhooks, and a developer sandbox.
+Automatic request signing, parsing of responses into typed structures, error handling, and
+automatic retries with duplicate protection (`Idempotency-Key`).
 
-> **Базовый URL — только HTTPS.** По умолчанию `https://api.oblodai.com`; переопределяется через
-> `Config::base_url(...)`. `http://` на внешнем хосте отвергается ошибкой (SDK шлёт `X-Public-Id` и
-> подпись `X-Signature` — открытым текстом их видит любой посредник). Исключение — loopback
-> (`localhost`, `127.0.0.1`, `::1`) для локальных стендов.
+> **The client is BLOCKING.** The transport is `reqwest::blocking`; pauses between retries use
+> `std::thread::sleep`. Every call blocks the thread it is made from. **Async applications
+> (tokio, async-std) must not call the SDK directly from a task** — a blocked executor thread
+> stalls every other task on it. Move the call onto a blocking pool: see
+> [Async applications](#async-applications-tokio).
 
-## Установка
+> **The base URL is HTTPS-only.** The default is `https://api.oblodai.com`; override it via
+> `Config::base_url(...)`. `http://` on an external host is rejected with an error (the SDK sends
+> `X-Public-Id` and the `X-Signature` signature — any middleman would see them in plaintext). The
+> exception is loopback (`localhost`, `127.0.0.1`, `::1`) for local setups.
+
+## Installation
 
 ```toml
 [dependencies]
@@ -25,52 +27,52 @@ oblodai = "1"
 serde_json = "1"
 ```
 
-Требуется Rust 1.75+.
+Requires Rust 1.75+.
 
-## Где взять ключи
+## Where to get keys
 
-Ключи выдаются в кабинете Oblodai — [oblodai.com](https://oblodai.com), раздел API-ключей. Пара
-состоит из двух значений:
+Keys are issued in the Oblodai dashboard — [oblodai.com](https://oblodai.com), API keys section. A
+pair consists of two values:
 
-| Значение | Что это | Переменная окружения |
+| Value | What it is | Environment variable |
 | --- | --- | --- |
-| `public_id` | Несекретный идентификатор ключа, уходит в заголовке `X-Public-Id` | `OBLODAI_PUBLIC_ID` |
-| Секрет | Подписывает исходящие запросы (`X-Signature`), в запрос сам никогда не уходит | `OBLODAI_SECRET` |
+| `public_id` | Non-secret key identifier, sent in the `X-Public-Id` header | `OBLODAI_PUBLIC_ID` |
+| Secret | Signs outgoing requests (`X-Signature`), never sent in the request itself | `OBLODAI_SECRET` |
 
-Важное:
+Important:
 
-- **Секрет показывается один раз — в момент создания ключа.** Сохраните его сразу; если потеряли,
-  ключ не «подсматривают», а выпускают заново.
-- **Для песочницы заводится отдельный тестовый ключ:** `public_id` вида `test_…`, секрет вида
-  `oblodai_test_…`. Боевые — без этих префиксов. Проверить, какой ключ в руках, можно хелпером
-  `oblodai::is_test_key(public_id)`.
-- Секрет API-ключа — **не** секрет вебхуков. Второй отдельный и возвращается при регистрации
-  эндпоинта; см. [Проверка вебхуков](#проверка-вебхуков).
-- Секрет не место в репозитории: держите его в переменных окружения или менеджере секретов.
+- **The secret is shown only once — at key creation.** Save it right away; if you lose it, the key
+  cannot be "looked up" — you issue a new one instead.
+- **The sandbox gets its own separate test key:** a `public_id` of the form `test_…`, a secret of
+  the form `oblodai_test_…`. Live keys have no such prefixes. To check which key you are holding,
+  use the helper `oblodai::is_test_key(public_id)`.
+- The API key secret is **not** the webhook secret. The latter is separate and is returned when
+  you register an endpoint; see [Verifying webhooks](#verifying-webhooks).
+- A secret does not belong in a repository: keep it in environment variables or a secrets manager.
 
-## Учётные данные
+## Credentials
 
-Храните ключи в переменных окружения (см. `.env.example`):
+Keep the keys in environment variables (see `.env.example`):
 
 ```bash
 export OBLODAI_PUBLIC_ID=test_...
 export OBLODAI_SECRET=oblodai_test_...
-# необязательно: export OBLODAI_BASE_URL=https://api.oblodai.com
+# optional: export OBLODAI_BASE_URL=https://api.oblodai.com
 ```
 
 ```rust
-// читает OBLODAI_PUBLIC_ID / OBLODAI_SECRET / OBLODAI_BASE_URL
+// reads OBLODAI_PUBLIC_ID / OBLODAI_SECRET / OBLODAI_BASE_URL
 let client = oblodai::Client::from_env()?;
 ```
 
-## Быстрый старт
+## Quick start
 
 ```rust
 use oblodai::{Client, Config};
 use serde_json::json;
 
 fn main() -> oblodai::Result<()> {
-    // либо явно (эквивалент Client::from_env выше):
+    // or explicitly (equivalent to Client::from_env above):
     let client = Client::new(
         Config::new("test_...", "oblodai_test_...")
             .base_url("https://api.oblodai.com"),
@@ -84,21 +86,21 @@ fn main() -> oblodai::Result<()> {
         "network": "tron",
     }))?;
 
-    println!("{}", payment.address); // адрес для оплаты
-    println!("{}", payment.url);     // hosted-страница оплаты (пустая, если у шлюза не задан
-                                     // публичный базовый URL — см. «Замечания»)
+    println!("{}", payment.address); // address to pay to
+    println!("{}", payment.url);     // hosted payment page (empty if the gateway has no
+                                     // public base URL configured — see "Notes")
     Ok(())
 }
 ```
 
-**Тот же код работает с боевым ключом — меняется только ключ.** Здесь подставлен тестовый
-(`test_…` / `oblodai_test_…`), чтобы начать в песочнице; бизнес-методы, пути и модели у боевого
-ключа те же самые.
+**The same code works with a live key — only the key changes.** A test key is used here
+(`test_…` / `oblodai_test_…`) to start in the sandbox; the business methods, paths, and models are
+exactly the same with a live key.
 
-### Async-приложения (tokio)
+### Async applications (tokio)
 
-Клиент блокирующий. В async-рантайме уносите вызовы на блокирующий пул, иначе запрос (до 30 секунд
-по умолчанию, плюс задержки повторов) встанет колом на потоке исполнителя:
+The client is blocking. In an async runtime, move calls onto a blocking pool, otherwise the
+request (up to 30 seconds by default, plus retry delays) will stall an executor thread dead:
 
 ```rust
 use oblodai::{Client, Config};
@@ -107,7 +109,7 @@ use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Клиент Send + Sync — создаётся один раз и переиспользуется.
+    // The client is Send + Sync — create it once and reuse it.
     let client = Arc::new(Client::from_env()?);
 
     let c = Arc::clone(&client);
@@ -117,18 +119,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "to_currency": "USDT", "network": "tron",
         }))
     })
-    .await??; // первый `?` — паника/отмена задачи, второй — ошибка SDK
+    .await??; // first `?` — task panic/cancellation, second — SDK error
 
     println!("{}", payment.address);
     Ok(())
 }
 ```
 
-Асинхронного (`async fn`) варианта клиента в SDK нет — это осознанная граница пакета.
+There is no asynchronous (`async fn`) variant of the client in the SDK — that is a deliberate
+boundary of the package.
 
-### Таймаут
+### Timeout
 
-Таймаут ОДНОЙ HTTP-попытки настраивается через `Config::timeout` (по умолчанию 30 секунд):
+The timeout of a SINGLE HTTP attempt is configured via `Config::timeout` (30 seconds by default):
 
 ```rust
 use std::time::Duration;
@@ -139,43 +142,44 @@ let client = Client::new(
 )?;
 ```
 
-Это таймаут попытки, а не всего вызова: при включённых повторах верхняя граница ожидания —
-`timeout × max_attempts` плюс задержки backoff. Значение применяет встроенный reqwest-транспорт;
-свой `HttpTransport` (см. [Свой HTTP-транспорт](#свой-http-транспорт)) трактует его сам.
+This is the per-attempt timeout, not the whole call: with retries enabled, the upper bound on
+waiting is `timeout × max_attempts` plus backoff delays. The value is applied by the built-in
+reqwest transport; a custom `HttpTransport` (see
+[Custom HTTP transport](#custom-http-transport)) interprets it on its own.
 
-## Песочница / тестирование
+## Sandbox / testing
 
-**Интеграционный код не меняется между тестом и продом — меняется только ключ.** Все бизнес-методы
-SDK работают с тестовым ключом идентично боевому: тестовый `public_id` начинается с `test_`,
-тестовый секрет — с `oblodai_test_`. Хелпер `oblodai::is_test_key(public_id)` вернёт `true` для
-тестового ключа.
+**Integration code does not change between test and production — only the key changes.** All SDK
+business methods work with a test key exactly as with a live one: a test `public_id` starts with
+`test_`, a test secret with `oblodai_test_`. The helper `oblodai::is_test_key(public_id)` returns
+`true` for a test key.
 
-Новое — пять вспомогательных методов `client.sandbox()`. Боевого аналога у них нет: они заменяют
-«клиент заплатил он-чейн». Боевой ключ на них получает 403 `sandbox.live_key`. **Вызовы песочницы —
-строго ТЕСТОВЫЙ код**; не вплетайте их в боевую интеграцию.
+What is new are five helper methods on `client.sandbox()`. They have no live counterpart: they
+stand in for "the customer paid on-chain". A live key gets a 403 `sandbox.live_key` on them.
+**Sandbox calls are strictly TEST code**; do not weave them into your live integration.
 
 ```rust
 use oblodai::{Client, Config};
 use serde_json::json;
 
 fn main() -> oblodai::Result<()> {
-    // Тестовый ключ — тот же конструктор, тот же код.
+    // Test key — same constructor, same code.
     let client = Client::new(Config::new("test_...", "oblodai_test_..."))?;
 
-    // 1. Создаём инвойс обычным бизнес-методом.
+    // 1. Create an invoice with the usual business method.
     let payment = client.payments().create(json!({
         "amount": "10", "currency": "USD", "order_id": "order-1",
         "to_currency": "USDT", "network": "tron",
     }))?;
 
-    // 2. Симулируем он-чейн оплату (без полей — ровно причитающееся, сразу подтверждено).
+    // 2. Simulate an on-chain payment (no fields — exactly the amount due, confirmed at once).
     client.sandbox().simulate_deposit(&payment.uuid, json!({}))?;
 
-    // 3. Опрашиваем инвойс как в проде — он станет paid.
+    // 3. Poll the invoice as in production — it becomes paid.
     let paid = client.payments().info(Some(&payment.uuid), None)?;
     println!("{}", paid.payment_status);
 
-    // 4. Баланс «из воздуха» — и обычная выплата с него.
+    // 4. Balance "out of thin air" — and a regular payout from it.
     client.sandbox().faucet("USDT", "1000", Some("seed-1"))?;
     client.payouts().create(json!({
         "amount": "25", "currency": "USDT", "network": "tron",
@@ -185,173 +189,177 @@ fn main() -> oblodai::Result<()> {
 }
 ```
 
-Сценарии посложнее:
+More involved scenarios:
 
 ```rust
-// Недоплата, «висящая» на 1 подтверждении...
+// An underpayment "stuck" at 1 confirmation...
 client.sandbox().simulate_deposit(&payment.uuid, json!({
     "amount": "5", "confirmations": 1, "txid": "tx-a",
 }))?;
-// ...повтор с тем же txid и бОльшим confirmations углубляет ТОТ ЖЕ депозит (идемпотентно).
+// ...repeating with the same txid and a HIGHER confirmations deepens the SAME deposit (idempotent).
 client.sandbox().simulate_deposit(&payment.uuid, json!({
     "amount": "5", "confirmations": 12, "txid": "tx-a",
 }))?;
 
-client.sandbox().reset()?;                      // обнулить балансы + отменить неоплаченные инвойсы
-let deliveries = client.sandbox().list_webhooks()?; // до 50 доставок, новые первыми, с payload
-client.sandbox().replay_webhook(&deliveries[0].id)?; // поставить доставку на повтор
+client.sandbox().reset()?;                      // zero balances + cancel unpaid invoices
+let deliveries = client.sandbox().list_webhooks()?; // up to 50 deliveries, newest first, with payload
+client.sandbox().replay_webhook(&deliveries[0].id)?; // queue the delivery for redelivery
 ```
 
-Нюансы:
+Fine points:
 
-- **Неглубокие подтверждения САМИ не дозревают.** Симулированный депозит не переэмитится и цепочки
-  за ним нет, поэтому инвойс с `confirmations` меньше требуемого висит неограниченно долго — в
-  `confirm_check` (депозит увиден, ждём подтверждений), а если прислали меньше суммы — в
-  `wrong_amount_waiting`. **Не `check`:** `check` означает, что оплаты не видели вовсе.
-  Единственный способ довести инвойс до `paid` — повторить `simulate_deposit` с **тем же
-  `txid`** и бОльшим `confirmations` (это углубляет ТОТ ЖЕ депозит, а не создаёт новый).
-- **~10 минут — это про другое:** про maturity-холд на **выплате**. Средства с только что
-  зачисленного депозита нельзя вывести сразу — попытка даёт `payout.funds_maturing`. В песочнице
-  такой холд снимается по возрасту (дефолт 10 минут, `GATEWAY_SANDBOX_MATURITY_MINUTES` на стороне
-  шлюза) — либо сразу, если повторить тот же `txid` с большой глубиной. К подтверждениям инвойса
-  этот механизм отношения не имеет.
-- **`reset` — это НЕ «чистый лист».** Обнуляются балансы, но отменяются только инвойсы в статусах
-  `check` (внутренне `created`) и `select` — те, где оплаты ещё не видели. Инвойс с уже
-  прошедшим депозитом (`confirm_check`, `wrong_amount_waiting`) **сознательно остаётся жить**:
-  отмена дала бы депозиту дозреть в отменённый счёт. Нужен действительно чистый прогон — заводите
-  новые инвойсы, а не рассчитывайте, что `reset` уберёт все прежние.
-- **UTXO-сети (Bitcoin и т.п.):** нет авто-возврата переплаты и нет адреса плательщика — поведение
-  идентично проду.
-- `faucet`: потолок 1000000 за вызов; `idempotency_key` у него — поле **тела** запроса (не заголовок
-  `Idempotency-Key`, в отличие от создающих бизнес-методов).
-- `list_webhooks` — единственный **подписанный GET**: подпись считается от той же канонической
-  строки с пустым телом (`{ts}\nGET\n/v1/sandbox/webhooks\n`).
+- **Shallow confirmations do NOT mature on their own.** A simulated deposit is not re-emitted and
+  there is no chain behind it, so an invoice whose `confirmations` are below the required number
+  hangs indefinitely — in `confirm_check` (deposit seen, waiting for confirmations), or, if less
+  than the amount was sent, in `wrong_amount_waiting`. **Not `check`:** `check` means no payment
+  has been seen at all. The only way to bring the invoice to `paid` is to repeat
+  `simulate_deposit` with the **same `txid`** and a higher `confirmations` (this deepens the SAME
+  deposit rather than creating a new one).
+- **The ~10 minutes is about something else:** the maturity hold on a **payout**. Funds from a
+  just-credited deposit cannot be withdrawn immediately — the attempt returns
+  `payout.funds_maturing`. In the sandbox this hold is lifted by age (default 10 minutes,
+  `GATEWAY_SANDBOX_MATURITY_MINUTES` on the gateway side) — or right away, if you repeat the same
+  `txid` with a large depth. This mechanism has nothing to do with invoice confirmations.
+- **`reset` is NOT a "clean slate".** Balances are zeroed, but only invoices in the `check`
+  (internally `created`) and `select` statuses are cancelled — the ones where no payment has been
+  seen. An invoice with a deposit already through (`confirm_check`, `wrong_amount_waiting`)
+  **deliberately stays alive**: cancelling it would let the deposit mature into a cancelled
+  invoice. If you need a truly clean run — create new invoices rather than counting on `reset` to
+  clear out all the old ones.
+- **UTXO networks (Bitcoin and the like):** no overpayment auto-refund and no payer address — the
+  behavior is identical to production.
+- `faucet`: capped at 1000000 per call; its `idempotency_key` is a **body** field of the request
+  (not the `Idempotency-Key` header, unlike the creating business methods).
+- `list_webhooks` is the only **signed GET**: the signature is computed over the same canonical
+  string with an empty body (`{ts}\nGET\n/v1/sandbox/webhooks\n`).
 
-## Проверка вебхуков
+## Verifying webhooks
 
-Подпись вебхука отличается от подписи запроса — SDK делает и то, и другое. Для входящих вебхуков
-берите **сырое тело** и заголовки `X-Webhook-Timestamp` / `X-Webhook-Signature`.
+A webhook signature differs from a request signature — the SDK does both. For incoming webhooks,
+take the **raw body** and the `X-Webhook-Timestamp` / `X-Webhook-Signature` headers.
 
-> ### ⚠ Секретов ДВА, и они разные
+> ### ⚠ There are TWO secrets, and they differ
 >
-> | Что | Откуда берётся | Для чего |
+> | What | Where it comes from | What it is for |
 > |---|---|---|
-> | **Секрет API-ключа** (`OBLODAI_SECRET`, `Config::secret`) | из кабинета вместе с `public_id` | подписывает **исходящие** запросы SDK |
-> | **Секрет эндпоинта** (`endpoint_secret`) | поле `secret` в ответе `client.webhooks().register(url)` | проверяет **входящие** вебхуки |
+> | **API key secret** (`OBLODAI_SECRET`, `Config::secret`) | from the dashboard, together with `public_id` | signs the SDK's **outgoing** requests |
+> | **Endpoint secret** (`endpoint_secret`) | the `secret` field in the `client.webhooks().register(url)` response | verifies **incoming** webhooks |
 >
-> Везде в этом README под «секретом» без уточнения имеется в виду ПЕРВЫЙ — ключ API. В
-> `verify_webhook` / `construct_event` нужен ВТОРОЙ. Подставив ключ API, вы отвергнете 100%
-> вебхуков с `Error::Signature`. Секрет эндпоинта выдаётся при первой регистрации и переживает
-> смену URL — сохраните его тогда же.
+> Everywhere in this README, "secret" without qualification means the FIRST one — the API key. In
+> `verify_webhook` / `construct_event` you need the SECOND. Plug in the API key and you will
+> reject 100% of webhooks with `Error::Signature`. The endpoint secret is issued at first
+> registration and survives a URL change — save it then and there.
 
 ```rust
 use oblodai::{construct_event, verify_webhook, VerifyOptions, WebhookHeaders, Error};
 use serde_json::Value;
 
-// endpoint_secret — НЕ ключ API: это `secret` из client.webhooks().register(url).
+// endpoint_secret is NOT the API key: it is the `secret` from client.webhooks().register(url).
 fn handle(endpoint_secret: &str, raw_body: &[u8], ts: &str, sig: &str) {
     let headers = WebhookHeaders { timestamp: ts, signature: sig };
 
-    // По умолчанию проверяется подпись И свежесть (replay-защита, окно 5 минут).
+    // By default both the signature AND freshness are checked (replay protection, 5-minute window).
     match construct_event::<Value>(endpoint_secret, raw_body, &headers, &VerifyOptions::default()) {
         Ok(event) => {
             if event["type"] == "payment" && event["status"] == "paid" {
-                // пометить заказ event["order_id"] оплаченным (идемпотентно по uuid + status)
+                // mark order event["order_id"] as paid (idempotent on uuid + status)
             }
         }
-        Err(Error::Signature(_)) => { /* вернуть 403 */ }
-        Err(_) => { /* прочее */ }
+        Err(Error::Signature(_)) => { /* return 403 */ }
+        Err(_) => { /* everything else */ }
     }
 }
 ```
 
-Секрет эндпоинта берётся один раз при регистрации и кладётся в ваш конфиг/хранилище:
+The endpoint secret is taken once at registration and stored in your config/storage:
 
 ```rust
 let reg = client.webhooks().register("https://shop.example/hooks/oblodai")?;
-// reg.secret — сохраните ЭТО значение; проверять вебхуки нужно им.
+// reg.secret — save THIS value; it is the one to verify webhooks with.
 ```
 
-Чтобы отключить replay-защиту: `VerifyOptions { max_age_seconds: 0, now: None }`.
+To disable replay protection: `VerifyOptions { max_age_seconds: 0, now: None }`.
 
-### Регистрация — это upsert ЕДИНСТВЕННОГО эндпоинта
+### Registration is an upsert of the SINGLE endpoint
 
-У проекта ровно **один** эндпоинт вебхуков. Повторный `register()` с ДРУГИМ URL не добавляет второй
-приёмник, а **перенаправляет** доставки: возвращается тот же `endpoint_id`, старый URL молча
-замолкает. Секрет при этом сохраняется (уже поставленные в очередь доставки подписаны им; перевыпуск
-оборвал бы их). Нужен веер на несколько потребителей — принимайте вебхук одним своим приёмником и
-разводите дальше сами.
+A project has exactly **one** webhook endpoint. A repeated `register()` with a DIFFERENT URL does
+not add a second receiver — it **redirects** deliveries: the same `endpoint_id` is returned and
+the old URL silently goes quiet. The secret is preserved in the process (deliveries already
+queued are signed with it; reissuing would break them). If you need to fan out to several
+consumers — accept the webhook with a single receiver of your own and distribute from there
+yourself.
 
-### Статус в теле вебхука
+### Status in the webhook body
 
-Поле `status` события платежа — из той же таблицы, что и `payment_status`, но **без**
-`wrong_amount_waiting`: вебхуки шлют неуточнённый статус, поэтому частичная оплата приезжает как
-`confirm_check`. Уточнённое значение отдаёт только `payments().info(...)`.
+The `status` field of a payment event comes from the same table as `payment_status`, but
+**without** `wrong_amount_waiting`: webhooks send the unrefined status, so a partial payment
+arrives as `confirm_check`. Only `payments().info(...)` returns the refined value.
 
-## Статусы
+## Statuses
 
-Статусы приходят строками (`payment.payment_status`, `payout.status`), но в SDK для них есть
-перечисления — [`PaymentStatus`], [`PayoutStatus`], [`PayoutLinkStatus`]. Поля моделей намеренно
-остались `String` (новое значение на стороне шлюза не сломает разбор ответа), а типизированный
-разбор доступен через методы:
+Statuses arrive as strings (`payment.payment_status`, `payout.status`), but the SDK provides enums
+for them — [`PaymentStatus`], [`PayoutStatus`], [`PayoutLinkStatus`]. The model fields deliberately
+remain `String` (a new value on the gateway side will not break response parsing), while typed
+parsing is available through methods:
 
 ```rust
 use oblodai::PaymentStatus;
 
 let payment = client.payments().info(Some(&uuid), None)?;
 match payment.status() {                       // -> PaymentStatus
-    PaymentStatus::Paid | PaymentStatus::PaidOver => { /* отгружаем заказ */ }
-    PaymentStatus::WrongAmount => { /* закрылся недоплаченным: можно resolve */ }
-    PaymentStatus::Cancel => { /* истёк или отменён */ }
-    _ => { /* ещё в работе — продолжаем поллинг */ }
+    PaymentStatus::Paid | PaymentStatus::PaidOver => { /* ship the order */ }
+    PaymentStatus::WrongAmount => { /* closed underpaid: resolve is possible */ }
+    PaymentStatus::Cancel => { /* expired or cancelled */ }
+    _ => { /* still in progress — keep polling */ }
 }
 
-// Незнакомое значение -> PaymentStatus::Unknown, разбор ответа при этом не падает.
+// An unfamiliar value -> PaymentStatus::Unknown; response parsing does not fail on it.
 assert_eq!(PaymentStatus::from_api("confirm_check"), PaymentStatus::ConfirmCheck);
 assert_eq!(PaymentStatus::Paid.as_str(), "paid");
 ```
 
-### Статусы платежа
+### Payment statuses
 
-| Значение | `PaymentStatus` | Что значит | Терминальный |
+| Value | `PaymentStatus` | Meaning | Terminal |
 |---|---|---|---|
-| `check` | `Check` | Счёт создан, оплаты ещё не видели. | нет |
-| `confirm_check` | `ConfirmCheck` | Оплата увидена в сети, ждём подтверждений. | нет |
-| `wrong_amount_waiting` | `WrongAmountWaiting` | Увидена **частичная** оплата, ждём доплату. | **нет** |
-| `wrong_amount` | `WrongAmount` | Счёт закрылся недоплаченным. | да |
-| `paid` | `Paid` | Оплачен полностью. | да |
-| `paid_over` | `PaidOver` | Переплачен (излишек — в авто-возврат, если он включён и сеть его поддерживает). | да |
-| `cancel` | `Cancel` | Истёк или отменён. | да |
-| `select` | `Select` | Валюто-агностичный счёт: покупатель ещё не выбрал валюту и сеть. | нет |
+| `check` | `Check` | Invoice created, no payment seen yet. | no |
+| `confirm_check` | `ConfirmCheck` | Payment seen on the network, waiting for confirmations. | no |
+| `wrong_amount_waiting` | `WrongAmountWaiting` | **Partial** payment seen, waiting for the remainder. | **no** |
+| `wrong_amount` | `WrongAmount` | Invoice closed underpaid. | yes |
+| `paid` | `Paid` | Paid in full. | yes |
+| `paid_over` | `PaidOver` | Overpaid (the excess goes to auto-refund, if enabled and the network supports it). | yes |
+| `cancel` | `Cancel` | Expired or cancelled. | yes |
+| `select` | `Select` | Currency-agnostic invoice: the buyer has not chosen a currency and network yet. | no |
 
-Терминальность дублируется полем `is_final` в ответе — на незнакомых значениях опирайтесь на него,
-а не на `Unknown`.
+Terminality is duplicated by the `is_final` field in the response — on unfamiliar values rely on
+it, not on `Unknown`.
 
-> **`wrong_amount_waiting` ≠ `wrong_amount`.** Первый — ЖИВОЙ счёт: плательщик прислал меньше,
-> но ещё может добить сумму, и счёт станет `paid`. Второй — уже закрытый недоплаченным.
-> `payments().resolve(...)` работает **только** со вторым: на `wrong_amount_waiting` шлюз отвечает
-> `409 resolution.not_underpaid`. Проверить можно через `payment.status().is_resolvable()`.
+> **`wrong_amount_waiting` ≠ `wrong_amount`.** The first is a LIVE invoice: the payer sent less,
+> but can still top up the amount, and the invoice will become `paid`. The second is one already
+> closed underpaid. `payments().resolve(...)` works **only** with the second: on
+> `wrong_amount_waiting` the gateway replies `409 resolution.not_underpaid`. You can check via
+> `payment.status().is_resolvable()`.
 
-### Статусы выплаты
+### Payout statuses
 
-| Значение | `PayoutStatus` | Что значит | Терминальный |
+| Value | `PayoutStatus` | Meaning | Terminal |
 |---|---|---|---|
-| `check` | `Check` | Создана, ждёт одобрения (`payouts().approve`). | нет |
-| `process` | `Process` | Одобрена: транзакция формируется, вещается или уже ушла в сеть. | нет |
-| `paid` | `Paid` | Подтверждена в сети. | да |
-| `fail` | `Fail` | Не удалась. | да |
-| `cancel` | `Cancel` | Отменена. | да |
+| `check` | `Check` | Created, awaiting approval (`payouts().approve`). | no |
+| `process` | `Process` | Approved: the transaction is being built, broadcast, or already on the network. | no |
+| `paid` | `Paid` | Confirmed on the network. | yes |
+| `fail` | `Fail` | Failed. | yes |
+| `cancel` | `Cancel` | Cancelled. | yes |
 
-Тот же словарь у статуса рефанд-выплаты в ответе `resolve` (`Resolution::payout_status()`) и у
-элементов массовой выплаты (`MassPayoutItem::status()`).
+The same vocabulary applies to the refund-payout status in the `resolve` response
+(`Resolution::payout_status()`) and to mass payout items (`MassPayoutItem::status()`).
 
-> **Исключение:** `PaymentLinkPayment::status` (список платежей по платёжной ссылке) отдаёт
-> **внутренние** литералы инвойса — `created`, `expired`, `cancelled` вместо `check` и `cancel`.
-> За каноническим статусом ходите в `payments().info(uuid, None)`.
+> **Exception:** `PaymentLinkPayment::status` (the list of payments on a payment link) returns the
+> invoice's **internal** literals — `created`, `expired`, `cancelled` instead of `check` and
+> `cancel`. For the canonical status, go to `payments().info(uuid, None)`.
 
-## Обработка ошибок
+## Error handling
 
-Все ошибки — enum [`Error`]. Ошибки API несут машиночитаемый код.
+All errors are the [`Error`] enum. API errors carry a machine-readable code.
 
 ```rust
 use oblodai::Error;
@@ -360,9 +368,9 @@ match client.payouts().create(params) {
     Ok(payout) => { /* ... */ }
     Err(Error::Api { code, status, message, .. }) => {
         match code.as_str() {
-            "payout.insufficient_funds" => { /* недостаточно средств */ }
-            // Средства ещё дозревают. Ошибка ТЕРМИНАЛЬНА: is_retriable() == false, SDK её не
-            // повторяет — немедленный повтор не поможет. Подождите и вызовите заново сами.
+            "payout.insufficient_funds" => { /* not enough funds */ }
+            // Funds are still maturing. The error is TERMINAL: is_retriable() == false, the SDK
+            // does not retry it — an immediate retry would not help. Wait and call again yourself.
             "payout.funds_maturing"    => { /* ... */ }
             _ => {}
         }
@@ -372,27 +380,29 @@ match client.payouts().create(params) {
 }
 ```
 
-`err.is_retriable()` подскажет, временная ли ошибка; `err.code()` вернёт код для `Error::Api`.
+`err.is_retriable()` tells you whether the error is transient; `err.code()` returns the code for
+`Error::Api`.
 
-### Варианты ошибок
+### Error variants
 
-| Вариант | Когда |
+| Variant | When |
 |---|---|
-| `Error::Api { code, status, .. }` | API вернул конверт `error`. |
-| `Error::Connection(_)` | Сеть недоступна или таймаут. |
-| `Error::Signature(_)` | Не прошла проверка подписи вебхука. |
-| `Error::Serialization(_)` | Ошибка (де)сериализации. |
-| `Error::Config(_)` | Некорректная конфигурация. |
+| `Error::Api { code, status, .. }` | The API returned an `error` envelope. |
+| `Error::Connection(_)` | Network unreachable or timeout. |
+| `Error::Signature(_)` | Webhook signature verification failed. |
+| `Error::Serialization(_)` | (De)serialization error. |
+| `Error::Config(_)` | Invalid configuration. |
 
-## Повторы (retry)
+## Retries
 
-Временные ошибки (`5xx`, `429`, сетевые сбои) повторяются автоматически с экспоненциальным backoff
-и джиттером. Ошибки запроса (`4xx`), а также `payout.funds_maturing` (средства ещё дозревают —
-немедленный повтор не поможет) считаются терминальными и не повторяются. Из идемпотентных кодов это
-означает: `503 idempotency.unavailable` SDK переиграет сам (с тем же ключом), а `409
-idempotency.in_progress`, `409 payoutlink.duplicate_reference`, `400 idempotency.key_reused`
-и `400 idempotency.bad_key` вернутся вам как есть. Заголовок `Retry-After`
-от сервера соблюдается как есть (не обрезается до `max_delay`, лишь до абсолютного потолка в 300 с).
+Transient errors (`5xx`, `429`, network failures) are retried automatically with exponential
+backoff and jitter. Request errors (`4xx`), as well as `payout.funds_maturing` (funds are still
+maturing — an immediate retry would not help), are considered terminal and are not retried. Among
+the idempotency codes that means: `503 idempotency.unavailable` the SDK replays itself (with the
+same key), while `409 idempotency.in_progress`, `409 payoutlink.duplicate_reference`,
+`400 idempotency.key_reused`, and `400 idempotency.bad_key` are returned to you as is. The
+server's `Retry-After` header is honored as is (not clamped to `max_delay`, only to the absolute
+ceiling of 300 s).
 
 ```rust
 use oblodai::{Config, RetryConfig};
@@ -403,77 +413,81 @@ let config = Config::new("...", "...").retry(Some(RetryConfig {
     initial_delay: Duration::from_millis(500),
     max_delay: Duration::from_secs(30),
 }));
-// .retry(None) — отключить повторы
+// .retry(None) — disable retries
 ```
 
-> **Важно про таймаут.** Таймаут не означает, что операция не прошла. Повтор безопасен благодаря
-> заголовку `Idempotency-Key` (см. ниже): если операция уже создана — сервер вернёт её же, дубля
-> не будет.
+> **Important about the timeout.** A timeout does not mean the operation failed. Retrying is safe
+> thanks to the `Idempotency-Key` header (see below): if the operation was already created, the
+> server returns that same one — there will be no duplicate.
 
-## Идемпотентность (v1.1.0, ломающее изменение)
+## Idempotency (v1.1.0, breaking change)
 
-Создающие вызовы (`payments().create/refund/resolve/create_batch/refund_batch`,
+Creating calls (`payments().create/refund/resolve/create_batch/refund_batch`,
 `payouts().create/create_mass/create_batch/refund`, `account().transfer_to_personal`,
-`account().transfer_to_user/transfer_batch`) шлют заголовок
-**`Idempotency-Key`** — UUID v4, сгенерированный **один раз до повторов**: все внутренние ретраи
-одного вызова уходят с одним и тем же ключом, поэтому таймаут+повтор не создаёт дубль. Заголовок в
-подпись запроса не входит.
+`account().transfer_to_user/transfer_batch`) send the **`Idempotency-Key`** header — a UUID v4
+generated **once, before any retries**: all internal retries of a single call go out with the same
+key, so timeout + retry does not create a duplicate. The header is not part of the request
+signature.
 
-- **`order_id` больше НЕ подставляется автоматически** (поведение v1.0.x удалено). Он уходит как
-  есть — это ваш бизнес-идентификатор, задавайте его явно, чтобы потом находить операцию через
-  `info`. Для выплат `order_id` обязателен всегда (`payout.order_id_required`).
-- **Свой ключ идемпотентности** (дедупликация между вызовами/процессами): передайте поле
-  `idempotency_key` в параметрах создающего вызова — оно уйдёт в заголовок и **не попадёт в тело**:
+- **`order_id` is NO longer filled in automatically** (the v1.0.x behavior has been removed). It
+  is sent as is — it is your business identifier; set it explicitly so you can later find the
+  operation via `info`. For payouts `order_id` is always required (`payout.order_id_required`).
+- **Your own idempotency key** (deduplication across calls/processes): pass an `idempotency_key`
+  field in the parameters of a creating call — it goes into the header and **does not end up in
+  the body**:
 
 ```rust
 client.payments().create(json!({
     "amount": "10", "currency": "USD", "order_id": "ord-1",
-    "idempotency_key": "3f8a2c1e-...-ваш-uuid",
+    "idempotency_key": "3f8a2c1e-...-your-uuid",
 }))?;
 ```
 
-- **`payout_links().create/create_batch`** тоже шлют заголовок: обе операции резервируют баланс, и
-  без него потерянный ответ + авто-повтор профинансировали бы вторую ссылку. Повтор с тем же ключом
-  реплеит первый ответ (та же ссылка, тот же `claim_token`), и баланс дебетуется ровно один раз;
-  ответ помечается заголовком `Idempotent-Replayed: true`. **Без** заголовка (например, если вы
-  вызываете API мимо SDK) два одинаковых вызова создадут ДВЕ ссылки. Дополнительно
-  дедуплицируйте создание через per-link `reference`. Нюанс пачки: частично неудачная пачка
-  реплеится как есть — упавшие элементы под тем же ключом не переотправятся, шлите их новым вызовом.
+- **`payout_links().create/create_batch`** send the header too: both operations reserve balance,
+  and without it a lost response + auto-retry would fund a second link. A retry with the same key
+  replays the first response (same link, same `claim_token`), and the balance is debited exactly
+  once; the response is marked with the `Idempotent-Replayed: true` header. **Without** the header
+  (for example, if you call the API bypassing the SDK), two identical calls create TWO links.
+  Additionally deduplicate creation via a per-link `reference`. A batch caveat: a partially failed
+  batch is replayed as is — the failed items will not be resent under the same key; send them in a
+  new call.
 
-### Коды ответов идемпотентного слоя
+### Response codes of the idempotency layer
 
-Идемпотентным маршрутам (в т.ч. `/v1/payout/link` и `/v1/payout/link/batch`) шлюз может ответить:
+On idempotent routes (including `/v1/payout/link` and `/v1/payout/link/batch`) the gateway may
+respond:
 
-| Код | HTTP | Что значит | Повторяется SDK? |
+| Code | HTTP | Meaning | Retried by the SDK? |
 |---|---|---|---|
-| `idempotency.key_reused` | 400 | Тот же ключ с ДРУГИМ телом. | нет (терминальная) |
-| `idempotency.bad_key` | 400 | Некорректный ключ (напр. длиннее 255 символов). | нет (терминальная) |
-| `idempotency.in_progress` | 409 | Параллельный повтор, пока первый запрос ещё выполняется. | нет — повторите сами позже |
-| `idempotency.unavailable` | 503 | Стор идемпотентности недоступен; шлюз fail-closed и НЕ выполняет операцию. | да, автоматически |
+| `idempotency.key_reused` | 400 | Same key with a DIFFERENT body. | no (terminal) |
+| `idempotency.bad_key` | 400 | Invalid key (e.g. longer than 255 characters). | no (terminal) |
+| `idempotency.in_progress` | 409 | Concurrent retry while the first request is still executing. | no — retry yourself later |
+| `idempotency.unavailable` | 503 | The idempotency store is unavailable; the gateway fails closed and does NOT execute the operation. | yes, automatically |
 
-Классификация ровно как у обычных ошибок: `4xx` терминальны (`is_retriable() == false`), `5xx`
-повторяются. То есть 503 SDK переиграет сам с ТЕМ ЖЕ ключом, а на 409 `idempotency.in_progress`
-вернёт ошибку вам — подождите и повторите вызов, передав тот же `idempotency_key` явно.
+Classification is exactly as with regular errors: `4xx` are terminal (`is_retriable() == false`),
+`5xx` are retried. That is, the SDK replays a 503 itself with the SAME key, while on a 409
+`idempotency.in_progress` it returns the error to you — wait and repeat the call, passing the
+same `idempotency_key` explicitly.
 
-> **Батчи и лимит кэша.** Ответ больше 256 КБ шлюз не кэширует — повтор с тем же ключом тогда
-> выполнится ЗАНОВО. Это реально достижимо на больших пачках payout-ссылок, поэтому проставляйте
-> per-item `reference`: уникальный индекс на стороне шлюза остаётся вторым, durable слоем защиты и
-> работает даже без заголовка и даже когда ответ не влез в кэш. Дубль `reference` возвращает
-> `409 payoutlink.duplicate_reference` (раньше был `500`, который SDK повторял; теперь — терминальный
-> конфликт, повтора не будет).
-- **`wallets().blocked_address_refund` — исключение:** заголовок не шлётся и не нужен. Возврат
-  идемпотентен по состоянию: сервер выводит ссылку выплаты из id кошелька и ищет её под per-wallet
-  блокировкой, поэтому повтор отдаёт ТУ ЖЕ выплату. Это сильнее заголовка — параллельные повторы
-  сериализуются, а не получают конфликт.
-- **`payouts().approve` — исключение:** это переход статуса, а не создание. Повторный approve уже
-  одобренной выплаты отвечает `409 payout.not_pending`; читайте это как «уже одобрено» и сверяйтесь
-  через `payouts().info(...)`.
+> **Batches and the cache limit.** The gateway does not cache responses larger than 256 KB — a
+> retry with the same key will then execute ANEW. This is realistically reachable on large payout
+> link batches, so set a per-item `reference`: the unique index on the gateway side remains the
+> second, durable layer of protection and works even without the header and even when the response
+> did not fit in the cache. A duplicate `reference` returns `409 payoutlink.duplicate_reference`
+> (previously it was a `500`, which the SDK retried; now it is a terminal conflict — no retry).
+- **`wallets().blocked_address_refund` is an exception:** the header is not sent and is not
+  needed. The refund is idempotent by state: the server derives the payout link from the wallet id
+  and looks it up under a per-wallet lock, so a retry returns the SAME payout. This is stronger
+  than the header — concurrent retries serialize instead of conflicting.
+- **`payouts().approve` is an exception:** it is a status transition, not a creation. A repeated
+  approve of an already approved payout replies `409 payout.not_pending`; read that as "already
+  approved" and double-check via `payouts().info(...)`.
 
-## Свой HTTP-транспорт
+## Custom HTTP transport
 
-По умолчанию используется встроенный клиент на `reqwest` (фича `reqwest-client`, включена). Чтобы
-подставить свой транспорт (или для тестов без сети), отключите фичу и реализуйте трейт
-[`HttpTransport`]:
+By default the built-in `reqwest`-based client is used (the `reqwest-client` feature, enabled). To
+plug in your own transport (or for tests without a network), disable the feature and implement the
+[`HttpTransport`] trait:
 
 ```toml
 [dependencies]
@@ -488,7 +502,7 @@ struct MyTransport;
 impl HttpTransport for MyTransport {
     fn post(&self, url: &str, headers: &[(String, String)], body: &[u8])
         -> Result<HttpResponse, Error> {
-        // ваш HTTP-вызов
+        // your HTTP call
         # let _ = (url, headers, body);
         Ok(HttpResponse { status: 200, body: b"{}".to_vec() })
     }
@@ -497,13 +511,13 @@ impl HttpTransport for MyTransport {
 let client = Client::with_transport(Config::new("p", "s"), Arc::new(MyTransport)).unwrap();
 ```
 
-## Переводы пользователям (v1.2.0)
+## Transfers to users (v1.2.0)
 
-Внутренний перевод **без комиссии** с баланса мерчанта на личный кошелёк пользователя платформы
-(payout-ключ). `to_user_id` — id пользователя (**UUID, не username**): username резолвится в id
-через публичный профиль кабинета. Идемпотентность — как у остальных денежных методов: заголовок
-`Idempotency-Key` (свой ключ — поле `idempotency_key`); на бэкенде лестница
-«заголовок → `order_id` → подпись».
+An internal **fee-free** transfer from the merchant balance to the personal wallet of a platform
+user (payout key). `to_user_id` is the user's id (**UUID, not username**): a username is resolved
+to an id via the dashboard's public profile. Idempotency is the same as for the other money
+methods: the `Idempotency-Key` header (your own key — the `idempotency_key` field); on the backend
+the ladder is "header → `order_id` → signature".
 
 ```rust
 let res = client.account().transfer_to_user(json!({
@@ -512,7 +526,7 @@ let res = client.account().transfer_to_user(json!({
 }))?;
 println!("{}", res.recipient_balance);
 
-// Пачка (payroll, до 5000): результаты — через batches().info(batch_id, ...)
+// A batch (payroll, up to 5000): results — via batches().info(batch_id, ...)
 let sub = client.account().transfer_batch(vec![
     json!({ "to_user_id": "…", "amount": "25", "currency": "USDT", "order_id": "s-1" }),
     json!({ "to_user_id": "…", "amount": "30", "currency": "USDT", "order_id": "s-2" }),
@@ -520,32 +534,33 @@ let sub = client.account().transfer_batch(vec![
 println!("{}", sub.batch_id);
 ```
 
-## Публичный pay для своей checkout-страницы (v1.2.0)
+## Public pay for your own checkout page (v1.2.0)
 
-`GET /v1/pay/{id}` и `POST /v1/pay/{id}/select` — публичные (без подписи), как `/v1/link/{id}` и
-`/v1/claim/{token}`: их можно дёргать прямо со страницы оплаты, секрет не нужен. `public_get`
-возвращает клиентские поля инвойса — адрес, сумму, QR, статус, срок (приватные `additional_data` /
-`payer_email` бэкенд наружу не отдаёт); для валюто-агностичного счёта в статусе `select` — ещё и
-список методов на выбор. `public_select` фиксирует валюту+сеть, курс и депозит-адрес.
+`GET /v1/pay/{id}` and `POST /v1/pay/{id}/select` are public (unsigned), like `/v1/link/{id}` and
+`/v1/claim/{token}`: they can be called straight from the payment page, no secret needed.
+`public_get` returns the invoice's client-facing fields — address, amount, QR, status, deadline
+(the backend does not expose the private `additional_data` / `payer_email`); for a
+currency-agnostic invoice in the `select` status — also the list of methods to choose from.
+`public_select` locks in the currency+network, the rate, and the deposit address.
 
 ```rust
-let state = client.payments().public_get(&payment.uuid)?;   // статус для поллинга
+let state = client.payments().public_get(&payment.uuid)?;   // status for polling
 if state.payment_status == "select" {
     let finalized = client.payments().public_select(&payment.uuid, "USDT", "tron")?;
     println!("{}", finalized.address);
 }
 ```
 
-## Обзор методов
+## Method overview
 
-> **Имена ресурсов едины во всех SDK Oblodai.** Канон для платёжных ссылок — `payment_links`
-> (`paymentLinks` в JS/PHP, `PaymentLinks` в Go). Короткое имя `links` оставлено как
-> **документированный алиас**: `client.links()` — тот же ресурс, что `client.payment_links()`, с
-> теми же методами. Оба имени поддерживаются, ничего не устарело; алиас существует, чтобы код
-> переносился между языками без переименований.
+> **Resource names are uniform across all Oblodai SDKs.** The canon for payment links is
+> `payment_links` (`paymentLinks` in JS/PHP, `PaymentLinks` in Go). The short name `links` is kept
+> as a **documented alias**: `client.links()` is the same resource as `client.payment_links()`,
+> with the same methods. Both names are supported, nothing is deprecated; the alias exists so code
+> ports between languages without renames.
 
 ```rust
-// Платежи
+// Payments
 client.payments().create(params)
 client.payments().info(uuid, order_id)
 client.payments().history(params)
@@ -556,17 +571,17 @@ client.payments().refund(params)
 client.payments().set_accepted(methods) / list_accepted()
 client.payments().set_accuracy(params) / get_accuracy()
 client.payments().set_autorefund(params) / get_autorefund()
-client.payments().create_batch(payments, on_error)      // пачка платежей (до 5000)
-client.payments().refund_batch(refunds, on_error)       // пачка возвратов
-client.payments().send_email(uuid, order_id, email)     // счёт на e-mail
-client.payments().resolve(ResolveAction::Accept, params) // судьба недоплаты (ТОЛЬКО wrong_amount)
-client.payments().public_get(uuid)                      // публично, без подписи (свой checkout)
-client.payments().public_select(uuid, currency, network) // публично: выбор валюты+сети
+client.payments().create_batch(payments, on_error)      // payment batch (up to 5000)
+client.payments().refund_batch(refunds, on_error)       // refund batch
+client.payments().send_email(uuid, order_id, email)     // e-mail invoice
+client.payments().resolve(ResolveAction::Accept, params) // fate of an underpayment (ONLY wrong_amount)
+client.payments().public_get(uuid)                      // public, unsigned (your own checkout)
+client.payments().public_select(uuid, currency, network) // public: currency+network selection
 
-// Выплаты
+// Payouts
 client.payouts().create(params)
 client.payouts().create_mass(payouts, source)
-client.payouts().create_batch(payouts, on_error)        // пачка выплат (до 5000)
+client.payouts().create_batch(payouts, on_error)        // payout batch (up to 5000)
 client.payouts().info(uuid, order_id)
 client.payouts().history(params)
 client.payouts().services()
@@ -576,99 +591,101 @@ client.payouts().refund(params)
 client.payouts().get_fee_config() / set_fee_config(bool)
 client.payouts().get_refund_fee_config() / set_refund_fee_config(bool)
 
-// Кошельки
+// Wallets
 client.wallets().create(params)
 client.wallets().block(address, force_block)
 client.wallets().blocked_address_refund(uuid, address)
 client.wallets().qr(address)
 
-// Аккаунт
+// Account
 client.account().balance()
 client.account().referral()
 client.account().transfer_to_personal(params)
-client.account().transfer_to_user(params)               // перевод пользователю (без комиссии)
-client.account().transfer_batch(transfers, on_error)    // пачка переводов (до 5000)
+client.account().transfer_to_user(params)               // transfer to a user (fee-free)
+client.account().transfer_batch(transfers, on_error)    // transfer batch (up to 5000)
 client.account().vrcs(enabled)
 
-// Вебхуки
-client.webhooks().register(url)                         // upsert ЕДИНСТВЕННОГО эндпоинта проекта
+// Webhooks
+client.webhooks().register(url)                         // upsert of the project's SINGLE endpoint
 client.webhooks().deliveries()
 client.webhooks().test_payment(params)
 
-// Настройки
+// Settings
 client.settings().list_auto_withdraw() / set_auto_withdraw(params) / delete_auto_withdraw(currency)
 client.settings().list_allowlist() / add_allowlist(cidr) / remove_allowlist(cidr) / enable_allowlist(bool)
 
-// Массовые операции: состояние пачки
+// Bulk operations: batch state
 client.batches().info(batch_id, limit, offset)
 
-// Платёжные ссылки (переиспользуемые, «донатные»); client.links() — алиас того же ресурса
+// Payment links (reusable, "donation-style"); client.links() is an alias of the same resource
 client.payment_links().create(params)
 client.payment_links().list(limit, offset) / info(link_id) / toggle(link_id, active)
-client.payment_links().public_get(link_id)              // публично, без подписи
-client.payment_links().checkout(link_id, params)        // публично, без подписи
+client.payment_links().public_get(link_id)              // public, unsigned
+client.payment_links().checkout(link_id, params)        // public, unsigned
 
-// Сплит-платежи
-client.splits().create_rule(params)                     // {address,network} ИЛИ {merchant_id} + percent
+// Split payments
+client.splits().create_rule(params)                     // {address,network} OR {merchant_id} + percent
 client.splits().list_rules() / delete_rule(rule_id)
 client.splits().get_config() / set_config(refund_hold_hours)
 
-// Payout-ссылки («крипто-чеки», payout-ключ)
-client.payout_links().create(params)                    // задавайте expires_in_hours явно!
-client.payout_links().create_batch(links)               // до 500 ссылок
+// Payout links ("crypto checks", payout key)
+client.payout_links().create(params)                    // set expires_in_hours explicitly!
+client.payout_links().create_batch(links)               // up to 500 links
 client.payout_links().list(limit, offset) / info(link_id) / cancel(link_id)
-client.payout_links().claim_info(token)                 // публично, без подписи
-client.payout_links().claim(token, address, memo)       // публично, без подписи
+client.payout_links().claim_info(token)                 // public, unsigned
+client.payout_links().claim(token, address, memo)       // public, unsigned
 
-// Курсы (публично, без ключа)
+// Rates (public, no key)
 client.rates().list(Some("ETH"))
 
-// Песочница (ТОЛЬКО тестовый ключ; боевой получит 403 sandbox.live_key)
-client.sandbox().simulate_deposit(invoice_id, params) // симуляция он-чейн депозита
-client.sandbox().faucet(asset, amount, idem)          // тестовый баланс (потолок 1000000)
-client.sandbox().reset()                              // обнулить балансы + отменить неоплаченные
-client.sandbox().list_webhooks()                      // до 50 доставок (подписанный GET)
-client.sandbox().replay_webhook(delivery_id)          // поставить доставку на повтор
+// Sandbox (test key ONLY; a live key gets 403 sandbox.live_key)
+client.sandbox().simulate_deposit(invoice_id, params) // simulate an on-chain deposit
+client.sandbox().faucet(asset, amount, idem)          // test balance (capped at 1000000)
+client.sandbox().reset()                              // zero balances + cancel unpaid invoices
+client.sandbox().list_webhooks()                      // up to 50 deliveries (signed GET)
+client.sandbox().replay_webhook(delivery_id)          // queue the delivery for redelivery
 ```
 
-### Payout-ссылки: коротко
+### Payout links in brief
 
-Вы резервируете средства в ссылку, **не зная кошелька получателя**; получатель открывает публичную
-страницу `claim_url`, вводит адрес — порождается обычная выплата. `claim_token`/`claim_url`
-возвращаются **только в ответе `create`** — сохраните их сразу. **Задавайте `expires_in_hours`
-(1–720) явно**: при 0/отсутствии бэкенд клампит срок к **1 часу**. Непорученная ссылка возвращает
-резерв по истечении срока или при `cancel`.
+You reserve funds into a link **without knowing the recipient's wallet**; the recipient opens the
+public `claim_url` page and enters an address — a regular payout is spawned.
+`claim_token`/`claim_url` are returned **only in the `create` response** — save them right away.
+**Set `expires_in_hours` (1–720) explicitly**: with 0/absent, the backend clamps the lifetime to
+**1 hour**. An unclaimed link returns the reserve when it expires or on `cancel`.
 
 ```rust
 let link = client.payout_links().create(json!({
     "currency": "USDT", "network": "tron", "amount": "25",
-    "reference": "bonus-42",            // ваш ключ дедупликации; дубль → 409 payoutlink.duplicate_reference
-    "expires_in_hours": 168,            // 7 дней; без этого поля — всего 1 час!
-    "email": "user@example.com",        // опционально: claim-письмо получателю
+    "reference": "bonus-42",            // your deduplication key; duplicate → 409 payoutlink.duplicate_reference
+    "expires_in_hours": 168,            // 7 days; without this field — just 1 hour!
+    "email": "user@example.com",        // optional: claim e-mail to the recipient
 }))?;
-println!("{}", link.claim_url); // отдайте получателю
+println!("{}", link.claim_url); // hand this to the recipient
 ```
 
-> **`claim_url` и `payment.url` может прийти ПУСТОЙ строкой.** Шлюз собирает их из своего публичного
-> базового URL (`GATEWAY_PUBLIC_BASE_URL`). В проде без него шлюз не стартует, но на локальном или
-> тестовом стенде его часто не задают — и обе ссылки приезжают пустыми. Это не баг SDK и не баг
-> шлюза. Если тестируете локально, стройте ссылку сами из токена/идентификатора:
-> `{ваш_базовый_url}/claim/{claim_token}` и `{ваш_базовый_url}/pay/{uuid}`.
+> **`claim_url` and `payment.url` may arrive as an EMPTY string.** The gateway builds them from
+> its public base URL (`GATEWAY_PUBLIC_BASE_URL`). In production the gateway does not start
+> without it, but on a local or test setup it often goes unset — and both links arrive empty.
+> This is not an SDK bug and not a gateway bug. If you test locally, build the link yourself from
+> the token/identifier: `{your_base_url}/claim/{claim_token}` and `{your_base_url}/pay/{uuid}`.
 
-## Замечания
+## Notes
 
-- **Суммы — строки** в единицах валюты (`"25.00"`), не числа. Так сохраняется точность.
-- **Дубли исключает заголовок `Idempotency-Key`** (см. раздел «Идемпотентность»). `order_id` —
-  ваш бизнес-идентификатор для поиска операции, задавайте его явно; SDK его не подставляет.
-- **Секрет — только на сервере.** SDK серверный; не встраивайте ключ в клиентские приложения.
-- **Секретов два.** Ключ API подписывает исходящие запросы; вебхуки проверяются **секретом
-  эндпоинта** из `webhooks().register(...).secret` — см. «Проверка вебхуков».
-- **Статусы** типизированы перечислениями `PaymentStatus` / `PayoutStatus` / `PayoutLinkStatus`
-  (поля остаются строками) — см. «Статусы».
-- **`payment.url` и `claim_url`** собираются шлюзом из его публичного базового URL и на стенде без
-  него приходят пустыми: стройте ссылку сами из `uuid` / `claim_token`.
-- **Тела запросов** принимаются как `serde_json::Value` — стройте макросом `json!`.
+- **Amounts are strings** in currency units (`"25.00"`), not numbers. This preserves precision.
+- **Duplicates are prevented by the `Idempotency-Key` header** (see the "Idempotency" section).
+  `order_id` is your business identifier for looking up the operation, set it explicitly; the SDK
+  does not fill it in.
+- **The secret belongs on the server only.** The SDK is server-side; do not embed the key in
+  client applications.
+- **There are two secrets.** The API key signs outgoing requests; webhooks are verified with the
+  **endpoint secret** from `webhooks().register(...).secret` — see "Verifying webhooks".
+- **Statuses** are typed with the `PaymentStatus` / `PayoutStatus` / `PayoutLinkStatus` enums (the
+  fields remain strings) — see "Statuses".
+- **`payment.url` and `claim_url`** are built by the gateway from its public base URL and arrive
+  empty on a setup without one: build the link yourself from the `uuid` / `claim_token`.
+- **Request bodies** are accepted as `serde_json::Value` — build them with the `json!` macro.
 
-## Лицензия
+## License
 
 MIT
