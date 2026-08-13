@@ -1,6 +1,25 @@
-# Oblodai Rust SDK
+<div align="center">
 
-> [Read in English →](README.md)
+<a href="https://oblodai.com">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/oblodai/.github/main/brand/logo-white.svg">
+    <img src="https://raw.githubusercontent.com/oblodai/.github/main/brand/logo-black.svg" alt="oblodai" height="52">
+  </picture>
+</a>
+
+<h3>Официальный Rust SDK платёжного шлюза <a href="https://oblodai.com">oblodai</a></h3>
+
+Приём платежей, выплаты, платёжные ссылки, сплиты, статические кошельки, вебхуки — один API-ключ.
+
+<a href="https://crates.io/crates/oblodai"><img src="https://img.shields.io/crates/v/oblodai?style=flat-square&label=crates.io" alt="crates.io"></a>
+<a href="https://docs.rs/oblodai"><img src="https://img.shields.io/docsrs/oblodai?style=flat-square&label=docs.rs" alt="docs.rs"></a>
+<a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-000000?style=flat-square" alt="License: MIT"></a>
+
+[Документация](https://docs.oblodai.com) · [Кабинет](https://my.oblodai.com) · [Read in English →](README.md)
+
+</div>
+
+---
 
 Официальный Rust SDK для платёжного шлюза **Oblodai**: приём платежей, выплаты, массовые операции
 (пачки), платёжные и payout-ссылки, сплит-платежи, счета на e-mail, статические кошельки, вебхуки,
