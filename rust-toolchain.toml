@@ -1,0 +1,5 @@
+# Toolchain pin: same version locally and in CI. An unpinned stable breaks CI
+# whenever a new clippy release lands; bump deliberately.
+[toolchain]
+channel = "1.97.1"
+components = ["rustfmt", "clippy"]

@@ -1,0 +1,6 @@
+# Pins the status quo: values match rustfmt defaults the code is already
+# formatted with (CI runs `cargo fmt --check`). Do not add options that change
+# formatting without a dedicated `chore: reformat` commit.
+edition = "2021"
+max_width = 100
+newline_style = "Unix"
