@@ -1,74 +1,115 @@
-//! # Oblodai SDK
-//!
-//! Rust-клиент для платёжного шлюза Oblodai: приём платежей, выплаты, статические кошельки, вебхуки.
-//!
-//! **Клиент блокирующий** (`reqwest::blocking` + `std::thread::sleep` в повторах). В async-коде
-//! вызывайте его через `tokio::task::spawn_blocking` — иначе заблокируете поток исполнителя.
-//! Подробности и пример — в документации [`Client`].
-//!
-//! ## Базовый URL — только HTTPS
-//!
-//! [`Client::new`] отвергает `http://` на внешнем хосте: подпись запроса (`X-Signature`) и
-//! `X-Public-Id` ушли бы открытым текстом. Исключение — loopback (`localhost`, `127.0.0.1`,
-//! `::1`) для локальных стендов.
-//!
-//! ## Пример
+//! Official Rust SDK for the [Oblodai](https://oblodai.com) crypto payment gateway: invoices,
+//! payouts, refunds, payout links, static wallets, webhooks and documents — the whole merchant API,
+//! typed end to end and verified against the gateway's own contract snapshot.
 //!
 //! ```no_run
-//! # #[cfg(feature = "reqwest-client")]
-//! # fn demo() -> oblodai::Result<()> {
-//! use oblodai::{Client, Config};
-//! use serde_json::json;
+//! use oblodai::{Client, contract::requests::PaymentRequest};
 //!
-//! let client = Client::new(
-//!     Config::new("test_...", "oblodai_test_...")
-//!         .base_url("https://api.oblodai.com"),
-//! )?;
-//!
-//! let payment = client.payments().create(json!({
-//!     "amount": "10",
-//!     "currency": "USD",
-//!     "order_id": "order-1",
-//!     "to_currency": "USDT",
-//!     "network": "tron",
-//! }))?;
-//!
-//! println!("{} {}", payment.address, payment.url);
-//! # Ok(())
-//! # }
+//! # async fn demo() -> oblodai::Result<()> {
+//! let client = Client::from_env()?;
+//! let invoice = client
+//!     .payments()
+//!     .create(PaymentRequest {
+//!         amount: "25".into(),           // amounts are decimal strings, never floats
+//!         currency: "USDT".into(),       // what you price in — a fiat or a crypto asset
+//!         network: Some("tron".into()),  // omit to let the payer choose on the pay page
+//!         order_id: Some("order-1001".into()),
+//!         ..Default::default()
+//!     })
+//!     .await?;
+//! println!("{} {}", invoice.url, invoice.address);
+//! # Ok(()) }
 //! ```
 //!
-//! ## Статусы
+//! # What the SDK does for you
 //!
-//! Словарь статусов типизирован: [`PaymentStatus`] (платежи), [`PayoutStatus`] (выплаты),
-//! [`PayoutLinkStatus`] (payout-ссылки). Поля моделей остаются строками, разбор — через
-//! `payment.status()` / `payout.status()` или `PaymentStatus::from_api(...)`.
+//! - **Signs** every request with the five-field recipe the gateway verifies
+//!   (`ts \n METHOD \n path+query \n Idempotency-Key \n body`).
+//! - **Retries** only what the API itself marks `retryable`, and only when re-sending cannot
+//!   duplicate a side effect — a read route, or a write the gateway deduplicates by
+//!   `Idempotency-Key`.
+//! - **Generates an idempotency key** per logical call on create routes and reuses it across
+//!   retries, so a timeout can never produce a second payout.
+//! - **Corrects clock skew** once, from the server's `Date` header, and reverts the correction if
+//!   it did not help.
+//! - **Verifies webhooks** without a client: see [`webhooks`].
 //!
-//! ## Два разных секрета
+//! # Two key kinds
 //!
-//! - **Секрет API-ключа** (`Config::secret`) подписывает ИСХОДЯЩИЕ запросы SDK.
-//! - **Секрет эндпоинта** (поле `secret` из [`resources::Webhooks::register`]) проверяет ВХОДЯЩИЕ
-//!   вебхуки в [`verify_webhook`] / [`construct_event`].
+//! The gateway issues a payment key (`pk_…`) and a payout key (`wk_…`). Money-out routes need the
+//! payout one. Configure both and the SDK picks the right pair per route:
 //!
-//! Это разные значения; перепутав их, вы отвергнете все вебхуки.
+//! ```no_run
+//! # fn demo() -> oblodai::Result<()> {
+//! let client = oblodai::Client::builder()
+//!     .public_id("pk_live_…")
+//!     .secret("…")
+//!     .payout_public_id("wk_live_…")
+//!     .payout_secret("…")
+//!     .build()?;
+//! # Ok(()) }
+//! ```
+//!
+//! # Errors
+//!
+//! Every failure is an [`Error`] carrying the API's envelope: [`code`](Error::code),
+//! [`http_status`](Error::http_status), [`retryable`](Error::retryable),
+//! [`retry_after`](Error::retry_after), [`request_id`](Error::request_id) and
+//! [`field`](Error::field), classified by [`ErrorKind`]. The raw body is never printed by `Debug`
+//! and never serialized.
+//!
+//! # Feature flags
+//!
+//! - `reqwest-client` *(default)* — the async client over `reqwest` with rustls.
+//! - `blocking` — a synchronous [`blocking::Client`] over the same pure core.
+//!
+//! MSRV 1.86 (the SDK's own code builds on 1.75; the floor comes from the dependency tree).
 
-pub mod client;
+#![forbid(unsafe_code)]
+// The error carries the gateway's whole envelope (code, message, request id, field) by value,
+// because that is what callers match on. Boxing it to satisfy `result_large_err` would put an
+// allocation on every failure path and an extra deref in every `match err.code()`.
+#![allow(clippy::result_large_err)]
+
+#[cfg(feature = "reqwest-client")]
+mod client;
+pub mod config;
+pub mod contract;
+pub mod core;
 pub mod error;
-pub mod http;
-pub mod logging;
-pub mod models;
-pub(crate) mod random;
+pub mod helpers;
 pub mod resources;
-pub mod signing;
 pub mod webhooks;
 
-// Публичные реэкспорты для удобства.
+#[cfg(feature = "blocking")]
+pub mod blocking;
+
 #[cfg(feature = "reqwest-client")]
-pub use client::ReqwestTransport;
-pub use client::{is_test_key, Client, Config, RetryConfig, DEFAULT_TIMEOUT};
-pub use error::{Error, Result};
-pub use http::{HttpResponse, HttpTransport};
-pub use logging::{LogLevel, Logger, ENV_LOG};
-pub use models::{PaymentStatus, PayoutLinkStatus, PayoutStatus, ResolveAction};
-pub use signing::compute_webhook_signature;
-pub use webhooks::{construct_event, verify_webhook, VerifyOptions, WebhookHeaders};
+pub use client::Client;
+pub use config::{ClientBuilder, DEFAULT_BASE_URL, SDK_VERSION};
+pub use error::{Error, ErrorDetail, ErrorKind, Result};
+
+pub use contract::enums::*;
+pub use contract::models::*;
+pub use contract::routes::ROUTES;
+pub use contract::types::{ListKind, Method, RouteAuth, RouteSpec};
+pub use contract::version::{CONTRACT_CORE_COMMIT, CONTRACT_EXPORTED_AT, CONTRACT_HASH};
+
+pub use crate::core::clock::Clock;
+pub use crate::core::envelope::{Page, Paginate, PlainList};
+pub use crate::core::http::{BackendFuture, HttpBackend, HttpRequest};
+pub use crate::core::logger::{LogLevel, Logger};
+pub use crate::core::pagination::{ItemStream, Pager};
+pub use crate::core::retry::RetryOptions;
+pub use crate::core::signing::{canonical_string, sign_request, sign_webhook, SignInput};
+pub use crate::core::transport::Transport;
+pub use resources::{FileBuilder, FileResult, Lookup, PaymentLookup, PayoutLookup, RequestBuilder};
+pub use webhooks::{
+    is_stale_event, parse_webhook, verify_webhook, verify_webhook_delivery, VerifyOptions,
+    WebhookDeliveryInfo,
+};
+
+#[cfg(feature = "blocking")]
+pub use crate::core::http::BlockingHttpBackend;
+#[cfg(feature = "blocking")]
+pub use crate::core::transport::BlockingTransport;

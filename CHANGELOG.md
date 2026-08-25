@@ -1,5 +1,32 @@
 # Changelog
 
+## 1.3.0 — 2026-08-25
+
+Rewrite generated from the gateway's contract snapshot. See MIGRATION-1.3.md.
+
+- **Fixed:** requests are signed with the five-field recipe over path+query
+  (`ts \n METHOD \n path+query \n Idempotency-Key \n body`). The 1.x line signed four fields, which
+  the gateway stopped accepting — every call returned 401.
+- **Fixed:** models, statuses, pagination and parameter names match the current API vocabulary, and
+  are checked field by field against golden response bodies recorded from a live gateway.
+- **Added:** every merchant route (107) — cancel/validate, batches, documents, fee configs, split
+  opt-in, secret rotation, payer-facing checkout and claim endpoints.
+- **Added:** `Pager` (await one page, `.stream()` every item, `.all(max)`), authoritative
+  `retryable`-driven retries with a safe-to-repeat rule, automatic idempotency keys, clock-skew
+  correction, dual key pairs, a per-call deadline.
+- **Added:** `oblodai::webhooks` — rotation-aware `verify_webhook`, `verify_webhook_delivery`,
+  `parse_webhook`, `is_stale_event`; no client and no API key needed.
+- **Added:** a `blocking` feature: the same method tree, the same pure core, synchronous I/O.
+- **Added:** `HttpBackend` / `BlockingHttpBackend` so the HTTP layer can be replaced (a proxy-aware
+  client, a recording stub in tests).
+- **Added:** contract tests against the golden bodies and real signed webhook deliveries,
+  `python3 scripts/codegen.py --check` as a drift gate, and a live journey against a real gateway.
+- **Changed:** async by default on `reqwest` + `tokio` with rustls (no OpenSSL); MSRV 1.75.
+- **Changed:** every method returns a builder that is also a future — per-call `idempotency_key`,
+  `timeout`, `deadline`, `prefer_payout_key` instead of client-wide settings.
+- **Changed:** `Error` is one type with `code`, `http_status`, `retryable`, `retry_after`,
+  `request_id`, `field`, `synthetic` and a `kind()`; the raw body is never printed or serialized.
+
 Значимые изменения этого пакета. Формат — [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 версии — [SemVer](https://semver.org/lang/ru/).
 

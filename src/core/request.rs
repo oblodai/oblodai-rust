@@ -1,0 +1,216 @@
+//! Builds the outgoing request — URL, headers, body — as a pure function of its inputs, so the
+//! signing material (what is signed) and the wire bytes (what is sent) come from one place and
+//! cannot disagree. Nothing here touches the network or the clock.
+
+use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
+use url::Url;
+
+use super::signing::{
+    sign_request, SignInput, HEADER_IDEMPOTENCY_KEY, HEADER_PUBLIC_ID, HEADER_SIGNATURE,
+    HEADER_TIMESTAMP,
+};
+use crate::contract::types::{Method, RouteAuth, RouteSpec};
+use crate::error::{Error, Result};
+
+/// One API key pair.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Credentials {
+    pub public_id: String,
+    pub secret: String,
+}
+
+impl std::fmt::Debug for Credentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Credentials")
+            .field("public_id", &self.public_id)
+            .field("secret", &"[redacted]")
+            .finish()
+    }
+}
+
+/// Everything the request line and headers are derived from.
+pub struct BuildInput<'a> {
+    pub base_url: &'a str,
+    pub route: &'a RouteSpec,
+    pub path_params: &'a [(&'static str, String)],
+    pub query: &'a [(String, String)],
+    /// Already-serialized body; empty for GET.
+    pub body: &'a str,
+    pub credentials: Option<&'a Credentials>,
+    pub idempotency_key: Option<&'a str>,
+    /// Unix seconds; signed into `X-Timestamp`.
+    pub ts: i64,
+    pub user_agent: &'a str,
+    pub extra_headers: &'a [(String, String)],
+}
+
+/// The request as it will go on the wire.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BuiltRequest {
+    pub url: String,
+    pub method: &'static str,
+    pub headers: Vec<(String, String)>,
+    pub body: Option<String>,
+    /// What was signed (path + query); kept for debugging signature mismatches.
+    pub request_uri: String,
+}
+
+/// Headers the SDK owns; a caller-supplied header with one of these names is dropped.
+const RESERVED_HEADERS: [&str; 7] = [
+    "x-public-id",
+    "x-signature",
+    "x-timestamp",
+    "idempotency-key",
+    "content-type",
+    "content-length",
+    "host",
+];
+
+/// `encodeURIComponent`: everything but ASCII alphanumerics and `-_.!~*'()`.
+const COMPONENT: &AsciiSet = &NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'_')
+    .remove(b'.')
+    .remove(b'!')
+    .remove(b'~')
+    .remove(b'*')
+    .remove(b'\'')
+    .remove(b'(')
+    .remove(b')');
+
+pub fn build_request(input: BuildInput<'_>) -> Result<BuiltRequest> {
+    let route = input.route;
+    let mut url = join_url(input.base_url, &fill_path(route.path, input.path_params)?)?;
+    if !input.query.is_empty() {
+        let mut pairs = url.query_pairs_mut();
+        for (k, v) in input.query {
+            pairs.append_pair(k, v);
+        }
+    }
+    let request_uri = match url.query() {
+        Some(q) => format!("{}?{}", url.path(), q),
+        None => url.path().to_string(),
+    };
+
+    let mut headers: Vec<(String, String)> = Vec::new();
+    for (k, v) in input.extra_headers {
+        if !RESERVED_HEADERS.contains(&k.to_ascii_lowercase().as_str()) {
+            headers.push((k.clone(), v.clone()));
+        }
+    }
+    headers.push(("Accept".into(), "application/json".into()));
+    headers.push(("User-Agent".into(), input.user_agent.into()));
+    let has_body = route.method != Method::Get;
+    if has_body {
+        headers.push(("Content-Type".into(), "application/json".into()));
+    }
+    if let Some(key) = input.idempotency_key {
+        headers.push((HEADER_IDEMPOTENCY_KEY.into(), key.into()));
+    }
+
+    if route.auth != RouteAuth::Public && route.auth != RouteAuth::Onboard {
+        let creds =
+            input.credentials.ok_or_else(|| {
+                Error::config(
+                    "sdk.missing_credentials",
+                    format!(
+                    "{} {} needs a {} API key: pass public_id/secret to the client builder or set \
+                     OBLODAI_PUBLIC_ID / OBLODAI_SECRET",
+                    route.method,
+                    route.path,
+                    if route.auth == RouteAuth::Any { "merchant" } else { route.auth.as_str() },
+                ),
+                    None,
+                )
+            })?;
+        let signature = sign_request(
+            &creds.secret,
+            &SignInput {
+                ts: input.ts,
+                method: route.method.as_str(),
+                request_uri: &request_uri,
+                idempotency_key: input.idempotency_key,
+                body: if has_body { input.body.as_bytes() } else { b"" },
+            },
+        );
+        headers.push((HEADER_PUBLIC_ID.into(), creds.public_id.clone()));
+        headers.push((HEADER_TIMESTAMP.into(), input.ts.to_string()));
+        headers.push((HEADER_SIGNATURE.into(), signature));
+    }
+
+    Ok(BuiltRequest {
+        url: url.to_string(),
+        method: route.method.as_str(),
+        headers,
+        body: if has_body {
+            Some(input.body.to_string())
+        } else {
+            None
+        },
+        request_uri,
+    })
+}
+
+/// Append a route path to the base URL, keeping any path prefix the base carries
+/// (`https://host/api` → `https://host/api/v1/payment`).
+pub fn join_url(base_url: &str, route_path: &str) -> Result<Url> {
+    let mut base = Url::parse(base_url).map_err(|e| {
+        Error::config(
+            "sdk.bad_config",
+            format!("base_url is not a valid URL: {e}"),
+            Some("base_url"),
+        )
+    })?;
+    let prefix = base.path().trim_end_matches('/').to_string();
+    base.set_path(&format!("{prefix}{route_path}"));
+    base.set_query(None);
+    base.set_fragment(None);
+    Ok(base)
+}
+
+/// Substitute `{name}` segments; every placeholder must be supplied, values are percent-encoded.
+pub fn fill_path(template: &str, params: &[(&'static str, String)]) -> Result<String> {
+    let mut out = String::with_capacity(template.len());
+    let mut rest = template;
+    while let Some(start) = rest.find('{') {
+        let end = rest[start..].find('}').map(|i| start + i).ok_or_else(|| {
+            Error::config(
+                "sdk.bad_path_param",
+                format!("unterminated path template {template}"),
+                None,
+            )
+        })?;
+        out.push_str(&rest[..start]);
+        let name = &rest[start + 1..end];
+        let value = params
+            .iter()
+            .find(|(k, _)| *k == name)
+            .map(|(_, v)| v.as_str())
+            .unwrap_or("");
+        if value.is_empty() || value == "." || value == ".." || value.contains('/') {
+            return Err(Error::config(
+                "sdk.bad_path_param",
+                format!(
+                    "path parameter \"{name}\" for {template} must be a non-empty single segment \
+                     (got {value:?})"
+                ),
+                Some("path"),
+            ));
+        }
+        out.push_str(&utf8_percent_encode(value, COMPONENT).to_string());
+        rest = &rest[end + 1..];
+    }
+    out.push_str(rest);
+    Ok(out)
+}
+
+/// Serialize a request body once; a missing POST body becomes `{}`, a GET body is empty.
+pub fn serialize_body(body: Option<&serde_json::Value>, method: Method) -> String {
+    if method == Method::Get {
+        return String::new();
+    }
+    match body {
+        None | Some(serde_json::Value::Null) => "{}".to_string(),
+        Some(v) => v.to_string(),
+    }
+}

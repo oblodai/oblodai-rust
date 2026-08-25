@@ -8,9 +8,30 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.97.1
         with:
-          components: rustfmt
-      - run: cargo fmt --check
-      - run: cargo build --all-features
-      - run: cargo test --all-features
+          components: rustfmt, clippy
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Formatting
+        run: cargo fmt --all --check
+      - name: Contract drift
+        run: python3 scripts/codegen.py --check
+      - name: Lints
+        run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Tests
+        run: cargo test --all-features
+      - name: Examples build
+        run: cargo build --examples --all-features
+      - name: Docs
+        run: cargo doc --no-deps --all-features
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.86.0
+      - run: cargo check --all-features
