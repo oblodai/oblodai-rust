@@ -1,8 +1,6 @@
 //! Payout links (cheques) and payment links, merchant- and payer-facing.
 
-use crate::contract::enums::{
-    AmountMode, FeeBearer, Network, PaymentStatus, PayoutLinkStatus, PayoutStatus,
-};
+use crate::contract::enums::{AmountMode, FeeBearer, Network, PaymentStatus, PayoutLinkStatus};
 use crate::contract::models::common::{Money, Timestamp};
 
 /// Payout link (cheque) as `/v1/payout/link`, `/info`, `/list`, `/cancel` and batch elements render it.
@@ -71,7 +69,7 @@ pub struct ClaimPreview {
 pub struct ClaimResult {
     /// The payout that pays the recipient (`payouts.info({ uuid: payout_id })`).
     pub payout_id: String,
-    pub status: PayoutStatus,
+    pub status: PayoutLinkStatus,
     pub address: String,
     pub amount: Money,
     pub currency: String,
