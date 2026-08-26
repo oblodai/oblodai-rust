@@ -222,7 +222,7 @@ async fn live_sweep() {
         .batch(PaymentBatchRequest {
             on_error: Some(oblodai::BatchOnError::Continue),
             payments: vec![PaymentBatchPaymentsItem {
-                amount: "3".into(),
+                amount: "5".into(),
                 currency: "USDT".into(),
                 network: Some("tron".into()),
                 order_id: format!("sw-b-{}", stamp()),
@@ -245,7 +245,7 @@ async fn live_sweep() {
     let to_cancel = client
         .payments()
         .create(PaymentRequest {
-            amount: "1".into(),
+            amount: "5".into(),
             currency: "USDT".into(),
             network: Some("tron".into()),
             order_id: Some(format!("sw-c-{}", stamp())),
@@ -403,7 +403,7 @@ async fn live_sweep() {
         .payouts()
         .mass(PayoutMassRequest {
             payouts: vec![PayoutMassPayoutsItem {
-                amount: "1".into(),
+                amount: "5".into(),
                 currency: "USDT".into(),
                 network: Some("tron".into()),
                 address: ADDRESS.into(),
@@ -419,7 +419,7 @@ async fn live_sweep() {
         .payouts()
         .batch(PayoutBatchRequest {
             payouts: vec![PayoutBatchPayoutsItem {
-                amount: "1".into(),
+                amount: "5".into(),
                 currency: "USDT".into(),
                 network: Some("tron".into()),
                 address: ADDRESS.into(),
@@ -524,7 +524,7 @@ async fn live_sweep() {
     let second = client
         .payout_links()
         .create(PayoutLinkRequest {
-            amount: "1".into(),
+            amount: "5".into(),
             currency: "USDT".into(),
             network: "tron".into(),
             reference: Some(format!("sw-pl2-{}", stamp())),
@@ -545,7 +545,7 @@ async fn live_sweep() {
         .payout_links()
         .batch(PayoutLinkBatchRequest {
             items: vec![PayoutLinkBatchItemsItem {
-                amount: "1".into(),
+                amount: "5".into(),
                 currency: "USDT".into(),
                 network: "tron".into(),
                 reference: format!("sw-plb-{}", stamp()),
@@ -884,7 +884,7 @@ async fn live_sweep() {
         client
             .transfers()
             .to_personal(TransferToPersonalRequest {
-                amount: "1".into(),
+                amount: "5".into(),
                 currency: "USDT".into(),
                 ..Default::default()
             })
