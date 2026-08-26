@@ -1,4 +1,4 @@
-// GENERATED FILE - do not edit. Source: contract/contract.json (core 7ec04293c426).
+// GENERATED FILE - do not edit. Source: contract/contract.json (core 2cc44c16f516).
 // Regenerate with: python3 scripts/codegen.py
 
 /// Invoice lifecycle, as `payment.status` carries it.
@@ -1203,7 +1203,6 @@ pub const ERROR_CODES: &[&str] = &[
     "merchant.already_sandbox",
     "merchant.bad_fee_bearer",
     "merchant.bad_id",
-    "merchant.bad_key_kind",
     "merchant.bad_project_id",
     "merchant.bad_settles_to",
     "merchant.bad_signature",
@@ -1217,7 +1216,6 @@ pub const ERROR_CODES: &[&str] = &[
     "merchant.project_mismatch",
     "merchant.secret_decrypt",
     "merchant.unknown_key",
-    "merchant.wrong_key_kind",
     "minimum.negative",
     "minimum.no_network",
     "onramp.admit",

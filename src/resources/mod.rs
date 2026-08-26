@@ -19,7 +19,7 @@ pub mod webhooks;
 
 pub use account::{Account, Catalog};
 pub use base::RequestBuilder;
-pub use batches::{BatchInfoCall, Batches, Transfers};
+pub use batches::{Batches, Transfers};
 pub use documents::{
     DocumentFormat, DocumentQuery, Documents, FormatQuery, PeriodQuery, SignedLinkQuery,
 };

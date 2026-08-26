@@ -82,35 +82,29 @@ public id plus a secret:
 | live    | `oblodai_<hex>`      | `oblodai_live_<hex>`  |
 | sandbox | `test_oblodai_<hex>` | `oblodai_test_<hex>`  |
 
-A live key is issued as one **unified API key**; the legacy kinds are still honoured — a **payment
-key** (`oblodai_pk_<hex>`) for invoices, payment links, wallets, the catalogue and reports, and a
-**payout key** (`oblodai_wk_<hex>`) for everything that moves money out.
-
-A **sandbox key** drives a chainless copy of the gateway — fake balance from a faucet, simulated
-deposits, real webhooks — and there one pair serves both key kinds. Integrate against it first; live
-and sandbox keys are separate and neither can touch the other's data.
-
-Routes that need the payout key: `payouts()`, `refunds()`, `payout_links()` (the merchant side —
-`create`, `info`/`get`, `list`, `cancel`, `batch`, `cheque`; the recipient-facing `claim_preview`
-and `claim` are public and need no key at all), `transfers()`, `splits()`,
-`wallets().refund_blocked_deposit`, `settings().*_auto_withdraw`, `settings().*_api_allowlist`,
-`webhooks().rotate_secret`, `webhooks().test(WebhookKind::Payout, …)`, `sandbox().faucet` and
-`sandbox().reset`. Pass both pairs and the SDK picks the right one per call:
+A merchant has **one API key**, and it signs every route the SDK can call: invoices and payment
+links, payouts, refunds and cheques, settings, wallets, reports. There is nothing to choose per
+call:
 
 ```rust
 let client = oblodai::Client::builder()
     .public_id(public_id)
     .secret(secret)
-    .payout_public_id(payout_public_id)
-    .payout_secret(payout_secret)
     .build()?;
 ```
 
-A call made with the wrong kind is a 403 `merchant.wrong_key_kind`.
+A **sandbox key** drives a chainless copy of the gateway — fake balance from a faucet, simulated
+deposits, real webhooks — and comes from the sandbox onboarding (`merchants().sandbox(…)`, or the
+dashboard). Integrate against it first; live and sandbox keys are separate and neither can touch the
+other's data.
 
-A third credential, the **onboarding admin token**, exists only on a self-hosted gateway: it is sent
-as `X-Admin-Token` on the `merchants()` provisioning routes and nowhere else. Set it with
+A second credential, the **onboarding admin token**, exists only on a self-hosted gateway: it is
+sent as `X-Admin-Token` on the `merchants()` provisioning routes and nowhere else. Set it with
 `.admin_token(…)` or `OBLODAI_ADMIN_TOKEN`.
+
+Only a merchant onboarded long before the single-key cleanup can still hold a legacy split pair
+(`oblodai_pk_…` for money in, `oblodai_wk_…` for money out); such a pair is refused on the other
+half's routes with a 403 `merchant.wrong_key_kind`. Replace it with the merchant's API key.
 
 ## Quick start
 
@@ -146,7 +140,7 @@ To price in fiat, charge in one currency and settle in another: `amount: "25".in
 currency: "USD".into(), to_currency: Some("USDT".into())` — `currency` is what you charge,
 `to_currency` the asset the payer sends.
 
-Sending money out needs the payout key:
+Sending money out uses the same key:
 
 ```rust
 use oblodai::contract::requests::PayoutRequest;
@@ -180,7 +174,7 @@ use oblodai::contract::requests::{
 };
 use oblodai::WebhookKind;
 
-// test money to pay out from (payout key, `test_` keys only)
+// test money to pay out from (`test_` keys only)
 client
     .sandbox()
     .faucet(SandboxFaucetRequest {
@@ -221,7 +215,7 @@ client.sandbox().reset().await?;
 ```
 
 `sandbox().replay(delivery_id)` re-sends a delivery that has already reached a terminal state.
-`sandbox().reset()` cancels open invoices and zeroes balances (payout key). A rehearsal delivery
+`sandbox().reset()` cancels open invoices and zeroes balances. A rehearsal delivery
 carries `test: true` in the signed body and `X-Webhook-Test: true` in the headers, surfaced as
 `delivery.is_test` — never credit an order on one.
 
@@ -369,7 +363,7 @@ Every failure is an `oblodai::Error` carrying the API's error envelope: `code()`
 | --------------------------------- | ----------- | ---------------------------------------------------------- |
 | `Validation`                      | 400         | the request was rejected; `field()` names the offender      |
 | `Authentication`                  | 401         | bad signature, missing or unknown key                       |
-| `Permission`                      | 403         | the key may not do this (`merchant.wrong_key_kind`)         |
+| `Permission`                      | 403         | the key may not do this (feature off, IP not allowlisted)   |
 | `NotFound`                        | 404         | no such object                                              |
 | `Conflict` / `IdempotencyConflict` | 409         | state conflict; a key reused with a different body          |
 | `RateLimit`                       | 429         | throttled; honour `retry_after()`                           |
@@ -406,8 +400,8 @@ match client.payouts().create(params).await {
 ```
 
 Codes worth handling: `payout.insufficient_funds` and `payout.funds_maturing` (both retryable),
-`idempotency.key_reused`, `invoice.not_payable`, `payment.not_found`, `merchant.wrong_key_kind`,
-`merchant.bad_signature`, `request.rate_limited`. The full catalogue — **471 codes** — ships as
+`idempotency.key_reused`, `invoice.not_payable`, `payment.not_found`,
+`merchant.bad_signature`, `request.rate_limited`. The full catalogue — **469 codes** — ships as
 `oblodai::ERROR_CODES`, and every money-moving method lists the ones worth branching on in its own
 rustdoc.
 
@@ -446,19 +440,17 @@ client
     .idempotency_key("payout-42")
     .timeout(Duration::from_secs(10)) // one attempt
     .deadline(Duration::from_secs(45)) // the whole call, retries and pauses included
-    .prefer_payout_key(true)
     .header("X-Request-Trace", "abc123") // this call only
     .await?;
 ```
 
 Which options a builder has follows from what the route is:
 
-| builder                                  | `.timeout` | `.deadline` | `.prefer_payout_key` | `.header` | `.idempotency_key`                                    |
-| ---------------------------------------- | ---------- | ----------- | -------------------- | --------- | ----------------------------------------------------- |
-| `RequestBuilder` (every ordinary route)  | ✓          | ✓           | ✓                    | ✓         | ✓                                                     |
-| `FileBuilder` (`documents()`, `cheque`)  | ✓          | ✓           | ✓                    | ✓         | deprecated — no document route is deduplicated        |
-| `Pager` (every list)                     | ✓          | ✓           | ✓                    | ✓         | — a key per page would make the gateway replay page 1 |
-| `BatchInfoCall` (`batches().info`)       | ✓          | ✓           | ✓                    | ✓         | — the route is not deduplicated                       |
+| builder                                  | `.timeout` | `.deadline` | `.header` | `.idempotency_key`                                    |
+| ---------------------------------------- | ---------- | ----------- | --------- | ----------------------------------------------------- |
+| `RequestBuilder` (every ordinary route)  | ✓          | ✓           | ✓         | ✓                                                     |
+| `FileBuilder` (`documents()`, `cheque`)  | ✓          | ✓           | ✓         | deprecated — no document route is deduplicated        |
+| `Pager` (every list)                     | ✓          | ✓           | ✓         | — a key per page would make the gateway replay page 1 |
 
 **Bound a call with `.deadline(…)`, not by dropping the future.** Dropping cancels the call, and the
 auto-generated idempotency key lives in that future — a request already on the wire may still reach
@@ -472,8 +464,7 @@ falls back to an environment variable:
 
 | option                          | default                    | meaning                                                                |
 | ------------------------------- | -------------------------- | ---------------------------------------------------------------------- |
-| `.public_id(…)` / `.secret(…)`  | —                          | the payment key pair (`X-Public-Id` plus the signing secret)            |
-| `.payout_public_id(…)` / `.payout_secret(…)` | —             | the payout key pair; a pair must be given whole or not at all           |
+| `.public_id(…)` / `.secret(…)`  | —                          | the API key (`X-Public-Id` plus the signing secret); give both or neither |
 | `.base_url(…)`                  | `https://api.oblodai.com`  | API origin; a path prefix (`https://gw.corp/oblodai`) is kept           |
 | `.timeout(…)`                   | 30 s                       | per attempt                                                            |
 | `.deadline(…)`                  | 90 s                       | the whole call, retries and pauses included                            |
@@ -486,14 +477,12 @@ falls back to an environment variable:
 | `.clock(…)`                     | system clock               | the signing clock, for tests                                           |
 | `.env(…)`                       | the process environment    | read the fallbacks from a map instead                                  |
 
-These eight variables are read, and no others:
+These six variables are read, and no others:
 
 | variable                    | option                        | meaning                                                            |
 | --------------------------- | ----------------------------- | ------------------------------------------------------------------ |
-| `OBLODAI_PUBLIC_ID`         | `.public_id(…)`               | payment key, public half (`X-Public-Id`)                           |
-| `OBLODAI_SECRET`            | `.secret(…)`                  | payment key, secret half                                           |
-| `OBLODAI_PAYOUT_PUBLIC_ID`  | `.payout_public_id(…)`        | payout key, public half                                            |
-| `OBLODAI_PAYOUT_SECRET`     | `.payout_secret(…)`           | payout key, secret half                                            |
+| `OBLODAI_PUBLIC_ID`         | `.public_id(…)`               | API key, public half (`X-Public-Id`)                               |
+| `OBLODAI_SECRET`            | `.secret(…)`                  | API key, secret half                                               |
 | `OBLODAI_ADMIN_TOKEN`       | `.admin_token(…)`             | `X-Admin-Token`, sent on the `merchants()` routes and nowhere else |
 | `OBLODAI_BASE_URL`          | `.base_url(…)`                | API origin; defaults to `https://api.oblodai.com`                  |
 | `OBLODAI_LOG`               | `.logger(…)`                  | `debug\|info\|warn\|error` — installs a stderr logger              |
@@ -518,8 +507,8 @@ to store what the gateway showed you once.
 
 `contract/` is exported by the gateway's own test suite: the route registry, request DTO schemas
 with English field docs, enums, every error code, signing vectors, golden response bodies recorded
-from a live gateway and real signed webhook deliveries. This snapshot: **107 merchant routes, 471
-error codes**, exported from core `7ec04293c426`. `src/contract/{routes,enums,requests,version}.rs`
+from a live gateway and real signed webhook deliveries. This snapshot: **107 merchant routes, 469
+error codes**, exported from core `2cc44c16f516`. `src/contract/{routes,enums,requests,version}.rs`
 are generated from it, and `oblodai::ROUTES`, `ERROR_CODES`, `NETWORKS`, `PAYMENT_STATUSES`,
 `PAYOUT_STATUSES` and `EVENT_TYPES` expose it at runtime.
 

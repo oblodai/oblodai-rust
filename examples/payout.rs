@@ -1,12 +1,11 @@
 //! Send money out: check the price, dry-run the payout, then create it.
 //!
 //! ```sh
-//! OBLODAI_PUBLIC_ID=… OBLODAI_SECRET=… \
-//! OBLODAI_PAYOUT_PUBLIC_ID=… OBLODAI_PAYOUT_SECRET=… \
-//!   cargo run --example payout
+//! OBLODAI_PUBLIC_ID=… OBLODAI_SECRET=… cargo run --example payout
 //! ```
 //!
-//! Payouts need the payout key. Sandbox keys are both kinds at once, so a `test_` key is enough.
+//! Payouts are signed with the same API key as everything else; a `test_` key runs this in the
+//! sandbox.
 
 use std::time::{SystemTime, UNIX_EPOCH};
 

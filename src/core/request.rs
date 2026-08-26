@@ -162,21 +162,18 @@ pub fn build_request(input: BuildInput<'_>) -> Result<BuiltRequest> {
         }
     }
 
-    if route.auth != RouteAuth::Public && route.auth != RouteAuth::Onboard {
-        let creds =
-            input.credentials.ok_or_else(|| {
-                Error::config(
-                    "sdk.missing_credentials",
-                    format!(
-                    "{} {} needs a {} API key: pass public_id/secret to the client builder or set \
-                     OBLODAI_PUBLIC_ID / OBLODAI_SECRET",
-                    route.method,
-                    route.path,
-                    if route.auth == RouteAuth::Any { "merchant" } else { route.auth.as_str() },
+    if route.auth == RouteAuth::Key {
+        let creds = input.credentials.ok_or_else(|| {
+            Error::config(
+                "sdk.missing_credentials",
+                format!(
+                    "{} {} needs the merchant API key: pass public_id/secret to the client builder \
+                     or set OBLODAI_PUBLIC_ID / OBLODAI_SECRET",
+                    route.method, route.path,
                 ),
-                    None,
-                )
-            })?;
+                None,
+            )
+        })?;
         let signature = sign_request(
             &creds.secret,
             &SignInput {

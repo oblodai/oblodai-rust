@@ -78,12 +78,6 @@ impl<Tr, T> RequestBuilder<Tr, T> {
         self
     }
 
-    /// Sign with the payout key on a route that accepts either key kind.
-    pub fn prefer_payout_key(mut self, prefer: bool) -> Self {
-        self.opts.prefer_payout_key = prefer;
-        self
-    }
-
     /// An extra header on this call only, merged over the client-wide ones. Names the SDK owns
     /// (the signing headers, `Accept`, `Content-Type`, `User-Agent`, `X-Admin-Token`) are never
     /// overridden; a CR/LF or non-ASCII value is a `sdk.bad_header` config error.

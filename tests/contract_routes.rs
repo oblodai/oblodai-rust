@@ -1144,8 +1144,6 @@ async fn every_route_is_wired_to_the_right_method_path_and_credential() {
         let client = Client::builder()
             .public_id("pk")
             .secret("s")
-            .payout_public_id("wk")
-            .payout_secret("s2")
             .admin_token("adm")
             .base_url("https://api.test")
             .env(Vec::<(String, String)>::new())
@@ -1206,21 +1204,17 @@ async fn every_route_is_wired_to_the_right_method_path_and_credential() {
                 );
                 assert_eq!(sent.header("x-admin-token"), Some("adm"), "{key}");
             }
-            RouteAuth::Payout => {
-                assert_eq!(
-                    sent.header("x-public-id"),
-                    Some("wk"),
-                    "{key}: needs the payout key"
-                );
-                assert_eq!(sent.header("x-signature").unwrap().len(), 64, "{key}");
-            }
-            RouteAuth::Payment | RouteAuth::Any => {
+            RouteAuth::Key => {
                 assert_eq!(
                     sent.header("x-public-id"),
                     Some("pk"),
-                    "{key}: needs the payment key"
+                    "{key}: signed with the merchant API key"
                 );
                 assert_eq!(sent.header("x-signature").unwrap().len(), 64, "{key}");
+                assert!(
+                    sent.header("x-admin-token").is_none(),
+                    "{key}: the admin token belongs to onboard routes only"
+                );
             }
             // `RouteAuth` is `#[non_exhaustive]`: a gate the core adds must be classified here
             // before its routes can be trusted, not silently accepted.

@@ -8,19 +8,19 @@ in `contract/contract.json`.
 - Amounts are decimal strings wrapped in `Money`: `amount: "25".into()`, never `25.0`. Do not parse
   them as `f64`; use `oblodai::helpers::{add_amounts, subtract_amounts, compare_amounts}`.
 - Every method returns a builder that implements `IntoFuture`. `.await` it, or set per-call options
-  first. `.timeout(..)`, `.deadline(..)` and `.prefer_payout_key(..)` exist on all four builders
-  (`RequestBuilder`, `FileBuilder`, `Pager`, `BatchInfoCall`). `.idempotency_key(..)` exists only on
-  `RequestBuilder` — a `Pager` must not key its pages, `BatchInfoCall` and every document route are
-  not deduplicated, and `FileBuilder::idempotency_key` is deprecated for exactly that reason.
-  `.header(name, value)` is on all four too, for a header on this call only.
+  first. `.timeout(..)` and `.deadline(..)` exist on all three builders (`RequestBuilder`,
+  `FileBuilder`, `Pager`). `.idempotency_key(..)` exists only on `RequestBuilder` — a `Pager` must
+  not key its pages, every document route is not deduplicated, and `FileBuilder::idempotency_key` is
+  deprecated for exactly that reason. `.header(name, value)` is on all three too, for a header on
+  this call only.
 - Bound a call with `.deadline(..)`, never by dropping the future: the auto-generated idempotency key
   lives in the future and dies with it, so a re-issued call cannot be deduplicated against the one
   that may already be in flight. Supply `.idempotency_key(..)` when a retry must survive a restart.
-- Two key kinds. The **payout key** is required for: `payouts()`, `refunds()`, `payout_links()`,
-  `transfers()`, `splits()`, `wallets().refund_blocked_deposit`, `settings().*_auto_withdraw`,
-  `settings().*_api_allowlist`, `webhooks().rotate_secret`, `webhooks().test(Payout, …)`,
-  `sandbox().faucet`, `sandbox().reset`. Configure it with `payout_public_id` / `payout_secret` (or
-  `OBLODAI_PAYOUT_*`); a wrong kind is a 403 `merchant.wrong_key_kind`.
+- One API key. `public_id` + `secret` (or `OBLODAI_PUBLIC_ID` / `OBLODAI_SECRET`) sign every
+  merchant route — money in and money out alike. There is nothing to choose per call. The admin
+  token (`admin_token` / `OBLODAI_ADMIN_TOKEN`) goes only to the `merchants()` provisioning routes;
+  public routes carry no credential at all. Only a merchant still holding a legacy split pair
+  (`oblodai_pk_…` / `oblodai_wk_…`) can see a 403 `merchant.wrong_key_kind`.
 - List methods return `Pager`: `.await` = one page (`Page { items, paginate }`), `.stream()` = every
   item as a `futures_core::Stream`, `.all(max)` = a `Vec`. Nothing is requested until consumed.
 - Idempotency keys are generated automatically on create routes and reused across retries. Passing
@@ -58,8 +58,8 @@ support), `field()` (400s), `synthetic()` (a proxy answered, not the API), and `
 `serde_json::to_value(&err)` keeps the message and drops the raw body.
 
 Codes worth handling: `payout.insufficient_funds` (retryable), `payout.funds_maturing` (retryable),
-`idempotency.key_reused`, `invoice.not_payable`, `payment.not_found`, `merchant.wrong_key_kind`,
-`merchant.bad_signature`, `request.rate_limited`. Full list: `oblodai::ERROR_CODES` (471 codes).
+`idempotency.key_reused`, `invoice.not_payable`, `payment.not_found`,
+`merchant.bad_signature`, `request.rate_limited`. Full list: `oblodai::ERROR_CODES` (469 codes).
 Every money-moving method lists its own codes in its rustdoc.
 
 Codes the SDK raises itself, never the gateway: `sdk.missing_credentials`, `sdk.bad_config`,
@@ -97,7 +97,7 @@ read is `webhook.bad_payload` with `kind() == Contract`, never a signature failu
 
 ## Machine-readable surface
 
-`oblodai::ROUTES` (107 routes, 471 error codes: key, method, path, auth, idempotent, safe, bare, list — every field
+`oblodai::ROUTES` (107 routes, 469 error codes: key, method, path, auth, idempotent, safe, bare, list — every field
 equal to `contract/contract.json`, asserted per route in `tests/contract_routes.rs`),
 `oblodai::contract::requests` (a struct per route body), `ERROR_CODES`, `NETWORKS`,
 `PAYMENT_STATUSES`, `PAYOUT_STATUSES`, `EVENT_TYPES`, and `contract/` itself (schemas, golden
@@ -105,9 +105,8 @@ response bodies per route, error samples, signed webhook samples).
 
 ## Environment
 
-Eight variables, all optional: `OBLODAI_PUBLIC_ID`, `OBLODAI_SECRET`, `OBLODAI_PAYOUT_PUBLIC_ID`,
-`OBLODAI_PAYOUT_SECRET`, `OBLODAI_BASE_URL`, `OBLODAI_ADMIN_TOKEN`, `OBLODAI_ALLOW_INSECURE`,
-`OBLODAI_LOG`. `Client::from_env()` builds even with none of them set and fails on the first signed
+Six variables, all optional: `OBLODAI_PUBLIC_ID`, `OBLODAI_SECRET`, `OBLODAI_BASE_URL`,
+`OBLODAI_ADMIN_TOKEN`, `OBLODAI_ALLOW_INSECURE`, `OBLODAI_LOG`. `Client::from_env()` builds even with none of them set and fails on the first signed
 call with `sdk.missing_credentials`.
 
 Secrets never print: sensitive-looking log fields are `[redacted]` before they reach any logger,

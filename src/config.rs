@@ -26,8 +26,6 @@ pub const SDK_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub struct ClientBuilder {
     public_id: Option<String>,
     secret: Option<String>,
-    payout_public_id: Option<String>,
-    payout_secret: Option<String>,
     base_url: Option<String>,
     timeout: Option<Duration>,
     deadline: Option<Duration>,
@@ -57,28 +55,16 @@ impl ClientBuilder {
         Self::default()
     }
 
-    /// Public id of the API key (`X-Public-Id`). Falls back to `OBLODAI_PUBLIC_ID`.
+    /// Public id of the merchant's one API key (`X-Public-Id`). Falls back to
+    /// `OBLODAI_PUBLIC_ID`.
     pub fn public_id(mut self, value: impl Into<String>) -> Self {
         self.public_id = Some(value.into());
         self
     }
 
-    /// Secret of the API key. Falls back to `OBLODAI_SECRET`.
+    /// Secret of the merchant's one API key. Falls back to `OBLODAI_SECRET`.
     pub fn secret(mut self, value: impl Into<String>) -> Self {
         self.secret = Some(value.into());
-        self
-    }
-
-    /// Optional dedicated payout key; the core issues payment and payout keys separately.
-    /// Falls back to `OBLODAI_PAYOUT_PUBLIC_ID`.
-    pub fn payout_public_id(mut self, value: impl Into<String>) -> Self {
-        self.payout_public_id = Some(value.into());
-        self
-    }
-
-    /// Falls back to `OBLODAI_PAYOUT_SECRET`.
-    pub fn payout_secret(mut self, value: impl Into<String>) -> Self {
-        self.payout_secret = Some(value.into());
         self
     }
 
@@ -197,21 +183,7 @@ impl ClientBuilder {
             .clone()
             .or_else(|| self.var("OBLODAI_PUBLIC_ID"));
         let secret = self.secret.clone().or_else(|| self.var("OBLODAI_SECRET"));
-        let credentials = pair(public_id, secret, "public_id", "secret")?;
-        let payout_public_id = self
-            .payout_public_id
-            .clone()
-            .or_else(|| self.var("OBLODAI_PAYOUT_PUBLIC_ID"));
-        let payout_secret = self
-            .payout_secret
-            .clone()
-            .or_else(|| self.var("OBLODAI_PAYOUT_SECRET"));
-        let payout_credentials = pair(
-            payout_public_id,
-            payout_secret,
-            "payout_public_id",
-            "payout_secret",
-        )?;
+        let credentials = pair(public_id, secret)?;
 
         let logger: Arc<dyn Logger> = match &self.logger {
             Some(l) => l.clone(),
@@ -227,7 +199,6 @@ impl ClientBuilder {
         );
         let mut core = Core::new(base_url, user_agent);
         core.credentials = credentials;
-        core.payout_credentials = payout_credentials;
         core.logger = logger;
         core.headers = self.headers.clone();
         core.admin_token = self
@@ -252,19 +223,14 @@ impl ClientBuilder {
     }
 }
 
-fn pair(
-    public_id: Option<String>,
-    secret: Option<String>,
-    id_name: &str,
-    secret_name: &str,
-) -> Result<Option<Credentials>> {
+fn pair(public_id: Option<String>, secret: Option<String>) -> Result<Option<Credentials>> {
     match (public_id, secret) {
         (Some(public_id), Some(secret)) => Ok(Some(Credentials { public_id, secret })),
         (None, None) => Ok(None),
         _ => Err(Error::config(
             "sdk.bad_config",
-            format!("{id_name} and {secret_name} must be provided together"),
-            Some(id_name),
+            "public_id and secret must be provided together",
+            Some("public_id"),
         )),
     }
 }

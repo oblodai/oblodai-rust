@@ -42,18 +42,11 @@ fn readme_blocking(params: PaymentRequest) -> oblodai::Result<()> {
 
 // --- README: where to get keys ------------------------------------------------------------------
 
-fn readme_two_keys(
-    public_id: &str,
-    secret: &str,
-    payout_public_id: &str,
-    payout_secret: &str,
-) -> oblodai::Result<()> {
-    // @snippet readme_two_keys
+fn readme_one_key(public_id: &str, secret: &str) -> oblodai::Result<()> {
+    // @snippet readme_one_key
     let client = oblodai::Client::builder()
         .public_id(public_id)
         .secret(secret)
-        .payout_public_id(payout_public_id)
-        .payout_secret(payout_secret)
         .build()?;
     // @end
     let _ = client;
@@ -117,7 +110,7 @@ async fn readme_sandbox(client: &Client, invoice: Payment) -> oblodai::Result<()
     };
     use oblodai::WebhookKind;
 
-    // test money to pay out from (payout key, `test_` keys only)
+    // test money to pay out from (`test_` keys only)
     client
         .sandbox()
         .faucet(SandboxFaucetRequest {
@@ -265,7 +258,6 @@ async fn readme_per_call_options(client: &Client, params: PayoutRequest) -> oblo
         .idempotency_key("payout-42")
         .timeout(Duration::from_secs(10)) // one attempt
         .deadline(Duration::from_secs(45)) // the whole call, retries and pauses included
-        .prefer_payout_key(true)
         .header("X-Request-Trace", "abc123") // this call only
         .await?;
     // @end
@@ -277,7 +269,7 @@ async fn readme_per_call_options(client: &Client, params: PayoutRequest) -> oblo
 #[test]
 fn every_documented_snippet_compiles() {
     let _ = readme_blocking;
-    let _ = readme_two_keys;
+    let _ = readme_one_key;
     let _ = readme_quickstart;
     let _ = readme_payout;
     let _ = readme_sandbox;

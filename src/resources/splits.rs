@@ -1,4 +1,4 @@
-//! Revenue splits: a percentage of every payment forwarded to a partner. Payout key.
+//! Revenue splits: a percentage of every payment forwarded to a partner.
 
 use serde_json::json;
 
@@ -20,11 +20,11 @@ impl<Tr: Clone> Splits<Tr> {
     }
 
     /// `POST /v1/split/rule` — to an external address (`address` + `network`) or to a platform
-    /// merchant (`merchant_id`). **Payout key.**
+    /// merchant (`merchant_id`).
     ///
     /// Codes to branch on: `split.disabled`, `split.bad_percent`, `split.bad_destination`,
     /// `split.self_destination`, `split.duplicate_destination`, `split.dest_not_found`,
-    /// `split.recipient_not_opted_in`, `split.network_required`, `merchant.wrong_key_kind`.
+    /// `split.recipient_not_opted_in`, `split.network_required`.
     pub fn create_rule(&self, params: SplitRuleRequest) -> RequestBuilder<Tr, SplitRule> {
         RequestBuilder::new(
             self.transport.clone(),

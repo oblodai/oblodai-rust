@@ -27,15 +27,25 @@ client.payouts().create(params)
     .idempotency_key("payout-42")
     .timeout(Duration::from_secs(10))     // one attempt
     .deadline(Duration::from_secs(45))    // the whole call, retries and pauses included
-    .prefer_payout_key(true)
     .header("X-Request-Trace", "abc123")  // this call only
     .await?;
 ```
 
-`.timeout`, `.deadline`, `.prefer_payout_key` and `.header` are on all four builders
-(`RequestBuilder`, `FileBuilder`, `Pager`, `BatchInfoCall`). `.idempotency_key` is on
-`RequestBuilder` only — a `Pager` must not key its pages, and neither `batches().info` nor any
-document route is deduplicated by the gateway.
+`.timeout`, `.deadline` and `.header` are on all three builders (`RequestBuilder`, `FileBuilder`,
+`Pager`). `.idempotency_key` is on `RequestBuilder` only — a `Pager` must not key its pages, and
+neither `batches().info` nor any document route is deduplicated by the gateway.
+
+## One API key
+
+A merchant has one API key — public id `oblodai_<hex>` (sandbox `test_oblodai_<hex>`) and secret
+`oblodai_live_<hex>` (sandbox `oblodai_test_<hex>`) — and it signs every route. The payout
+credential pair is gone: `payout_public_id` / `payout_secret`, `OBLODAI_PAYOUT_PUBLIC_ID` /
+`OBLODAI_PAYOUT_SECRET`, the per-call `prefer_payout_key` option and the payout-key fallback on
+`batches().info` no longer exist. Drop them; keep `public_id` / `secret`, and `admin_token` if you
+provision merchants on a self-hosted gateway. Onboarding responses now carry `api_key` only —
+`payment_key` and `payout_key` are gone from `MerchantOnboarded` and `SandboxStore`, and
+`ApiKeyPair` has no `kind` field. `merchant.wrong_key_kind` is no longer in the error catalogue; it
+can still reach a merchant who kept a legacy `oblodai_pk_…`/`oblodai_wk_…` pair.
 
 Bound a call with `.deadline(..)`, not with `tokio::time::timeout` or `select!`. Dropping the future
 cancels the call, and the auto-generated idempotency key lives inside it: a request already on the
@@ -119,8 +129,7 @@ and a caller header of the same name can no longer shadow or duplicate it.
 ### Blocked static-wallet deposits
 
 `wallets().block(..)` stops crediting an address; deposits that land afterwards wait for a decision,
-and `wallets().refund_blocked_deposit(..)` sends them back. It needs the **payout** key, and the
-codes worth branching on are `wallet.bad_uuid`, `refund.no_address`, `refund.nothing_to_refund`,
+and `wallets().refund_blocked_deposit(..)` sends them back. The codes worth branching on are `wallet.bad_uuid`, `refund.no_address`, `refund.nothing_to_refund`,
 `refund.dust`, `refund.destination_internal` and `payout.insufficient_funds` (retryable). There is
 no `wallet.blocked` error code — `blocked` is a field of the wallet model. The route is not
 deduplicated by `Idempotency-Key`: it is idempotent by state, so a retry returns the same payout.
@@ -169,8 +178,8 @@ whose key looks sensitive are replaced before they reach any `Logger`, including
   page the invoices the link spawned. `sandbox().webhooks(PageParams)` pages too.
 - `payouts().cancel/approve`, `payout_links().info/get/cancel` and `payment_links().info/get/toggle`
   accept either a bare id or the object itself (`impl Into<IdRef>`).
-- `FileBuilder::prefer_payout_key` exists; `FileBuilder::idempotency_key` is deprecated, because no
-  `bare` route is deduplicated and setting one always failed the call.
+- `FileBuilder::idempotency_key` is deprecated, because no `bare` route is deduplicated and setting
+  one always failed the call.
 - New error codes you may see, all raised before or instead of a gateway answer:
   `sdk.bad_header` (a caller header with CR/LF or a non-ASCII value), `sdk.response_too_large`
   (a body over 8 MiB on an envelope route or 64 MiB on a document route), `sdk.bad_amount`,

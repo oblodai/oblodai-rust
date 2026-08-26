@@ -62,17 +62,17 @@ impl Client {
         Payments::new(self.transport.clone())
     }
 
-    /// Refunds and underpayment resolution. Payout key.
+    /// Refunds and underpayment resolution.
     pub fn refunds(&self) -> Refunds<BlockingTransport> {
         Refunds::new(self.transport.clone())
     }
 
-    /// Payouts to external addresses. Payout key.
+    /// Payouts to external addresses.
     pub fn payouts(&self) -> Payouts<BlockingTransport> {
         Payouts::new(self.transport.clone())
     }
 
-    /// Payout links (cheques). Payout key.
+    /// Payout links (cheques).
     pub fn payout_links(&self) -> PayoutLinks<BlockingTransport> {
         PayoutLinks::new(self.transport.clone())
     }
@@ -87,7 +87,7 @@ impl Client {
         Batches::new(self.transport.clone())
     }
 
-    /// Internal transfers between platform balances. Payout key.
+    /// Internal transfers between platform balances.
     pub fn transfers(&self) -> Transfers<BlockingTransport> {
         Transfers::new(self.transport.clone())
     }
@@ -107,7 +107,7 @@ impl Client {
         Documents::new(self.transport.clone())
     }
 
-    /// Revenue splits. Payout key.
+    /// Revenue splits.
     pub fn splits(&self) -> Splits<BlockingTransport> {
         Splits::new(self.transport.clone())
     }

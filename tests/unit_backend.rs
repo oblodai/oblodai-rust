@@ -59,7 +59,7 @@ fn the_caps_are_the_documented_ones() {
 }
 
 /// The body used to be read with `res.bytes()`, which buffers whatever the peer sends. A proxy
-/// streaming gigabytes at an SDK holding a payout key is an out-of-memory kill, not an error.
+/// streaming gigabytes at an SDK holding a live API key is an out-of-memory kill, not an error.
 #[tokio::test]
 async fn a_body_over_the_cap_is_a_contract_error_not_an_allocation() {
     let body = vec![b'x'; 64 * 1024];

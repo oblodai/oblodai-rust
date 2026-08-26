@@ -6,7 +6,7 @@
 | `payout.rs`            | quote a payout, dry-run it, send it, and handle a retryable refusal           |
 | `webhook_receiver.rs`  | verify a delivery over the raw bytes, deduplicate it, drop stale events       |
 
-Run one against the sandbox (one sandbox pair serves both key kinds):
+Run one against the sandbox (one API key signs every route):
 
 ```sh
 export OBLODAI_PUBLIC_ID=test_oblodai_… OBLODAI_SECRET=oblodai_test_…

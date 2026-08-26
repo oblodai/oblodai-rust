@@ -22,8 +22,8 @@ impl<Tr: Clone> Sandbox<Tr> {
         Self { transport }
     }
 
-    /// `POST /v1/sandbox/faucet` — credit test funds. **Payout key**, `test_` keys only
-    /// (`sandbox.live_key` otherwise).
+    /// `POST /v1/sandbox/faucet` — credit test funds. `test_` keys only (`sandbox.live_key`
+    /// otherwise).
     pub fn faucet(&self, params: SandboxFaucetRequest) -> RequestBuilder<Tr, FaucetResult> {
         RequestBuilder::new(
             self.transport.clone(),
@@ -63,8 +63,8 @@ impl<Tr: Clone> Sandbox<Tr> {
         )
     }
 
-    /// `POST /v1/sandbox/reset` — cancel open invoices and zero balances. **Payout key**,
-    /// `test_` keys only (`sandbox.live_key` otherwise).
+    /// `POST /v1/sandbox/reset` — cancel open invoices and zero balances. `test_` keys only
+    /// (`sandbox.live_key` otherwise).
     pub fn reset(&self) -> RequestBuilder<Tr, SandboxReset> {
         RequestBuilder::new(
             self.transport.clone(),
