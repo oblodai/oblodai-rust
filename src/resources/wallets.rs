@@ -21,7 +21,6 @@ impl<Tr: Clone> Wallets<Tr> {
     }
 
     /// `POST /v1/wallet` — a permanent deposit address, idempotent by `order_id`.
-    /// **Payment key.**
     ///
     /// Codes to branch on: `wallet.static_disabled`, `wallet.unsupported_network`,
     /// `wallet.no_network`, `wallet.no_address`, `wallet.deposits_unavailable`,
