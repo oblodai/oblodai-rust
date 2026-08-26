@@ -135,7 +135,7 @@ async fn live_sandbox_journey() {
     let first = client
         .payments()
         .create(PaymentRequest {
-            amount: "1".into(),
+            amount: "5".into(),
             currency: "USDT".into(),
             network: Some("tron".into()),
             order_id: Some(format!("{key}-o")),
@@ -147,7 +147,7 @@ async fn live_sandbox_journey() {
     let replay = client
         .payments()
         .create(PaymentRequest {
-            amount: "1".into(),
+            amount: "5".into(),
             currency: "USDT".into(),
             network: Some("tron".into()),
             order_id: Some(format!("{key}-o")),
