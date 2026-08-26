@@ -176,6 +176,10 @@ use oblodai::webhooks::{verify_webhook_delivery, Headers, VerifyOptions};
 let headers = Headers::from_pairs(request_headers);   // any (name, value) pairs
 let delivery = verify_webhook_delivery(raw_body, &headers, &VerifyOptions::new(secret))?;
 
+if delivery.is_test {
+    return Ok(());   // a rehearsal: signed like a live one, but nothing moved
+}
+
 match &delivery.event {
     oblodai::WebhookEvent::Payment(p) if p.status == oblodai::PaymentStatus::Paid => {
         mark_order_paid(p.order_id.as_deref())
@@ -184,7 +188,10 @@ match &delivery.event {
 }
 ```
 
-Verify over the **raw** bytes. `delivery.id` (`X-Webhook-Id`) is stable across retries — use it to
+Verify over the **raw** bytes. Rehearsal deliveries (`webhooks().test()`, sandbox) are signed like
+live ones and carry `test: true` (and `X-Webhook-Test: true`) — check `delivery.is_test`
+(or `is_test_event(&delivery.event)` / `event.is_test()`) and never act on one as if money moved.
+`delivery.id` (`X-Webhook-Id`) is stable across retries — use it to
 deduplicate; `event.sequence()` orders events (`is_stale_event`). After `webhooks().rotate_secret()`
 pass `.previous_secret(old)` for at least 26 hours. The module needs no client and no API key.
 

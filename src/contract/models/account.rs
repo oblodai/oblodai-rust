@@ -60,6 +60,8 @@ pub struct Wallet {
     /// Hosted page showing the address and QR.
     pub url: String,
     pub document_url: String,
+    /// True once `wallets().block()` was called: new deposits are quarantined instead of credited.
+    pub blocked: bool,
     /// XRP destination tag, when the network needs one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub destination_tag: Option<String>,

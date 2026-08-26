@@ -9,6 +9,7 @@
 //! 1. Verify over the **raw** request bytes. A re-serialized parse will not match the signature.
 //! 2. Deduplicate on `X-Webhook-Id`: retries of one delivery carry the same id.
 //! 3. Drop out-of-order events with `is_stale_event` — a retried `paid` can arrive after a refund.
+//! 4. Never act on a rehearsal (`delivery.is_test`) as if money moved: it is signed like a live one.
 
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -55,6 +56,17 @@ fn main() -> std::io::Result<()> {
 
         // Answer fast: the gateway retries on a timeout, and a duplicate is cheaper than a stall.
         respond(&mut stream, 200, "ok");
+
+        // A rehearsal from `webhooks().test()` or the sandbox: the signature is genuine, the money
+        // is not. Log it, prove the endpoint works, and stop before anything is credited.
+        if delivery.is_test {
+            println!(
+                "rehearsal {} {} — endpoint verified, nothing credited",
+                delivery.event.event_kind(),
+                delivery.event.uuid()
+            );
+            continue;
+        }
 
         if let Some(id) = &delivery.id {
             if !seen.insert(id.clone()) {

@@ -1,4 +1,4 @@
-// GENERATED FILE - do not edit. Source: contract/contract.json (core 7b8eb828b9ec).
+// GENERATED FILE - do not edit. Source: contract/contract.json (core bfca971cce71).
 // Regenerate with: python3 scripts/codegen.py
 
 /// Invoice lifecycle, as `payment.status` carries it.
@@ -1248,6 +1248,7 @@ pub const ERROR_CODES: &[&str] = &[
     "onramp.token",
     "pay.bad_uuid",
     "pay.below_minimum",
+    "pay.discount_unavailable",
     "pay.method_not_accepted",
     "pay.minimum_unavailable",
     "pay.not_selectable",

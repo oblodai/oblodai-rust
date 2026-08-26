@@ -3,7 +3,8 @@
 mod support;
 
 use oblodai::webhooks::{
-    is_stale_event, parse_webhook, verify_webhook, verify_webhook_delivery, Headers, VerifyOptions,
+    is_stale_event, is_test_event, parse_webhook, verify_webhook, verify_webhook_delivery, Headers,
+    VerifyOptions,
 };
 use oblodai::{sign_webhook, ErrorKind, WebhookEvent};
 use support::{load_webhook_samples, result_of};
@@ -49,7 +50,21 @@ fn verifies_every_recorded_delivery() {
                 || event_name.starts_with("wallet."),
             "{event_name}"
         );
-        assert!(delivery.event.sequence() > 0);
+        // Rehearsal deliveries (`webhooks.test`, sandbox) are signed like live ones, carry
+        // `test: true` and `X-Webhook-Test: true`, and have no ledger sequence.
+        let is_test = sample.body["test"].as_bool() == Some(true);
+        assert_eq!(delivery.is_test, is_test, "{event_name}");
+        assert_eq!(is_test_event(&delivery.event), is_test, "{event_name}");
+        assert_eq!(
+            sample.header("X-Webhook-Test").is_some(),
+            is_test,
+            "{event_name}"
+        );
+        if is_test {
+            assert_eq!(delivery.event.sequence(), 0, "{event_name}");
+        } else {
+            assert!(delivery.event.sequence() > 0, "{event_name}");
+        }
 
         // The same bytes under a different secret must not verify.
         let err = verify_webhook(
@@ -76,6 +91,17 @@ fn a_recorded_delivery_re_serialized_still_carries_every_field() {
             sample.header("X-Webhook-Event").unwrap_or("?")
         );
     }
+}
+
+#[test]
+fn the_recorded_rehearsal_deliveries_are_flagged_and_the_live_ones_are_not() {
+    let samples = load_webhook_samples();
+    let rehearsals = samples
+        .iter()
+        .filter(|s| s.body["test"].as_bool() == Some(true))
+        .count();
+    assert_eq!(rehearsals, 4, "the snapshot records four rehearsals");
+    assert!(samples.len() > rehearsals, "and live deliveries besides");
 }
 
 const TS: i64 = 1_755_600_000;
@@ -221,6 +247,42 @@ fn verifies_during_a_rotation_from_either_side() {
         .uuid(),
         "u1"
     );
+}
+
+#[test]
+fn a_rehearsal_is_recognised_from_either_the_header_or_the_body() {
+    // Neither: a live delivery.
+    let delivery = verify_webhook_delivery(
+        &body(),
+        &headers_for("whsec"),
+        &VerifyOptions::new("whsec").now(TS),
+    )
+    .unwrap();
+    assert!(!delivery.is_test);
+    assert!(!is_test_event(&delivery.event));
+
+    // The header alone — the body of an older rehearsal did not carry the flag.
+    let mut with_header = headers_for("whsec");
+    with_header.insert("x-webhook-test", "true");
+    let delivery =
+        verify_webhook_delivery(&body(), &with_header, &VerifyOptions::new("whsec").now(TS))
+            .unwrap();
+    assert!(delivery.is_test);
+    assert!(!is_test_event(&delivery.event), "the body carries no flag");
+
+    // The body alone — the signed source of truth.
+    let raw = String::from_utf8(body())
+        .unwrap()
+        .replace("\"sequence\":7", "\"sequence\":7,\"test\":true")
+        .into_bytes();
+    let mut headers = Headers::new();
+    headers.insert("x-webhook-timestamp", TS.to_string());
+    headers.insert("x-webhook-signature", sign_webhook("whsec", TS, &raw));
+    let delivery =
+        verify_webhook_delivery(&raw, &headers, &VerifyOptions::new("whsec").now(TS)).unwrap();
+    assert!(delivery.is_test);
+    assert!(is_test_event(&delivery.event));
+    assert!(delivery.event.is_test());
 }
 
 #[test]

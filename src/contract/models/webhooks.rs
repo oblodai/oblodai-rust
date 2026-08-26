@@ -87,6 +87,11 @@ pub struct PaymentEvent {
     pub event_at: Timestamp,
     /// Global, increasing (gaps are normal); a lower sequence arriving later is stale.
     pub sequence: i64,
+    /// Present and true ONLY on rehearsal deliveries (`webhooks.test`, sandbox). The body is signed
+    /// like a live one, so a handler must check this flag (or `X-Webhook-Test`) and never act on a
+    /// test event as if money moved.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub test: Option<bool>,
 }
 
 /// `payout.<status>` — a payout (or refund) changed state; the body is the payout itself.
@@ -121,6 +126,11 @@ pub struct PayoutEvent {
     pub event_at: Timestamp,
     /// Global, increasing (gaps are normal); a lower sequence arriving later is stale.
     pub sequence: i64,
+    /// Present and true ONLY on rehearsal deliveries (`webhooks.test`, sandbox). The body is signed
+    /// like a live one, so a handler must check this flag (or `X-Webhook-Test`) and never act on a
+    /// test event as if money moved.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub test: Option<bool>,
 }
 
 /// `wallet.paid` — a deposit landed on a static wallet.
@@ -143,6 +153,11 @@ pub struct WalletEvent {
     pub event_at: Timestamp,
     /// Global, increasing (gaps are normal); a lower sequence arriving later is stale.
     pub sequence: i64,
+    /// Present and true ONLY on rehearsal deliveries (`webhooks.test`, sandbox). The body is signed
+    /// like a live one, so a handler must check this flag (or `X-Webhook-Test`) and never act on a
+    /// test event as if money moved.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub test: Option<bool>,
 }
 
 /// Any delivered event, told apart by its `type` field.
@@ -207,6 +222,17 @@ impl WebhookEvent {
             WebhookEvent::Payout(e) => e.status.as_str(),
             WebhookEvent::Wallet(e) => &e.status,
         }
+    }
+
+    /// True on a rehearsal delivery (`webhooks.test`, sandbox): signed exactly like a live one,
+    /// but nothing moved — never credit an order on it.
+    pub fn is_test(&self) -> bool {
+        let flag = match self {
+            WebhookEvent::Payment(e) => e.test,
+            WebhookEvent::Payout(e) => e.test,
+            WebhookEvent::Wallet(e) => e.test,
+        };
+        flag == Some(true)
     }
 
     /// The discriminator: `"payment"`, `"payout"` or `"wallet"`.

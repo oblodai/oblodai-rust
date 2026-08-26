@@ -9,7 +9,11 @@
 //! X-Webhook-Event:          invoice.<status> | payout.<status> | wallet.paid
 //! X-Webhook-Id:             stable per delivery (identical across retries) — your dedup key
 //! X-Webhook-Event-Time:     unix seconds when the state change committed (order events by it)
+//! X-Webhook-Test:           "true" on a rehearsal delivery — the body also carries `test: true`
 //! ```
+//!
+//! A rehearsal delivery (`webhooks.test`, sandbox) is signed exactly like a live one. Check
+//! [`WebhookDeliveryInfo::is_test`] (or [`is_test_event`]) and never act on one as if money moved.
 //!
 //! Always verify over the **raw** request bytes; a re-serialized parse will not match.
 //!
@@ -38,6 +42,7 @@ pub const HEADER_WEBHOOK_SIGNATURE_PREV: &str = "X-Webhook-Signature-Prev";
 pub const HEADER_WEBHOOK_EVENT: &str = "X-Webhook-Event";
 pub const HEADER_WEBHOOK_ID: &str = "X-Webhook-Id";
 pub const HEADER_WEBHOOK_EVENT_TIME: &str = "X-Webhook-Event-Time";
+pub const HEADER_WEBHOOK_TEST: &str = "X-Webhook-Test";
 
 /// Default freshness window, seconds.
 pub const DEFAULT_TOLERANCE_SECONDS: i64 = 300;
@@ -141,6 +146,9 @@ pub struct WebhookDeliveryInfo {
     pub event_time: Option<i64>,
     /// `X-Webhook-Timestamp` — unix seconds when this attempt was sent.
     pub sent_at: i64,
+    /// A rehearsal delivery (`X-Webhook-Test: true` / body `test: true`): signed like a live one,
+    /// but no money moved.
+    pub is_test: bool,
 }
 
 /// Verify the signature and freshness, then parse. Never returns an unverified body.
@@ -217,8 +225,10 @@ pub fn verify_webhook_delivery(
         ));
     }
 
+    let event = parse_webhook(raw_body)?;
     Ok(WebhookDeliveryInfo {
-        event: parse_webhook(raw_body)?,
+        is_test: headers.get(HEADER_WEBHOOK_TEST).map(str::trim) == Some("true") || event.is_test(),
+        event,
         id: headers.get(HEADER_WEBHOOK_ID).map(str::to_string),
         event_type: headers.get(HEADER_WEBHOOK_EVENT).map(str::to_string),
         event_time: headers
@@ -254,6 +264,11 @@ pub fn parse_webhook(raw_body: &[u8]) -> Result<WebhookEvent> {
             format!("body is not a known event: {e}"),
         )
     })
+}
+
+/// True for rehearsal deliveries (`webhooks.test`, sandbox) — never act on them as if money moved.
+pub fn is_test_event(event: &WebhookEvent) -> bool {
+    event.is_test()
 }
 
 /// Deliveries can arrive out of order (a retried `paid` after a `refund`). Keep the last
