@@ -1,5 +1,9 @@
-# Toolchain pin: same version locally and in CI. An unpinned stable breaks CI
+# Development toolchain: same version locally and in CI's `test` job. An unpinned stable breaks CI
 # whenever a new clippy release lands; bump deliberately.
+#
+# This file overrides whatever toolchain a job installs, so the MSRV job sets RUSTUP_TOOLCHAIN
+# (which wins over the file) and asserts it really is on 1.86 — the crate's declared minimum,
+# stated identically in Cargo.toml, README.md, src/lib.rs and CHANGELOG.md.
 [toolchain]
 channel = "1.97.1"
 components = ["rustfmt", "clippy"]

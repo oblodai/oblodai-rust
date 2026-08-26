@@ -74,7 +74,7 @@ pub fn decode_envelope(
             Ok(v) => Some(v),
             Err(_) => {
                 if http_status >= 400 {
-                    return Err(no_envelope(http_status, &text, retry_after_header));
+                    return Err(no_envelope(http_status, &text, retry_after_header, None));
                 }
                 return Err(Error::contract(
                     format!("expected a JSON envelope, got {}", describe(&text)),
@@ -87,18 +87,34 @@ pub fn decode_envelope(
 
     if let Some(Value::Object(map)) = &parsed {
         if let Some(err) = map.get("error").filter(|e| e.is_object()) {
-            let detail: ErrorDetail = serde_json::from_value(err.clone()).unwrap_or_default();
-            return Err(Error::from_envelope(
-                http_status,
-                detail,
-                Some(text),
-                false,
-                retry_after_header,
-            ));
+            // Field by field: a malformed `retry_after` must not cost the `code` merchants branch
+            // on, nor flip the core's authoritative `retryable`.
+            match ErrorDetail::from_json(err) {
+                Some(detail) => {
+                    return Err(Error::from_envelope(
+                        http_status,
+                        detail,
+                        Some(text),
+                        false,
+                        retry_after_header,
+                    ));
+                }
+                None => {
+                    // No usable `code`: nothing here is the core's classification, but a
+                    // `request_id` is still worth quoting to support.
+                    let request_id = ErrorDetail::request_id_of(err);
+                    return Err(no_envelope(
+                        http_status,
+                        &text,
+                        retry_after_header,
+                        request_id,
+                    ));
+                }
+            }
         }
     }
     if http_status >= 400 {
-        return Err(no_envelope(http_status, &text, retry_after_header));
+        return Err(no_envelope(http_status, &text, retry_after_header, None));
     }
     if let Some(Value::Object(map)) = &parsed {
         if map.get("state").and_then(Value::as_i64) == Some(0) {
@@ -131,19 +147,32 @@ pub fn decode_result<T: DeserializeOwned>(result: Value, route: &str) -> Result<
 }
 
 /// `Retry-After` as delta-seconds or an HTTP-date; `None` when absent or unparsable.
+///
+/// The result is clamped into `[0, MAX_RETRY_AFTER_SECONDS]`: a date in the year 9999 is a capped
+/// delay, never an overflowing one, and a date in the past is 0, never negative.
 pub fn parse_retry_after(value: Option<&str>, now: i64) -> Option<u64> {
     let v = value?.trim();
     if v.is_empty() {
         return None;
     }
     if v.bytes().all(|b| b.is_ascii_digit()) {
-        return v.parse().ok();
+        // Parse wide, clamp, then narrow: a 30-digit header is capped, not rejected as garbage.
+        return match v.parse::<u64>() {
+            Ok(secs) => Some(secs.min(crate::error::MAX_RETRY_AFTER_SECONDS)),
+            Err(_) => Some(crate::error::MAX_RETRY_AFTER_SECONDS),
+        };
     }
     let at = parse_http_date(v)?;
-    Some((at - now).max(0) as u64)
+    // i64 subtraction, then clamp in f64 so neither end can wrap.
+    crate::error::clamp_retry_after((at - now) as f64)
 }
 
-fn no_envelope(status: u16, text: &str, retry_after_header: Option<u64>) -> Error {
+fn no_envelope(
+    status: u16,
+    text: &str,
+    retry_after_header: Option<u64>,
+    request_id: Option<String>,
+) -> Error {
     Error::from_envelope(
         status,
         ErrorDetail {
@@ -153,6 +182,7 @@ fn no_envelope(status: u16, text: &str, retry_after_header: Option<u64>) -> Erro
                  proxy or load balancer, not the API",
                 describe(text)
             )),
+            request_id,
             ..Default::default()
         },
         Some(text.to_string()),

@@ -1,9 +1,14 @@
-//! Generated PDF/CSV documents. Every method answers with the bytes ([`FileResult`](crate::resources::FileResult)); large ranges
-//! go through asynchronous jobs (`create_job` → `job_info` → `job_file`). Payment key.
+//! Generated PDF/CSV documents.
+//!
+//! The file-returning methods answer with [`FileResult`](crate::resources::FileResult) — the bytes,
+//! the content type and the filename. `create_job` and `job_info` are ordinary JSON routes and
+//! return [`DocumentJob`]; only `job_file` hands back the finished bytes. Payment key, except
+//! `download`, which is public.
 
 use serde_json::json;
 
-use super::base::{Call, FileBuilder, RequestBuilder};
+use super::base::{Call, RequestBuilder};
+use super::files::FileBuilder;
 use crate::contract::models::DocumentJob;
 use crate::contract::requests::DocumentsJobsRequest;
 use crate::contract::routes;
@@ -32,6 +37,34 @@ pub struct FormatQuery {
     pub lang: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub format: Option<DocumentFormat>,
+}
+
+/// The query of a signed public document link: the `exp` and `sig` that came with a
+/// `document_url`, plus the optional language. Mirrors the reference SDK's single query object.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize)]
+pub struct SignedLinkQuery {
+    /// Expiry, as the `document_url` carried it.
+    pub exp: i64,
+    /// Signature, as the `document_url` carried it.
+    pub sig: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lang: Option<String>,
+}
+
+impl SignedLinkQuery {
+    pub fn new(exp: i64, sig: impl Into<String>) -> Self {
+        Self {
+            exp,
+            sig: sig.into(),
+            lang: None,
+        }
+    }
+
+    /// Render the document in this 2-letter language.
+    pub fn lang(mut self, lang: impl Into<String>) -> Self {
+        self.lang = Some(lang.into());
+        self
+    }
 }
 
 /// A document over a date range. `from`/`to` are `YYYY-MM-DD`.
@@ -182,13 +215,23 @@ impl<Tr: Clone> Documents<Tr> {
 
     /// `GET /v1/documents/{kind}/{id}` — a public document by its signed link (`exp` and `sig`
     /// come from a `document_url`). No credentials needed; prefer fetching `document_url` directly.
+    ///
+    /// ```no_run
+    /// # async fn demo(client: &oblodai::Client) -> oblodai::Result<()> {
+    /// use oblodai::resources::documents::SignedLinkQuery;
+    /// let pdf = client
+    ///     .documents()
+    ///     .download("payout", "abc", SignedLinkQuery::new(1_800_000_000, "deadbeef").lang("en"))
+    ///     .await?;
+    /// # let _ = pdf; Ok(()) }
+    /// ```
+    ///
+    /// Codes to branch on: `document.link_expired`, `request.bad_id`, `request.not_found`.
     pub fn download(
         &self,
         kind: impl Into<String>,
         id: impl Into<String>,
-        exp: i64,
-        sig: impl Into<String>,
-        query: DocumentQuery,
+        query: SignedLinkQuery,
     ) -> FileBuilder<Tr> {
         FileBuilder::new(
             self.transport.clone(),
@@ -197,8 +240,6 @@ impl<Tr: Clone> Documents<Tr> {
                 .path("kind", kind)
                 .path("id", id)
                 .query_of(&query)
-                .query("exp", exp.to_string())
-                .query("sig", sig)
                 .done(),
         )
     }

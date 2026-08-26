@@ -1,8 +1,12 @@
 //! Minimal structured logging.
 //!
 //! Anything that can take a level, a message and a few key/value fields fits (`tracing`, `log`, a
-//! test spy). Values whose key looks like a secret are redacted before they reach the logger, so a
-//! debug log never leaks a key, a signature or a cheque passcode.
+//! test spy).
+//!
+//! Values whose key looks like a secret are replaced with `[redacted]` by the SDK *before* the
+//! fields are handed to the [`Logger`], so a logger you supply yourself never sees a key, a
+//! signature or a cheque passcode. [`StderrLogger`] redacts again on its own, which costs nothing
+//! and keeps it safe if you call it directly.
 
 /// Severity of a log line.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]

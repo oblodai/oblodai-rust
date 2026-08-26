@@ -2,7 +2,9 @@
 
 use serde_json::json;
 
-use super::base::{Call, FileBuilder, RequestBuilder};
+use super::base::{Call, RequestBuilder};
+use super::files::FileBuilder;
+use super::refs::{IdRef, PageParams};
 use crate::contract::models::{
     BatchElement, ClaimPreview, ClaimResult, PaymentLink, PaymentLinkCreated, PaymentLinkToggled,
     PayoutLink, PublicPayment, PublicPaymentLink,
@@ -27,7 +29,12 @@ impl<Tr: Clone> PayoutLinks<Tr> {
     }
 
     /// `POST /v1/payout/link` — reserve funds and mint a claim token (`claim_token`/`claim_url`
-    /// are returned once). Idempotent by `reference`.
+    /// are returned once). Idempotent by `reference`. **Payout key.**
+    ///
+    /// Codes to branch on: `payoutlink.insufficient_funds` (retryable),
+    /// `payoutlink.funds_maturing` (retryable), `payoutlink.disabled`, `payoutlink.bad_amount`,
+    /// `payoutlink.duplicate_reference` (that `reference` already minted a different link),
+    /// `payoutlink.reference_required`, `merchant.wrong_key_kind`, `idempotency.key_reused`.
     pub fn create(&self, params: PayoutLinkRequest) -> RequestBuilder<Tr, PayoutLink> {
         RequestBuilder::new(
             self.transport.clone(),
@@ -36,20 +43,20 @@ impl<Tr: Clone> PayoutLinks<Tr> {
         )
     }
 
-    /// `POST /v1/payout/link/info`.
-    pub fn info(&self, link_id: impl Into<String>) -> RequestBuilder<Tr, PayoutLink> {
+    /// `POST /v1/payout/link/info` — by link id, or by a [`PayoutLink`] you already hold.
+    pub fn info(&self, link: impl Into<IdRef>) -> RequestBuilder<Tr, PayoutLink> {
         RequestBuilder::new(
             self.transport.clone(),
             &routes::POST_V1_PAYOUT_LINK_INFO,
             Call::new()
-                .json(json!({ "link_id": link_id.into() }))
+                .json(json!({ "link_id": link.into().into_string() }))
                 .done(),
         )
     }
 
-    /// Alias of [`info`](Self::info).
-    pub fn get(&self, link_id: impl Into<String>) -> RequestBuilder<Tr, PayoutLink> {
-        self.info(link_id)
+    /// Alias of [`info`](Self::info), same signature.
+    pub fn get(&self, link: impl Into<IdRef>) -> RequestBuilder<Tr, PayoutLink> {
+        self.info(link)
     }
 
     /// `POST /v1/payout/link/list`.
@@ -62,18 +69,26 @@ impl<Tr: Clone> PayoutLinks<Tr> {
     }
 
     /// `POST /v1/payout/link/cancel` — release the reserved funds of an unclaimed link.
-    pub fn cancel(&self, link_id: impl Into<String>) -> RequestBuilder<Tr, PayoutLink> {
+    /// **Payout key.** Codes to branch on: `payoutlink.not_found`, `payoutlink.bad_state`,
+    /// `payoutlink.already_claimed`, `payoutlink.claim_in_progress`, `payoutlink.cancelled`,
+    /// `merchant.wrong_key_kind`.
+    pub fn cancel(&self, link: impl Into<IdRef>) -> RequestBuilder<Tr, PayoutLink> {
         RequestBuilder::new(
             self.transport.clone(),
             &routes::POST_V1_PAYOUT_LINK_CANCEL,
             Call::new()
-                .json(json!({ "link_id": link_id.into() }))
+                .json(json!({ "link_id": link.into().into_string() }))
                 .done(),
         )
     }
 
-    /// `POST /v1/payout/link/batch` — SYNCHRONOUS: many links in one signed call, per-element
-    /// outcomes. `reference` is required on every item.
+    /// `POST /v1/payout/link/batch` — SYNCHRONOUS: many links in one signed call (**≤ 500
+    /// items**), per-element outcomes. `reference` is required on every item. **Payout key.**
+    ///
+    /// Call-level codes to branch on: `payoutlink.batch_too_large` (> 500),
+    /// `payoutlink.empty_batch`, `payoutlink.disabled`, `payoutlink.insufficient_funds`
+    /// (retryable), `payoutlink.idempotency_required`, `merchant.wrong_key_kind`. A per-element
+    /// failure arrives inside the 200 as `items[].ok == false` — check every element.
     pub fn batch(
         &self,
         params: PayoutLinkBatchRequest,
@@ -85,7 +100,10 @@ impl<Tr: Clone> PayoutLinks<Tr> {
         )
     }
 
-    /// `POST /v1/payout/link/cheque` — printable PDF cheque for a claim token.
+    /// `POST /v1/payout/link/cheque` — printable PDF cheque for a claim token. **Payout key**
+    /// (the route is `auth: payout`, so the payout pair is chosen automatically). Codes to branch
+    /// on: `cheque.token_required`, `payoutlink.not_found`, `payoutlink.token`,
+    /// `merchant.wrong_key_kind`.
     pub fn cheque(&self, params: PayoutLinkChequeRequest) -> FileBuilder<Tr> {
         FileBuilder::new(
             self.transport.clone(),
@@ -106,7 +124,12 @@ impl<Tr: Clone> PayoutLinks<Tr> {
     }
 
     /// `POST /v1/claim/{token}` — claim to an address (and passcode when the link has one).
-    /// No credentials needed.
+    /// No credentials needed — this route is `auth: public`, like `claim_preview`.
+    ///
+    /// Codes to branch on: `payoutlink.not_found`, `payoutlink.expired`,
+    /// `payoutlink.already_claimed`, `payoutlink.claim_in_progress`,
+    /// `payoutlink.passcode_required`, `payoutlink.passcode_wrong`, `payoutlink.passcode_locked`,
+    /// `payoutlink.no_address`, `payoutlink.unsupported_network`, `request.rate_limited`.
     pub fn claim(
         &self,
         token: impl Into<String>,
@@ -131,7 +154,11 @@ impl<Tr: Clone> PaymentLinks<Tr> {
         Self { transport }
     }
 
-    /// `POST /v1/payment/link`.
+    /// `POST /v1/payment/link` — mint a reusable link. **Payment key.**
+    ///
+    /// Codes to branch on: `paylink.bad_mode`, `paylink.amount_required`, `paylink.bad_amount`,
+    /// `paylink.bad_bounds`, `paylink.bad_range`, `paylink.order_id_invalid`,
+    /// `paylink.unavailable`, `merchant.wrong_key_kind`.
     pub fn create(&self, params: PaymentLinkRequest) -> RequestBuilder<Tr, PaymentLinkCreated> {
         RequestBuilder::new(
             self.transport.clone(),
@@ -141,29 +168,24 @@ impl<Tr: Clone> PaymentLinks<Tr> {
     }
 
     /// `POST /v1/payment/link/info` — the link plus a page of the invoices it spawned
-    /// (`payments`); `limit`/`offset` page that inner list.
-    pub fn info(&self, link_id: impl Into<String>) -> RequestBuilder<Tr, PaymentLink> {
-        RequestBuilder::new(
-            self.transport.clone(),
-            &routes::POST_V1_PAYMENT_LINK_INFO,
-            Call::new()
-                .json(json!({ "link_id": link_id.into() }))
-                .done(),
-        )
-    }
-
-    /// Alias of [`info`](Self::info), with paging of the invoices the link spawned.
-    pub fn get(
+    /// (`payments`); `page` pages that inner list.
+    ///
+    /// ```no_run
+    /// # async fn demo(client: &oblodai::Client) -> oblodai::Result<()> {
+    /// use oblodai::PageParams;
+    /// let link = client.payment_links().info("lnk_1", PageParams::default().limit(100)).await?;
+    /// # let _ = link; Ok(()) }
+    /// ```
+    pub fn info(
         &self,
-        link_id: impl Into<String>,
-        limit: Option<i64>,
-        offset: Option<i64>,
+        link: impl Into<IdRef>,
+        page: PageParams,
     ) -> RequestBuilder<Tr, PaymentLink> {
-        let mut body = json!({ "link_id": link_id.into() });
-        if let Some(limit) = limit {
+        let mut body = json!({ "link_id": link.into().into_string() });
+        if let Some(limit) = page.limit {
             body["limit"] = json!(limit);
         }
-        if let Some(offset) = offset {
+        if let Some(offset) = page.offset {
             body["offset"] = json!(offset);
         }
         RequestBuilder::new(
@@ -171,6 +193,11 @@ impl<Tr: Clone> PaymentLinks<Tr> {
             &routes::POST_V1_PAYMENT_LINK_INFO,
             Call::new().json(body).done(),
         )
+    }
+
+    /// Alias of [`info`](Self::info), same signature.
+    pub fn get(&self, link: impl Into<IdRef>, page: PageParams) -> RequestBuilder<Tr, PaymentLink> {
+        self.info(link, page)
     }
 
     /// `POST /v1/payment/link/list`.
@@ -185,14 +212,14 @@ impl<Tr: Clone> PaymentLinks<Tr> {
     /// `POST /v1/payment/link/toggle` — enable or disable a link.
     pub fn toggle(
         &self,
-        link_id: impl Into<String>,
+        link: impl Into<IdRef>,
         active: bool,
     ) -> RequestBuilder<Tr, PaymentLinkToggled> {
         RequestBuilder::new(
             self.transport.clone(),
             &routes::POST_V1_PAYMENT_LINK_TOGGLE,
             Call::new()
-                .json(json!({ "link_id": link_id.into(), "active": active }))
+                .json(json!({ "link_id": link.into().into_string(), "active": active }))
                 .done(),
         )
     }
@@ -210,6 +237,9 @@ impl<Tr: Clone> PaymentLinks<Tr> {
 
     /// `POST /v1/link/{id}/checkout` — spawn an invoice from the link (rate-capped per IP).
     /// No credentials needed.
+    ///
+    /// Codes to branch on: `paylink.not_found`, `paylink.disabled`, `paylink.amount_required`,
+    /// `paylink.below_min`, `paylink.above_max`, `paylink.rate_limited`, `accepted.no_network`.
     pub fn checkout(
         &self,
         link_id: impl Into<String>,

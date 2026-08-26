@@ -17,9 +17,12 @@ include = ["src/**/*", "contract/**/*", "README.md", "CHANGELOG.md", "MIGRATION-
 [features]
 default = ["reqwest-client"]
 # The async client over reqwest (rustls, no OpenSSL).
-reqwest-client = ["dep:reqwest", "dep:tokio"]
+reqwest-client = ["dep:reqwest"]
 # A synchronous client over the same pure core.
 blocking = ["reqwest-client", "reqwest/blocking"]
+# Trust the operating system's certificate store as well as the bundled webpki roots. Needed behind
+# a corporate TLS-inspecting proxy, or for a self-hosted gateway with a private CA.
+native-roots = ["reqwest/rustls-tls-native-roots"]
 
 [dependencies]
 serde = { version = "1.0.181", features = ["derive"] }
@@ -34,7 +37,9 @@ url = "2"
 percent-encoding = "2"
 futures-core = "0.3"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "charset", "http2"], optional = true }
-tokio = { version = "1", features = ["time"], optional = true }
+# Not optional: the async `Transport` sleeps between retries, and that seam has to work for a
+# caller who plugs in their own `HttpBackend` with `--no-default-features`.
+tokio = { version = "1", features = ["time"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "net", "io-util"] }
@@ -44,3 +49,17 @@ sha2 = "0.10"
 
 [package.metadata.docs.rs]
 all-features = true
+
+# Every example drives the async client, so it needs the default feature. Declared explicitly so
+# `cargo build --examples --no-default-features` skips them instead of failing.
+[[example]]
+name = "accept_payment"
+required-features = ["reqwest-client"]
+
+[[example]]
+name = "payout"
+required-features = ["reqwest-client"]
+
+[[example]]
+name = "webhook_receiver"
+required-features = ["reqwest-client"]

@@ -23,6 +23,17 @@ use crate::error::Result;
 /// let invoice = client.payments().create(params).idempotency_key("order-1001").await?;
 /// # Ok(()) }
 /// ```
+///
+/// # Cancellation
+///
+/// Dropping the future cancels the call — and the auto-generated idempotency key lives in that
+/// future, so it dies with it. A request already on the wire may still reach the gateway, and a
+/// re-issued call would mint a *new* key that the gateway cannot deduplicate against it. Bound a
+/// call with [`deadline`](Self::deadline) (which fails with `transport.deadline` while keeping the
+/// key for the attempts it did make) rather than with `tokio::time::timeout` or `select!`; if a
+/// retry has to survive a cancel or a process restart, supply your own
+/// [`idempotency_key`](Self::idempotency_key).
+#[must_use = "nothing is sent until this builder is awaited (or `.send()` is called)"]
 pub struct RequestBuilder<Tr, T> {
     transport: Tr,
     route: &'static RouteSpec,
@@ -70,6 +81,14 @@ impl<Tr, T> RequestBuilder<Tr, T> {
     /// Sign with the payout key on a route that accepts either key kind.
     pub fn prefer_payout_key(mut self, prefer: bool) -> Self {
         self.opts.prefer_payout_key = prefer;
+        self
+    }
+
+    /// An extra header on this call only, merged over the client-wide ones. Names the SDK owns
+    /// (the signing headers, `Accept`, `Content-Type`, `User-Agent`, `X-Admin-Token`) are never
+    /// overridden; a CR/LF or non-ASCII value is a `sdk.bad_header` config error.
+    pub fn header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.opts.headers.push((name.into(), value.into()));
         self
     }
 }
@@ -124,160 +143,22 @@ impl<T: DeserializeOwned> RequestBuilder<crate::core::transport::BlockingTranspo
     }
 }
 
-/// A document the gateway rendered: the bytes plus what they are.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FileResult {
-    pub bytes: Vec<u8>,
-    pub content_type: String,
-    /// From `Content-Disposition`, when the gateway named the file.
-    pub filename: Option<String>,
-}
-
-/// A prepared call to a `bare` route: it answers with bytes, not an envelope.
-pub struct FileBuilder<Tr> {
-    transport: Tr,
-    route: &'static RouteSpec,
-    opts: CallOptions,
-}
-
-impl<Tr> std::fmt::Debug for FileBuilder<Tr> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("FileBuilder")
-            .field("route", &self.route.key)
-            .finish_non_exhaustive()
-    }
-}
-
-impl<Tr> FileBuilder<Tr> {
-    pub(crate) fn new(transport: Tr, route: &'static RouteSpec, opts: CallOptions) -> Self {
-        Self {
-            transport,
-            route,
-            opts,
-        }
-    }
-
-    pub fn timeout(mut self, timeout: Duration) -> Self {
-        self.opts.timeout = Some(timeout);
-        self
-    }
-
-    pub fn deadline(mut self, deadline: Duration) -> Self {
-        self.opts.deadline = Some(deadline);
-        self
-    }
-
-    pub fn idempotency_key(mut self, key: impl Into<String>) -> Self {
-        self.opts.idempotency_key = Some(key.into());
-        self
-    }
-}
-
-fn file_of(raw: crate::core::engine::RawResponse) -> FileResult {
-    FileResult {
-        content_type: raw.content_type().to_string(),
-        filename: filename_from(raw.header("content-disposition")),
-        bytes: raw.body,
-    }
-}
-
-impl FileBuilder<Transport> {
-    /// Fetch the document.
-    pub async fn send(self) -> Result<FileResult> {
-        Ok(file_of(
-            self.transport.execute(self.route, self.opts).await?,
-        ))
-    }
-}
-
-impl IntoFuture for FileBuilder<Transport> {
-    type Output = Result<FileResult>;
-    type IntoFuture = Pin<Box<dyn Future<Output = Result<FileResult>> + Send>>;
-
-    fn into_future(self) -> Self::IntoFuture {
-        Box::pin(self.send())
-    }
-}
-
-#[cfg(feature = "blocking")]
-impl FileBuilder<crate::core::transport::BlockingTransport> {
-    /// Fetch the document.
-    pub fn send(self) -> Result<FileResult> {
-        Ok(file_of(self.transport.execute(self.route, self.opts)?))
-    }
-}
-
-/// `filename*=UTF-8''…` wins over `filename="…"`, as RFC 6266 asks.
-pub(crate) fn filename_from(disposition: Option<&str>) -> Option<String> {
-    let value = disposition?;
-    let lower = value.to_ascii_lowercase();
-    if let Some(i) = lower.find("filename*=utf-8''") {
-        let rest = &value[i + "filename*=utf-8''".len()..];
-        let raw = rest.split(';').next()?.trim();
-        return Some(
-            percent_encoding::percent_decode_str(raw)
-                .decode_utf8_lossy()
-                .into_owned(),
-        );
-    }
-    let i = lower.find("filename=")?;
-    let rest = value[i + "filename=".len()..].split(';').next()?.trim();
-    Some(rest.trim_matches('"').to_string())
-}
-
-/// Name an invoice or a payout by its `uuid` or by your own `order_id`; one of them is required.
-#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
-pub struct Lookup {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub uuid: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub order_id: Option<String>,
-}
-
-impl Lookup {
-    /// By the gateway's own id.
-    pub fn uuid(uuid: impl Into<String>) -> Self {
-        Self {
-            uuid: Some(uuid.into()),
-            order_id: None,
-        }
-    }
-
-    /// By your reference.
-    pub fn order_id(order_id: impl Into<String>) -> Self {
-        Self {
-            uuid: None,
-            order_id: Some(order_id.into()),
-        }
-    }
-}
-
-impl From<&str> for Lookup {
-    /// A bare string is taken as the `uuid`.
-    fn from(uuid: &str) -> Self {
-        Lookup::uuid(uuid)
-    }
-}
-
-impl From<String> for Lookup {
-    fn from(uuid: String) -> Self {
-        Lookup::uuid(uuid)
-    }
-}
-
-impl From<&String> for Lookup {
-    fn from(uuid: &String) -> Self {
-        Lookup::uuid(uuid.clone())
-    }
-}
-
-/// Name an invoice by `uuid` or `order_id`.
-pub type PaymentLookup = Lookup;
-/// Name a payout by `uuid` or `order_id`.
-pub type PayoutLookup = Lookup;
-
+/// Serialize a request struct into the body value.
+///
+/// Every request type is a generated struct of strings, integers, floats, bools, vectors and
+/// `serde_json::Value`, none of which can fail to serialize (a non-finite `f64` becomes `null`,
+/// it does not error), so the fallback is unreachable. It is a `Null` rather than a panic because
+/// an SDK that forbids unsafe and returns `Result` everywhere should not abort a payout call over
+/// a serializer edge case; `serialize_body` then sends `{}` and the gateway refuses it with a
+/// validation error naming the missing field.
 pub(crate) fn to_value<T: serde::Serialize>(value: &T) -> Value {
-    serde_json::to_value(value).unwrap_or(Value::Null)
+    match serde_json::to_value(value) {
+        Ok(value) => value,
+        Err(_) => {
+            debug_assert!(false, "a generated request body failed to serialize");
+            Value::Null
+        }
+    }
 }
 
 /// Assembles the [`CallOptions`] of one resource method. Internal sugar so every method reads as

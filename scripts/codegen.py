@@ -27,12 +27,6 @@ OUT_DIR = os.path.join(ROOT, "src", "contract")
 GENERATED = ["routes.rs", "enums.rs", "requests.rs", "version.rs"]
 
 SKIP_PREFIXES = ("/healthz", "/readyz", "/docs", "/openapi.json", "/internal")
-# Read-only routes: a transport failure may be retried without risking a duplicate side effect.
-SAFE_SUFFIX = re.compile(
-    r"/(info|history|list|calculate|validate|services|get|balance|qr|deliveries)$"
-)
-# Paths that look read-only but whose body can mutate state.
-NOT_SAFE = {"POST /v1/vrcs"}
 
 HEADER = (
     "// GENERATED FILE - do not edit. Source: contract/contract.json (core {commit}).\n"
@@ -144,9 +138,14 @@ def request_struct_name(path: str) -> str:
 
 
 def is_safe(route: dict) -> bool:
-    if route_key(route) in NOT_SAFE:
-        return False
-    return route["method"] == "GET" or bool(SAFE_SUFFIX.search(route["path"]))
+    """The core's own hand-classified read-only flag. Never inferred from the path."""
+    value = route.get("safe")
+    if not isinstance(value, bool):
+        raise SystemExit(
+            f"contract.json: route {route_key(route)} has no boolean \"safe\" field - "
+            "re-export the contract from the core"
+        )
+    return value
 
 
 def doc_lines(text: str, indent: str = "") -> str:
@@ -161,6 +160,17 @@ def load() -> tuple[dict, dict, bytes]:
     with open(os.path.join(ROOT, "contract", "contract.json"), "rb") as fh:
         raw = fh.read()
     contract = json.loads(raw.decode("utf-8"))
+    unclassified = [
+        route_key(r) for r in contract.get("routes", []) if not isinstance(r.get("safe"), bool)
+    ]
+    if unclassified:
+        raise SystemExit(
+            "contract.json: "
+            + str(len(unclassified))
+            + ' route(s) lack a boolean "safe" field: '
+            + ", ".join(unclassified[:5])
+            + " - re-export the contract from the core"
+        )
     desc_path = os.path.join(ROOT, "contract", "descriptions.en.json")
     descriptions = {"request": {}, "response": {}}
     if os.path.exists(desc_path):

@@ -1,5 +1,8 @@
 //! Pagination: one page when awaited, every page when streamed, nothing before either.
 
+// A `Client` only exists with an HTTP backend feature on.
+#![cfg(feature = "reqwest-client")]
+
 mod support;
 
 use std::sync::Arc;
@@ -211,7 +214,12 @@ async fn caller_filters_travel_with_every_page() {
 #[tokio::test]
 async fn a_get_list_route_pages_over_the_query_string() {
     let (client, mock) = harness(vec![page(vec![], 0, 0, 5)]);
-    let _ = client.sandbox().webhooks().limit(5).await.unwrap();
+    let _ = client
+        .sandbox()
+        .webhooks(oblodai::resources::PageParams::default())
+        .limit(5)
+        .await
+        .unwrap();
     let call = mock.first();
     assert_eq!(call.query("limit").as_deref(), Some("5"));
     assert_eq!(call.query("offset").as_deref(), Some("0"));

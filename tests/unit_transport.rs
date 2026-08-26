@@ -1,6 +1,9 @@
 //! Transport behaviour: signing headers, idempotency, retries, clock skew, URL building.
 //! Every test runs against a fake HTTP backend — no network, no gateway.
 
+// A `Client` only exists with an HTTP backend feature on.
+#![cfg(feature = "reqwest-client")]
+
 mod support;
 
 use std::sync::Arc;
@@ -78,7 +81,7 @@ async fn signs_path_and_query_on_get_and_sends_no_body() {
     )]);
     let _ = client
         .sandbox()
-        .webhooks()
+        .webhooks(oblodai::resources::PageParams::default())
         .limit(10)
         .offset(0)
         .await

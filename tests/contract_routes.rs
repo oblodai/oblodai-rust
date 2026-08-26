@@ -2,6 +2,8 @@
 //! credential and idempotency wrapper. The table below is the SDK's coverage ledger: a route the
 //! core adds fails this test until a method is added for it.
 
+// A `Client` only exists with an HTTP backend feature on.
+#![cfg(feature = "reqwest-client")]
 #![allow(deprecated)]
 
 mod support;
@@ -12,7 +14,7 @@ use std::sync::Arc;
 
 use oblodai::contract::requests::*;
 use oblodai::contract::types::{Method, RouteAuth};
-use oblodai::resources::{DocumentQuery, FormatQuery, PeriodQuery};
+use oblodai::resources::{DocumentQuery, FormatQuery, PageParams, PeriodQuery, SignedLinkQuery};
 use oblodai::{Client, HttpBackend, ROUTES};
 use serde_json::json;
 use support::{ok, MockBackend, Scripted};
@@ -243,7 +245,7 @@ fn coverage() -> Vec<(&'static str, Case)> {
             case(|c| async move {
                 let _ = c
                     .documents()
-                    .download("invoice", "i1", 1, "s", DocumentQuery::default())
+                    .download("invoice", "i1", SignedLinkQuery::new(1, "s"))
                     .await;
             }),
         ),
@@ -467,7 +469,7 @@ fn coverage() -> Vec<(&'static str, Case)> {
         (
             "POST /v1/payment/link/info",
             case(|c| async move {
-                let _ = c.payment_links().info("l1").await;
+                let _ = c.payment_links().info("l1", PageParams::default()).await;
             }),
         ),
         (
@@ -793,7 +795,7 @@ fn coverage() -> Vec<(&'static str, Case)> {
         (
             "GET /v1/sandbox/webhooks",
             case(|c| async move {
-                let _ = c.sandbox().webhooks().await;
+                let _ = c.sandbox().webhooks(PageParams::default()).await;
             }),
         ),
         (
@@ -1025,6 +1027,112 @@ fn the_table_is_the_core_surface_nothing_more_and_nothing_less() {
     );
 }
 
+/// Every flag of every generated `RouteSpec` equals `contract/contract.json`, field by field.
+///
+/// `safe` is the one that authorises re-sending a request after a transport failure, so it is the
+/// core's own hand-classified statement and never a guess from the path. `list` decides whether a
+/// method pages. A flipped flag here is a money bug, so the comparison is exhaustive rather than a
+/// key-set check — see `a_flipped_flag_is_caught` for the proof that it bites.
+#[test]
+fn every_route_flag_equals_the_contract() {
+    let contract = support::load_contract();
+    let declared = contract["routes"].as_array().expect("routes array");
+    let mut seen = 0usize;
+    for route in declared {
+        let key = format!(
+            "{} {}",
+            route["method"].as_str().unwrap(),
+            route["path"].as_str().unwrap()
+        );
+        let Some(spec) = ROUTES.iter().find(|r| r.key == key) else {
+            continue; // /healthz, /docs and friends are not merchant routes
+        };
+        seen += 1;
+        assert_eq!(
+            spec.method.as_str(),
+            route["method"].as_str().unwrap(),
+            "{key}: method"
+        );
+        assert_eq!(spec.path, route["path"].as_str().unwrap(), "{key}: path");
+        assert_eq!(
+            spec.auth.as_str(),
+            route["auth"].as_str().unwrap(),
+            "{key}: auth"
+        );
+        assert_eq!(
+            spec.idempotent,
+            route["idempotent"].as_bool().unwrap(),
+            "{key}: idempotent"
+        );
+        assert_eq!(
+            spec.safe,
+            route["safe"]
+                .as_bool()
+                .unwrap_or_else(|| panic!("{key}: the contract carries no boolean `safe`")),
+            "{key}: safe — the flag that decides whether a failed request may be re-sent"
+        );
+        assert_eq!(spec.bare, route["bare"].as_bool().unwrap(), "{key}: bare");
+        let list = route.get("list").and_then(|v| v.as_str());
+        assert_eq!(
+            spec.list.map(|l| match l {
+                oblodai::ListKind::Paged => "paged",
+                oblodai::ListKind::Plain => "plain",
+                other => panic!("{key}: unknown list kind {other:?}"),
+            }),
+            list,
+            "{key}: list"
+        );
+    }
+    assert_eq!(
+        seen,
+        ROUTES.len(),
+        "every generated route came from the contract"
+    );
+    assert_eq!(seen, 107, "the snapshot declares 107 merchant routes");
+}
+
+/// The comparison above is only worth anything if it fails when a flag is wrong. Flip each flag of
+/// a real route on a copy of the contract and require the same comparison to reject it.
+#[test]
+fn a_flipped_flag_is_caught() {
+    let contract = support::load_contract();
+    let route = contract["routes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["path"] == "/v1/payout" && r["method"] == "POST")
+        .expect("POST /v1/payout is in the contract")
+        .clone();
+    let spec = ROUTES.iter().find(|r| r.key == "POST /v1/payout").unwrap();
+
+    // As shipped, everything agrees.
+    assert_eq!(spec.safe, route["safe"].as_bool().unwrap());
+    assert_eq!(spec.idempotent, route["idempotent"].as_bool().unwrap());
+    assert_eq!(spec.bare, route["bare"].as_bool().unwrap());
+
+    // Flip each of them in turn: the generated spec must disagree with the tampered contract.
+    for field in ["safe", "idempotent", "bare"] {
+        let mut tampered = route.clone();
+        let flipped = !tampered[field].as_bool().unwrap();
+        tampered[field] = serde_json::Value::Bool(flipped);
+        let generated = match field {
+            "safe" => spec.safe,
+            "idempotent" => spec.idempotent,
+            _ => spec.bare,
+        };
+        assert_ne!(
+            generated,
+            tampered[field].as_bool().unwrap(),
+            "flipping `{field}` must make the per-route comparison fail"
+        );
+    }
+    // And `safe: true` on a create route would be the dangerous direction specifically.
+    assert!(
+        !spec.safe,
+        "POST /v1/payout must never be marked safe to repeat"
+    );
+}
+
 #[tokio::test]
 async fn every_route_is_wired_to_the_right_method_path_and_credential() {
     for (key, call) in coverage() {
@@ -1114,6 +1222,9 @@ async fn every_route_is_wired_to_the_right_method_path_and_credential() {
                 );
                 assert_eq!(sent.header("x-signature").unwrap().len(), 64, "{key}");
             }
+            // `RouteAuth` is `#[non_exhaustive]`: a gate the core adds must be classified here
+            // before its routes can be trusted, not silently accepted.
+            other => panic!("{key}: unhandled auth gate {other:?}"),
         }
 
         if spec.idempotent {

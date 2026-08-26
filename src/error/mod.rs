@@ -12,79 +12,23 @@
 
 use serde::ser::{Serialize, SerializeStruct, Serializer};
 
-/// Which family a failure belongs to. Mirrors the reference SDK's error subclasses.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum ErrorKind {
-    /// 400 — the request is malformed or violates a business rule; see `field` and `code`.
-    Validation,
-    /// 401 — bad signature, unknown key, clock skew, IP not in the allow-list.
-    Authentication,
-    /// 403 — the key is valid but not allowed to do this (wrong key kind, feature disabled).
-    Permission,
-    /// 404 — the referenced object does not exist for this merchant.
-    NotFound,
-    /// 409 — state conflict.
-    Conflict,
-    /// 409 `idempotency.key_reused` — the same key was used with a different request body.
-    IdempotencyConflict,
-    /// 429 — rate limited; `retry_after` is set.
-    RateLimit,
-    /// 503 — an upstream dependency is down; safe to retry after a pause.
-    Unavailable,
-    /// 5xx other than 503.
-    Internal,
-    /// Any other status the API answered with.
-    Api,
-    /// The request never produced an HTTP response: DNS, TCP, TLS, timeout, abort, deadline.
-    Transport,
-    /// Raised before any request is sent: bad options, missing credentials, unusable arguments.
-    Config,
-    /// The response could not be interpreted as the documented envelope.
-    Contract,
-    /// Webhook verification failed (bad signature, stale timestamp, missing headers).
-    Signature,
-}
+mod detail;
+mod kind;
 
-impl ErrorKind {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            ErrorKind::Validation => "validation",
-            ErrorKind::Authentication => "authentication",
-            ErrorKind::Permission => "permission",
-            ErrorKind::NotFound => "not_found",
-            ErrorKind::Conflict => "conflict",
-            ErrorKind::IdempotencyConflict => "idempotency_conflict",
-            ErrorKind::RateLimit => "rate_limit",
-            ErrorKind::Unavailable => "unavailable",
-            ErrorKind::Internal => "internal",
-            ErrorKind::Api => "api",
-            ErrorKind::Transport => "transport",
-            ErrorKind::Config => "config",
-            ErrorKind::Contract => "contract",
-            ErrorKind::Signature => "signature",
-        }
-    }
-}
-
-/// The error envelope as the core writes it.
-#[derive(Clone, Debug, Default, PartialEq, serde::Deserialize)]
-pub struct ErrorDetail {
-    #[serde(default)]
-    pub code: String,
-    #[serde(default)]
-    pub message: Option<String>,
-    #[serde(default)]
-    pub field: Option<String>,
-    #[serde(default)]
-    pub retryable: Option<bool>,
-    #[serde(default)]
-    pub retry_after: Option<u64>,
-    #[serde(default)]
-    pub request_id: Option<String>,
-}
+pub(crate) use detail::clamp_retry_after;
+pub use detail::{ErrorDetail, MAX_RETRY_AFTER_SECONDS};
+pub use kind::ErrorKind;
 
 /// Every failure the SDK reports.
+///
+/// The type is `Clone`, so an underlying `reqwest::Error` is folded into [`message`](Self::message)
+/// rather than kept as a source: `std::error::Error::source` is always `None`, and `anyhow`'s chain
+/// rendering therefore adds nothing beyond the message. Everything worth acting on is already a
+/// method here.
+///
+/// `Display` (and only `Display`) may quote up to 120 characters of an unparsable answer, because
+/// that is what tells you a proxy answered instead of the gateway. [`Debug`] and the `Serialize`
+/// impl never carry the body — use those in structured logs.
 #[derive(Clone, thiserror::Error)]
 #[error("{message}")]
 pub struct Error {
@@ -206,6 +150,42 @@ impl Error {
             field: None,
             synthetic: false,
             raw,
+        }
+    }
+
+    /// The answer was larger than the SDK is willing to buffer.
+    pub fn response_too_large(message: impl Into<String>, http_status: u16) -> Self {
+        Self {
+            kind: ErrorKind::Contract,
+            code: "sdk.response_too_large".to_string(),
+            message: message.into(),
+            http_status,
+            retryable: false,
+            retry_after: None,
+            request_id: None,
+            field: None,
+            synthetic: false,
+            raw: None,
+        }
+    }
+
+    /// A delivery whose signature verified but whose body the SDK cannot read.
+    ///
+    /// Deliberately NOT in the signature family: a receiver that answers 401 to a forged delivery
+    /// must not answer 401 to an authentic one, or the gateway retries it for ~26 h. The code is
+    /// `webhook.bad_payload` and the kind is [`ErrorKind::Contract`].
+    pub fn bad_payload(message: impl Into<String>) -> Self {
+        Self {
+            kind: ErrorKind::Contract,
+            code: "webhook.bad_payload".to_string(),
+            message: message.into(),
+            http_status: 0,
+            retryable: false,
+            retry_after: None,
+            request_id: None,
+            field: None,
+            synthetic: false,
+            raw: None,
         }
     }
 

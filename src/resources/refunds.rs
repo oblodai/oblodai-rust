@@ -17,7 +17,12 @@ impl<Tr: Clone> Refunds<Tr> {
         Self { transport }
     }
 
-    /// `POST /v1/payment/refund` — refund a paid invoice, fully or partially.
+    /// `POST /v1/payment/refund` — refund a paid invoice, fully or partially. **Payout key.**
+    ///
+    /// Codes to branch on: `refund.nothing_to_refund`, `refund.exceeds_refundable`,
+    /// `refund.no_address` (the payer address is not refundable — ask for one), `refund.dust`
+    /// (below the network minimum), `refund.reference_collision`, `payout.insufficient_funds`
+    /// (retryable), `merchant.wrong_key_kind`.
     pub fn create(&self, params: PaymentRefundRequest) -> RequestBuilder<Tr, Payout> {
         RequestBuilder::new(
             self.transport.clone(),
@@ -27,7 +32,12 @@ impl<Tr: Clone> Refunds<Tr> {
     }
 
     /// `POST /v1/payment/resolve` — settle an underpaid (`wrong_amount`) invoice: keep what
-    /// arrived, or send it back.
+    /// arrived, or send it back. **Payout key.** The answer's own `resolution` field says which
+    /// branch the core took.
+    ///
+    /// Codes to branch on: `payment.not_found`, `payment.bad_status` (not `wrong_amount`),
+    /// `refund.nothing_to_refund`, `refund.no_address`, `refund.exceeds_excess`,
+    /// `merchant.wrong_key_kind`.
     pub fn resolve(&self, params: PaymentResolveRequest) -> RequestBuilder<Tr, Resolution> {
         RequestBuilder::new(
             self.transport.clone(),
@@ -36,7 +46,10 @@ impl<Tr: Clone> Refunds<Tr> {
         )
     }
 
-    /// `POST /v1/refund/batch` — up to 5000 refunds; track with `batches().info()`.
+    /// `POST /v1/refund/batch` — ASYNCHRONOUS batch (**≤ 5000**); track with `batches().info()`.
+    /// **Payout key.** Codes to branch on: `batch.too_large`, `batch.empty`,
+    /// `batch.reference_required`, `batch.duplicate_reference`, `batch.invoice_required`,
+    /// `merchant.wrong_key_kind`.
     pub fn batch(&self, params: RefundBatchRequest) -> RequestBuilder<Tr, BatchSubmitted> {
         RequestBuilder::new(
             self.transport.clone(),

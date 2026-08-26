@@ -38,7 +38,8 @@ impl<Tr: Clone> Account<Tr> {
     }
 
     /// `POST /v1/vrcs` — read the volatility-risk conversion setting (auto-convert volatile
-    /// deposits to USDT).
+    /// deposits to USDT). The reference SDK spells the pair as one `vrcs(enabled?)` call; Rust has
+    /// no optional arguments, so reading and writing are two methods on the same route.
     pub fn vrcs(&self) -> RequestBuilder<Tr, VrcsStatus> {
         RequestBuilder::new(
             self.transport.clone(),

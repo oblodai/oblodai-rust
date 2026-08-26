@@ -20,7 +20,11 @@ impl<Tr: Clone> Splits<Tr> {
     }
 
     /// `POST /v1/split/rule` — to an external address (`address` + `network`) or to a platform
-    /// merchant (`merchant_id`).
+    /// merchant (`merchant_id`). **Payout key.**
+    ///
+    /// Codes to branch on: `split.disabled`, `split.bad_percent`, `split.bad_destination`,
+    /// `split.self_destination`, `split.duplicate_destination`, `split.dest_not_found`,
+    /// `split.recipient_not_opted_in`, `split.network_required`, `merchant.wrong_key_kind`.
     pub fn create_rule(&self, params: SplitRuleRequest) -> RequestBuilder<Tr, SplitRule> {
         RequestBuilder::new(
             self.transport.clone(),

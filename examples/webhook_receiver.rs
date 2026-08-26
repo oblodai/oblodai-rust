@@ -78,10 +78,12 @@ fn main() -> std::io::Result<()> {
         let event = &delivery.event;
         let key = format!("{}:{}", event.event_kind(), event.uuid());
         if is_stale_event(event, last_sequence.get(&key).copied()) {
-            println!("stale {} (sequence {}) — dropped", key, event.sequence());
+            println!("stale {key} (sequence {:?}) — dropped", event.sequence());
             continue;
         }
-        last_sequence.insert(key, event.sequence());
+        if let Some(sequence) = event.sequence() {
+            last_sequence.insert(key, sequence);
+        }
 
         match event {
             WebhookEvent::Payment(payment) => {
@@ -101,6 +103,15 @@ fn main() -> std::io::Result<()> {
                 println!(
                     "wallet {} received {} {}",
                     wallet.address, wallet.payment_amount, wallet.payer_currency
+                );
+            }
+            // `WebhookEvent` is `#[non_exhaustive]`: an event type newer than this SDK arrives as
+            // `Other` with its body intact instead of failing verification. Acknowledge it.
+            other => {
+                println!(
+                    "unknown event type {:?} for {} — acknowledged, not acted on",
+                    other.event_kind(),
+                    other.uuid()
                 );
             }
         }

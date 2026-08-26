@@ -139,7 +139,7 @@ impl<Tr: Clone> Settings<Tr> {
     }
 
     /// `POST /v1/auto-withdraw/set` — sweep a currency to an address once the balance passes
-    /// `min_amount`.
+    /// `min_amount`. **Payout key** — a payment key is refused with `merchant.wrong_key_kind`.
     pub fn set_auto_withdraw(
         &self,
         params: AutoWithdrawSetRequest,
@@ -151,7 +151,8 @@ impl<Tr: Clone> Settings<Tr> {
         )
     }
 
-    /// `POST /v1/auto-withdraw/delete`.
+    /// `POST /v1/auto-withdraw/delete`. **Payout key** — a payment key is refused with
+    /// `merchant.wrong_key_kind`.
     pub fn delete_auto_withdraw(
         &self,
         currency: impl Into<String>,
@@ -174,7 +175,8 @@ impl<Tr: Clone> Settings<Tr> {
         )
     }
 
-    /// `POST /v1/api-allowlist/add`.
+    /// `POST /v1/api-allowlist/add`. **Payout key** — a payment key is refused with
+    /// `merchant.wrong_key_kind`.
     pub fn add_api_allowlist(&self, cidr: impl Into<String>) -> RequestBuilder<Tr, ApiAllowlist> {
         RequestBuilder::new(
             self.transport.clone(),
@@ -183,7 +185,8 @@ impl<Tr: Clone> Settings<Tr> {
         )
     }
 
-    /// `POST /v1/api-allowlist/remove`.
+    /// `POST /v1/api-allowlist/remove`. **Payout key** — a payment key is refused with
+    /// `merchant.wrong_key_kind`.
     pub fn remove_api_allowlist(
         &self,
         cidr: impl Into<String>,
@@ -196,6 +199,8 @@ impl<Tr: Clone> Settings<Tr> {
     }
 
     /// `POST /v1/api-allowlist/enable` — switch enforcement on or off (the list is kept).
+    /// **Payout key** — a payment key is refused with `merchant.wrong_key_kind`. Locking yourself
+    /// out is possible: make sure the calling host is on the list first.
     pub fn enable_api_allowlist(&self, enabled: bool) -> RequestBuilder<Tr, ApiAllowlist> {
         RequestBuilder::new(
             self.transport.clone(),
