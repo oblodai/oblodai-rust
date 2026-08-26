@@ -150,22 +150,31 @@ fn key_set(value: &Value) -> Vec<String> {
     }
 }
 
+/// Rows whose recorded body cannot be compared in this snapshot, each with the reason. Anything
+/// else that fails to produce a comparison is a hole in the gate, not a waiver — the count below
+/// is exact so a row cannot quietly stop being checked.
+const UNCOMPARABLE: [&str; 0] = [];
+
 #[test]
 fn every_model_round_trips_its_golden_body() {
     let fixtures = load_fixtures();
     let mut checked = 0;
+    let mut skipped: Vec<String> = Vec::new();
     for (route, path, check) in model_rows() {
         let Some(fx) = fixtures.iter().find(|f| f.route == route) else {
             panic!("{route}: no fixture recorded");
         };
         if !fx.is_success() {
-            continue; // recorded as a refusal in this environment: nothing to compare
+            // Recorded as a refusal in this environment: nothing to compare.
+            skipped.push(format!("{route} @ \"{path}\" (recorded refusal)"));
+            continue;
         }
         let result = fx.result();
         let Some(target) = pick(&result, path) else {
             panic!("{route}: nothing at \"{path}\" in the recorded result");
         };
         if target.is_null() {
+            skipped.push(format!("{route} @ \"{path}\" (null in the recorded body)"));
             continue;
         }
         let encoded = check(target).unwrap_or_else(|e| panic!("{route} @ \"{path}\": {e}"));
@@ -183,7 +192,23 @@ fn every_model_round_trips_its_golden_body() {
         }
         checked += 1;
     }
-    assert!(checked > 90, "only {checked} models were checked");
+    // Exact, not a floor: `checked + skipped == rows`, and every skip is named.
+    assert_eq!(
+        checked + skipped.len(),
+        model_rows().len(),
+        "a row neither compared nor skipped"
+    );
+    assert_eq!(
+        skipped.len(),
+        UNCOMPARABLE.len(),
+        "rows that stopped being verified: {skipped:?}"
+    );
+    assert_eq!(
+        checked,
+        model_rows().len() - UNCOMPARABLE.len(),
+        "only {checked} of {} models were checked",
+        model_rows().len()
+    );
 }
 
 #[test]
@@ -352,4 +377,110 @@ fn the_contract_snapshot_the_code_was_generated_from_is_the_one_that_ships() {
         contract["core_commit"].as_str().unwrap(),
         oblodai::CONTRACT_CORE_COMMIT
     );
+}
+
+/// Every `family.reason` token a method's rustdoc names must be a real code in the contract's
+/// catalogue.
+///
+/// A doc that invites `match err.code()` on a code the gateway never emits sends the caller down a
+/// branch that can never run — the reference SDK documented `wallet.blocked`, which does not exist.
+/// The scan is deliberately blunt: anything shaped like a code inside backticks counts, unless it is
+/// an SDK-raised code, a transport code, a webhook code or one of the named non-code identifiers
+/// below.
+#[test]
+fn every_error_code_named_in_a_doc_comment_exists_in_the_catalogue() {
+    /// Dotted identifiers that appear in docs and are NOT error codes.
+    const NOT_A_CODE: [&str; 12] = [
+        "wallet.paid",      // an event type
+        "invoice.paid",     // an event type prefix
+        "payout.confirmed", // an event type
+        "webhooks.test",    // an SDK method
+        "payouts.info",     // an SDK method
+        "family.reason",    // the shape of a code, not a code
+        "paginate.has_pages",
+        "paginate.total",
+        "payment.status",          // a model field
+        "payout.status",           // a model field
+        "payout.history",          // a route
+        "api_conformance_test.go", // a file in the core
+    ];
+    let catalogue: std::collections::BTreeSet<&str> = ERROR_CODES.iter().copied().collect();
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    collect_rs(&root, &mut files);
+    assert!(files.len() > 20, "the source tree was not walked");
+
+    let mut unknown: Vec<String> = Vec::new();
+    for file in &files {
+        let text = std::fs::read_to_string(file).unwrap();
+        for line in text.lines() {
+            let line = line.trim_start();
+            if !line.starts_with("///") && !line.starts_with("//!") {
+                continue;
+            }
+            for token in backticked(line) {
+                if !is_code_shaped(&token)
+                    || token.starts_with("sdk.")
+                    || token.starts_with("transport.")
+                    || token.starts_with("webhook.")
+                    || NOT_A_CODE.contains(&token.as_str())
+                {
+                    continue;
+                }
+                if !catalogue.contains(token.as_str()) {
+                    unknown.push(format!("{}: {token}", file.display()));
+                }
+            }
+        }
+    }
+    assert!(
+        unknown.is_empty(),
+        "documented codes that are not in contract/contract.json: {unknown:#?}"
+    );
+
+    // Proof the scan bites: this is exactly the code the reference SDK documented by mistake, and
+    // the rule above both recognises its shape and rejects it.
+    assert!(is_code_shaped("wallet.blocked"));
+    assert!(
+        !catalogue.contains("wallet.blocked"),
+        "`blocked` is a wallet MODEL field, never an error code"
+    );
+    assert!(
+        is_code_shaped("payout.insufficient_funds")
+            && catalogue.contains("payout.insufficient_funds")
+    );
+}
+
+fn collect_rs(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            collect_rs(&path, out);
+        } else if path.extension().is_some_and(|e| e == "rs") {
+            out.push(path);
+        }
+    }
+}
+
+fn backticked(line: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = line;
+    while let Some(open) = rest.find('`') {
+        rest = &rest[open + 1..];
+        let Some(close) = rest.find('`') else { break };
+        out.push(rest[..close].to_string());
+        rest = &rest[close + 1..];
+    }
+    out
+}
+
+fn is_code_shaped(token: &str) -> bool {
+    let Some((family, reason)) = token.split_once('.') else {
+        return false;
+    };
+    if reason.contains('.') || family.is_empty() || reason.is_empty() {
+        return false;
+    }
+    let ok = |s: &str| s.bytes().all(|b| b.is_ascii_lowercase() || b == b'_');
+    ok(family) && ok(reason)
 }

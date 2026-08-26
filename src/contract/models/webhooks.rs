@@ -6,7 +6,9 @@ use crate::contract::enums::{
 use crate::contract::models::common::{Money, Timestamp};
 
 /// `POST /v1/webhooks`.
-#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+///
+/// `Debug` never prints `secret`: a signing secret in a log is a forged-webhook kit.
+#[derive(Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct WebhookEndpoint {
     pub endpoint_id: String,
     pub url: String,
@@ -15,8 +17,20 @@ pub struct WebhookEndpoint {
     pub secret: Option<String>,
 }
 
+impl std::fmt::Debug for WebhookEndpoint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WebhookEndpoint")
+            .field("endpoint_id", &self.endpoint_id)
+            .field("url", &self.url)
+            .field("secret", &super::common::redacted(&self.secret))
+            .finish()
+    }
+}
+
 /// `POST /v1/webhooks/rotate-secret`.
-#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+///
+/// `Debug` never prints `secret`.
+#[derive(Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct WebhookSecretRotated {
     pub endpoint_id: String,
     pub url: String,
@@ -24,6 +38,20 @@ pub struct WebhookSecretRotated {
     pub secret: String,
     /// Until then deliveries also carry `X-Webhook-Signature-Prev` signed with the old secret.
     pub previous_secret_valid_until: Timestamp,
+}
+
+impl std::fmt::Debug for WebhookSecretRotated {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WebhookSecretRotated")
+            .field("endpoint_id", &self.endpoint_id)
+            .field("url", &self.url)
+            .field("secret", &super::common::REDACTED)
+            .field(
+                "previous_secret_valid_until",
+                &self.previous_secret_valid_until,
+            )
+            .finish()
+    }
 }
 
 /// Item of `/v1/webhooks/deliveries` and `GET /v1/sandbox/webhooks` (which adds `payload`, drops `sequence`).
@@ -161,12 +189,63 @@ pub struct WalletEvent {
 }
 
 /// Any delivered event, told apart by its `type` field.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+///
+/// `Other` keeps a `type` newer than this contract snapshot readable instead of failing the whole
+/// delivery: a receiver can still acknowledge it, log it and move on. The enum is
+/// `#[non_exhaustive]`, so a future variant is not a breaking change — match with a `_` arm.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub enum WebhookEvent {
     Payment(PaymentEvent),
     Payout(PayoutEvent),
     Wallet(WalletEvent),
+    /// An event type this snapshot does not know, exactly as it arrived.
+    Other(serde_json::Value),
+}
+
+/// Serializes back to the wire shape: the event's own fields with `type` alongside them, and an
+/// unknown event exactly as it arrived.
+impl serde::Serialize for WebhookEvent {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::Error as _;
+        let mut value = match self {
+            WebhookEvent::Payment(e) => serde_json::to_value(e),
+            WebhookEvent::Payout(e) => serde_json::to_value(e),
+            WebhookEvent::Wallet(e) => serde_json::to_value(e),
+            WebhookEvent::Other(v) => return v.serialize(serializer),
+        }
+        .map_err(S::Error::custom)?;
+        if let serde_json::Value::Object(map) = &mut value {
+            map.insert(
+                "type".to_string(),
+                serde_json::Value::String(self.event_kind().to_string()),
+            );
+        }
+        value.serialize(serializer)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for WebhookEvent {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        use serde::de::Error as _;
+        let value = serde_json::Value::deserialize(d)?;
+        let kind = value
+            .get("type")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| D::Error::custom("event body lacks the string `type` field"))?;
+        match kind {
+            "payment" => serde_json::from_value(value)
+                .map(WebhookEvent::Payment)
+                .map_err(D::Error::custom),
+            "payout" => serde_json::from_value(value)
+                .map(WebhookEvent::Payout)
+                .map_err(D::Error::custom),
+            "wallet" => serde_json::from_value(value)
+                .map(WebhookEvent::Wallet)
+                .map_err(D::Error::custom),
+            _ => Ok(WebhookEvent::Other(value)),
+        }
+    }
 }
 
 impl WebhookEvent {
@@ -176,15 +255,18 @@ impl WebhookEvent {
             WebhookEvent::Payment(e) => &e.uuid,
             WebhookEvent::Payout(e) => &e.uuid,
             WebhookEvent::Wallet(e) => &e.uuid,
+            WebhookEvent::Other(v) => str_at(v, "uuid").unwrap_or_default(),
         }
     }
 
-    /// Global, increasing (gaps are normal); a lower sequence arriving later is stale.
-    pub fn sequence(&self) -> i64 {
+    /// Global, increasing (gaps are normal); a lower sequence arriving later is stale. `None` when
+    /// the event carries no integer `sequence` — an unknown type, or one the gateway omitted it on.
+    pub fn sequence(&self) -> Option<i64> {
         match self {
-            WebhookEvent::Payment(e) => e.sequence,
-            WebhookEvent::Payout(e) => e.sequence,
-            WebhookEvent::Wallet(e) => e.sequence,
+            WebhookEvent::Payment(e) => Some(e.sequence),
+            WebhookEvent::Payout(e) => Some(e.sequence),
+            WebhookEvent::Wallet(e) => Some(e.sequence),
+            WebhookEvent::Other(v) => v.get("sequence").and_then(serde_json::Value::as_i64),
         }
     }
 
@@ -194,6 +276,7 @@ impl WebhookEvent {
             WebhookEvent::Payment(e) => e.order_id.as_deref(),
             WebhookEvent::Payout(e) => e.order_id.as_deref(),
             WebhookEvent::Wallet(e) => e.order_id.as_deref(),
+            WebhookEvent::Other(v) => str_at(v, "order_id"),
         }
     }
 
@@ -203,6 +286,7 @@ impl WebhookEvent {
             WebhookEvent::Payment(e) => &e.event_at,
             WebhookEvent::Payout(e) => &e.event_at,
             WebhookEvent::Wallet(e) => &e.event_at,
+            WebhookEvent::Other(v) => str_at(v, "event_at").unwrap_or_default(),
         }
     }
 
@@ -212,6 +296,9 @@ impl WebhookEvent {
             WebhookEvent::Payment(e) => e.is_final,
             WebhookEvent::Payout(e) => e.is_final,
             WebhookEvent::Wallet(e) => e.is_final,
+            WebhookEvent::Other(v) => {
+                v.get("is_final").and_then(serde_json::Value::as_bool) == Some(true)
+            }
         }
     }
 
@@ -221,26 +308,50 @@ impl WebhookEvent {
             WebhookEvent::Payment(e) => e.status.as_str(),
             WebhookEvent::Payout(e) => e.status.as_str(),
             WebhookEvent::Wallet(e) => &e.status,
+            WebhookEvent::Other(v) => str_at(v, "status").unwrap_or_default(),
         }
     }
 
     /// True on a rehearsal delivery (`webhooks.test`, sandbox): signed exactly like a live one,
-    /// but nothing moved — never credit an order on it.
+    /// but nothing moved — never credit an order on it. Works on an unknown event type too.
     pub fn is_test(&self) -> bool {
-        let flag = match self {
-            WebhookEvent::Payment(e) => e.test,
-            WebhookEvent::Payout(e) => e.test,
-            WebhookEvent::Wallet(e) => e.test,
-        };
-        flag == Some(true)
+        match self {
+            WebhookEvent::Payment(e) => e.test == Some(true),
+            WebhookEvent::Payout(e) => e.test == Some(true),
+            WebhookEvent::Wallet(e) => e.test == Some(true),
+            WebhookEvent::Other(v) => {
+                v.get("test").and_then(serde_json::Value::as_bool) == Some(true)
+            }
+        }
     }
 
-    /// The discriminator: `"payment"`, `"payout"` or `"wallet"`.
-    pub fn event_kind(&self) -> &'static str {
+    /// The discriminator as the wire spells it: `"payment"`, `"payout"`, `"wallet"`, or whatever
+    /// an unknown event carried.
+    pub fn event_kind(&self) -> &str {
         match self {
             WebhookEvent::Payment(_) => "payment",
             WebhookEvent::Payout(_) => "payout",
             WebhookEvent::Wallet(_) => "wallet",
+            WebhookEvent::Other(v) => str_at(v, "type").unwrap_or_default(),
         }
     }
+
+    /// Whether this snapshot models the event's `type`. `false` means [`WebhookEvent::Other`]:
+    /// acknowledge the delivery, log it, and do not try to read money out of it.
+    pub fn is_known(&self) -> bool {
+        !matches!(self, WebhookEvent::Other(_))
+    }
+
+    /// The delivery body exactly as it arrived, for an event type this snapshot does not model.
+    pub fn raw(&self) -> Option<&serde_json::Value> {
+        match self {
+            WebhookEvent::Other(v) => Some(v),
+            _ => None,
+        }
+    }
+}
+
+/// A string field of a raw event body.
+fn str_at<'a>(value: &'a serde_json::Value, field: &str) -> Option<&'a str> {
+    value.get(field).and_then(serde_json::Value::as_str)
 }

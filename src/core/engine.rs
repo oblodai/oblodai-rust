@@ -16,7 +16,7 @@ use super::idempotency::{assert_idempotency_key, new_idempotency_key};
 use super::logger::{LogLevel, Logger, NoopLogger};
 use super::request::{build_request, serialize_body, BuildInput, BuiltRequest, Credentials};
 use super::retry::{jitter, retry_delay_ms, should_retry, RetryContext, RetryOptions};
-use super::signing::{HEADER_ADMIN_TOKEN, SIGNATURE_SKEW_SECONDS};
+use super::signing::SIGNATURE_SKEW_SECONDS;
 use crate::contract::types::{RouteAuth, RouteSpec};
 use crate::error::{Error, Result};
 
@@ -50,6 +50,9 @@ pub struct CallOptions {
     pub idempotency_key: Option<String>,
     /// Prefer the payout key pair on a route that accepts either kind.
     pub prefer_payout_key: bool,
+    /// Extra headers for this call only. They are merged over the client-wide ones; names the SDK
+    /// owns (signing, `Accept`, `Content-Type`, `User-Agent`, `X-Admin-Token`) still win.
+    pub headers: Vec<(String, String)>,
     /// Per-attempt timeout.
     pub timeout: Option<Duration>,
     /// Overall budget including retries.
@@ -65,10 +68,17 @@ pub struct CallState {
     path_params: Vec<(&'static str, String)>,
     idempotency_key: Option<String>,
     prefer_payout_key: bool,
+    headers: Vec<(String, String)>,
     safe_to_repeat: bool,
     attempt: u32,
     skew_tried: bool,
+    /// Offset that was applied when the current attempt was signed. Compared against a freshly
+    /// measured one, so a concurrent correction by another call is not mistaken for drift.
+    signed_offset: i64,
+    /// Offset in force before this call corrected the clock, and the one it installed — a revert
+    /// only happens when the shared offset is still the installed one.
     skew_before: i64,
+    skew_installed: i64,
     deadline_at: Instant,
     pub attempt_timeout: Duration,
 }
@@ -183,10 +193,13 @@ impl Core {
             path_params: opts.path_params,
             idempotency_key: key,
             prefer_payout_key: opts.prefer_payout_key,
+            headers: opts.headers,
             safe_to_repeat,
             attempt: 0,
             skew_tried: false,
+            signed_offset: 0,
             skew_before: 0,
+            skew_installed: 0,
             deadline_at: Instant::now() + opts.deadline.unwrap_or(self.deadline),
             attempt_timeout: opts.timeout.unwrap_or(self.timeout),
         })
@@ -204,13 +217,15 @@ impl Core {
     }
 
     /// Build and sign the next attempt.
-    pub fn build(&self, st: &CallState) -> Result<BuiltRequest> {
+    pub fn build(&self, st: &mut CallState) -> Result<BuiltRequest> {
+        // Read the shared offset once and remember it: what this attempt was signed with is what a
+        // measured offset has to be compared against, not whatever another call installed since.
+        let signed_offset = self.clock.offset();
+        st.signed_offset = signed_offset;
+        // Client-wide headers first, this call's on top: `build_request` keeps the last value for
+        // a repeated name, so a per-call header overrides a client-wide one.
         let mut extra = self.headers.clone();
-        if st.route.auth == RouteAuth::Onboard {
-            if let Some(token) = &self.admin_token {
-                extra.push((HEADER_ADMIN_TOKEN.to_string(), token.clone()));
-            }
-        }
+        extra.extend(st.headers.iter().cloned());
         let req = build_request(BuildInput {
             base_url: &self.base_url,
             route: st.route,
@@ -219,11 +234,12 @@ impl Core {
             body: &st.body,
             credentials: self.credentials_for(st.route, st.prefer_payout_key),
             idempotency_key: st.idempotency_key.as_deref(),
-            ts: self.clock.now(),
+            ts: self.clock.raw_now() + signed_offset,
             user_agent: &self.user_agent,
+            admin_token: self.admin_token.as_deref(),
             extra_headers: &extra,
         })?;
-        self.logger.log(
+        self.log(
             LogLevel::Debug,
             "request",
             &[
@@ -244,7 +260,7 @@ impl Core {
             return Ok(Step::Return(raw));
         }
         let failure = self.classify(st.route, &raw);
-        self.logger.log(
+        self.log(
             LogLevel::Debug,
             "response",
             &[
@@ -263,8 +279,10 @@ impl Core {
         if raw.status == 401 && SIGNATURE_FAILURE_CODES.contains(&failure.code()) {
             if !st.skew_tried {
                 if let Some(offset) = self.clock.observe_server_date(raw.header("date")) {
-                    if (offset - self.clock.offset()).abs() > SIGNATURE_SKEW_SECONDS / 2 {
-                        self.logger.log(
+                    // Against the offset THIS attempt was signed with: another call may already
+                    // have installed the very correction we are about to make.
+                    if (offset - st.signed_offset).abs() > SIGNATURE_SKEW_SECONDS / 2 {
+                        self.log(
                             LogLevel::Warn,
                             "clock skew detected; re-signing with server time",
                             &[
@@ -273,14 +291,16 @@ impl Core {
                             ],
                         );
                         st.skew_tried = true;
-                        st.skew_before = self.clock.offset();
+                        st.skew_before = st.signed_offset;
+                        st.skew_installed = offset;
                         self.clock.correct(offset);
                         return Ok(Step::Resign);
                     }
                 }
             } else {
-                // The corrected timestamp did not help: it was not skew.
-                self.clock.correct(st.skew_before);
+                // The corrected timestamp did not help: it was not skew. Roll back only if the
+                // shared offset is still the one this call installed.
+                self.clock.revert(st.skew_installed, st.skew_before);
             }
         }
         self.decide_retry(st, failure)
@@ -308,6 +328,16 @@ impl Core {
         }
         st.attempt += 1;
         Ok(Step::Retry(delay))
+    }
+
+    /// Log through the configured sink, redacting sensitive-looking values FIRST — a
+    /// caller-supplied [`Logger`] never sees a secret, a signature or a passcode.
+    fn log(&self, level: LogLevel, message: &str, fields: &[(&str, String)]) {
+        let safe: Vec<(&str, String)> = fields
+            .iter()
+            .map(|(k, v)| (*k, super::logger::redact(k, v).to_string()))
+            .collect();
+        self.logger.log(level, message, &safe);
     }
 
     fn classify(&self, route: &RouteSpec, raw: &RawResponse) -> Error {

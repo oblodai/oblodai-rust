@@ -43,16 +43,34 @@ impl SkewCorrectingClock {
     }
 
     pub fn now(&self) -> i64 {
-        self.base.now() + self.offset.load(Ordering::Relaxed)
+        self.base.now() + self.offset.load(Ordering::SeqCst)
+    }
+
+    /// The underlying clock, without the correction applied. Signing reads this once together
+    /// with [`offset`](Self::offset) so the timestamp and the recorded offset always agree.
+    pub fn raw_now(&self) -> i64 {
+        self.base.now()
     }
 
     /// Server-minus-local offset currently applied, seconds.
     pub fn offset(&self) -> i64 {
-        self.offset.load(Ordering::Relaxed)
+        self.offset.load(Ordering::SeqCst)
     }
 
+    /// Install an offset for every call from now on.
     pub fn correct(&self, offset: i64) {
-        self.offset.store(offset, Ordering::Relaxed);
+        self.offset.store(offset, Ordering::SeqCst);
+    }
+
+    /// Undo a correction, but only if the offset currently applied is still the one this call
+    /// installed. Concurrent calls share one clock: a second call that measured a different skew
+    /// (or a later successful correction) must not be rolled back by this call's failure.
+    ///
+    /// Returns whether the revert happened.
+    pub fn revert(&self, installed: i64, previous: i64) -> bool {
+        self.offset
+            .compare_exchange(installed, previous, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
     }
 
     /// Measure the offset from a response `Date` header; `None` when absent, unparsable or

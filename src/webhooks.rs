@@ -75,8 +75,19 @@ impl Headers {
         }
     }
 
+    /// Set a header, replacing any existing one with the same name (case-insensitively) — the
+    /// same thing a map does, so the value you set last is the value [`get`](Self::get) returns.
     pub fn insert(&mut self, name: impl Into<String>, value: impl Into<String>) -> &mut Self {
-        self.pairs.push((name.into(), value.into()));
+        let name = name.into();
+        let value = value.into();
+        match self
+            .pairs
+            .iter_mut()
+            .find(|(k, _)| k.eq_ignore_ascii_case(&name))
+        {
+            Some(slot) => slot.1 = value,
+            None => self.pairs.push((name, value)),
+        }
         self
     }
 
@@ -99,7 +110,9 @@ pub struct VerifyOptions {
     /// During a rotation keep the outgoing secret here. Deliveries queued before the rotation stay
     /// signed with it for their whole retry life (~26 h), so keep it at least that long.
     pub previous_secret: Option<String>,
-    /// Reject deliveries older/newer than this, in seconds. 0 disables the check.
+    /// Reject deliveries older/newer than this, in seconds. `0` disables the freshness check
+    /// entirely (replaying a recorded delivery, a queue that may sit for hours). A negative value
+    /// is a configuration error, not "disabled".
     pub tolerance_seconds: i64,
     /// Current unix time; override in tests.
     pub now: Option<i64>,
@@ -121,7 +134,8 @@ impl VerifyOptions {
         self
     }
 
-    /// Widen or disable (`0`) the freshness window.
+    /// Widen or disable (`0`) the freshness window. Negative values are refused at verify time
+    /// with a config error.
     pub fn tolerance_seconds(mut self, seconds: i64) -> Self {
         self.tolerance_seconds = seconds;
         self
@@ -135,7 +149,11 @@ impl VerifyOptions {
 }
 
 /// A verified delivery: the event plus the advisory headers worth keeping.
+///
+/// `#[non_exhaustive]`: the gateway can add a delivery header without that being a breaking change
+/// here. Read the fields; do not construct one.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct WebhookDeliveryInfo {
     pub event: WebhookEvent,
     /// `X-Webhook-Id` — stable across retries of the same delivery; use it as your dedup key.
@@ -166,7 +184,11 @@ pub fn verify_webhook_delivery(
     headers: &Headers,
     options: &VerifyOptions,
 ) -> Result<WebhookDeliveryInfo> {
-    let (ts_raw, sig) = match (
+    // Configuration first: an empty secret would "verify" with the empty key, and a negative
+    // tolerance is a typo for "disabled" that would reject every delivery.
+    assert_options(options)?;
+
+    let (ts_raw, sig_raw) = match (
         headers.get(HEADER_WEBHOOK_TIMESTAMP),
         headers.get(HEADER_WEBHOOK_SIGNATURE),
     ) {
@@ -184,7 +206,37 @@ pub fn verify_webhook_delivery(
             "timestamp header is not an integer",
         )
     })?;
+    let sig = normalize_signature(sig_raw)?;
+    let prev_sig = headers
+        .get(HEADER_WEBHOOK_SIGNATURE_PREV)
+        .map(normalize_signature)
+        .transpose()?;
 
+    // A merchant who has not swapped the stored secret yet verifies the Prev header with it; one
+    // who already swapped but kept the old copy verifies the main header with the new secret.
+    // Both hold, so both are tried.
+    let mut candidates: Vec<(&str, &str)> = vec![(sig.as_str(), options.secret.as_str())];
+    if let Some(prev) = &prev_sig {
+        candidates.push((prev.as_str(), options.secret.as_str()));
+    }
+    if let Some(previous) = &options.previous_secret {
+        candidates.push((sig.as_str(), previous.as_str()));
+        if let Some(prev) = &prev_sig {
+            candidates.push((prev.as_str(), previous.as_str()));
+        }
+    }
+    let ok = candidates
+        .into_iter()
+        .any(|(provided, secret)| constant_time_eq(provided, &sign_webhook(secret, ts, raw_body)));
+    if !ok {
+        return Err(Error::signature(
+            "webhook.bad_signature",
+            "signature does not match the body",
+        ));
+    }
+
+    // Only now: the freshness window must not answer questions about a body whose MAC has not
+    // been checked, or it becomes a pre-authentication oracle.
     if options.tolerance_seconds > 0 {
         let now = options.now.unwrap_or_else(unix_now);
         if (now - ts).abs() > options.tolerance_seconds {
@@ -196,33 +248,6 @@ pub fn verify_webhook_delivery(
                 ),
             ));
         }
-    }
-
-    // A merchant who has not swapped the stored secret yet verifies the Prev header with it; one
-    // who already swapped but kept the old copy verifies the main header with the new secret.
-    // Both hold, so both are tried.
-    let prev_sig = headers.get(HEADER_WEBHOOK_SIGNATURE_PREV);
-    let mut candidates: Vec<(&str, &str)> = vec![(sig, options.secret.as_str())];
-    if let Some(prev) = prev_sig {
-        candidates.push((prev, options.secret.as_str()));
-    }
-    if let Some(previous) = &options.previous_secret {
-        candidates.push((sig, previous.as_str()));
-        if let Some(prev) = prev_sig {
-            candidates.push((prev, previous.as_str()));
-        }
-    }
-    let ok = candidates.into_iter().any(|(provided, secret)| {
-        constant_time_eq(
-            &provided.to_ascii_lowercase(),
-            &sign_webhook(secret, ts, raw_body),
-        )
-    });
-    if !ok {
-        return Err(Error::signature(
-            "webhook.bad_signature",
-            "signature does not match the body",
-        ));
     }
 
     let event = parse_webhook(raw_body)?;
@@ -238,32 +263,85 @@ pub fn verify_webhook_delivery(
     })
 }
 
+/// Reject a configuration that cannot verify anything, before a single byte is hashed.
+fn assert_options(options: &VerifyOptions) -> Result<()> {
+    if options.secret.is_empty() {
+        return Err(Error::config(
+            "sdk.bad_config",
+            "webhook secret is empty; verifying with the empty key would accept forged deliveries",
+            Some("secret"),
+        ));
+    }
+    if options
+        .previous_secret
+        .as_ref()
+        .is_some_and(|p| p.is_empty())
+    {
+        return Err(Error::config(
+            "sdk.bad_config",
+            "previous_secret was supplied but is empty; drop it instead",
+            Some("previous_secret"),
+        ));
+    }
+    if options.tolerance_seconds < 0 {
+        return Err(Error::config(
+            "sdk.bad_config",
+            format!(
+                "tolerance_seconds must not be negative (got {}); use 0 to disable the freshness \
+                 check",
+                options.tolerance_seconds
+            ),
+            Some("tolerance_seconds"),
+        ));
+    }
+    Ok(())
+}
+
+/// Normalize a signature header: surrounding whitespace is tolerated and upper-case hex is
+/// accepted, but a `0x` prefix is not hex the core ever writes and is refused rather than guessed.
+fn normalize_signature(raw: &str) -> Result<String> {
+    let trimmed = raw.trim();
+    if trimmed.len() >= 2 && trimmed[..2].eq_ignore_ascii_case("0x") {
+        return Err(Error::signature(
+            "webhook.bad_signature",
+            "signature header carries a \"0x\" prefix; the gateway sends bare hex",
+        ));
+    }
+    Ok(trimmed.to_ascii_lowercase())
+}
+
 /// Parse a (previously verified) delivery body into a typed event, discriminated by `type`.
+///
+/// A `type` this snapshot does not know yields [`WebhookEvent::Other`] rather than an error: a new
+/// event kind must never make a receiver reject an authentic delivery. A body that is not JSON, or
+/// that claims a known type with fields of the wrong shape, is `webhook.bad_payload`
+/// ([`ErrorKind::Contract`](crate::ErrorKind::Contract)) — never a signature failure.
 pub fn parse_webhook(raw_body: &[u8]) -> Result<WebhookEvent> {
     let value: serde_json::Value = serde_json::from_slice(raw_body)
-        .map_err(|_| Error::signature("webhook.bad_signature", "body is not JSON"))?;
-    let kind = value.get("type").and_then(serde_json::Value::as_str);
-    match kind {
-        Some("payment") | Some("payout") | Some("wallet") => {}
-        Some(other) => {
-            return Err(Error::signature(
-                "webhook.bad_signature",
-                format!("unknown event type \"{other}\""),
-            ))
-        }
+        .map_err(|e| Error::bad_payload(format!("delivery body is not JSON: {e}")))?;
+    let kind = match value.get("type").and_then(serde_json::Value::as_str) {
+        Some(kind) => kind.to_string(),
         None => {
-            return Err(Error::signature(
-                "webhook.bad_signature",
-                "body lacks the type field every event carries",
+            return Err(Error::bad_payload(
+                "delivery body lacks the string `type` field every event carries",
             ))
         }
+    };
+    match kind.as_str() {
+        "payment" | "payout" | "wallet" => serde_json::from_value(value).map_err(|e| {
+            Error::bad_payload(format!("delivery body is not a valid {kind} event: {e}"))
+        }),
+        // Unknown to this snapshot: hand it over raw so the receiver can 200 it and move on.
+        _ => Ok(WebhookEvent::Other(value)),
     }
-    serde_json::from_value(value).map_err(|e| {
-        Error::signature(
-            "webhook.bad_signature",
-            format!("body is not a known event: {e}"),
-        )
-    })
+}
+
+/// Whether this snapshot models the event's `type`.
+///
+/// The counterpart of the reference SDK's `isKnownEvent()`: `false` means the gateway sent a `type`
+/// newer than this contract snapshot. The delivery verified and is authentic — acknowledge it.
+pub fn is_known_event(event: &WebhookEvent) -> bool {
+    event.is_known()
 }
 
 /// True for rehearsal deliveries (`webhooks.test`, sandbox) — never act on them as if money moved.
@@ -273,6 +351,11 @@ pub fn is_test_event(event: &WebhookEvent) -> bool {
 
 /// Deliveries can arrive out of order (a retried `paid` after a `refund`). Keep the last
 /// `sequence` you processed per object and skip anything not newer.
+/// An event without a usable `sequence` (an unknown type, a field the gateway omitted) is never
+/// reported stale: dropping a delivery you cannot order is worse than handling it twice.
 pub fn is_stale_event(event: &WebhookEvent, last_processed_sequence: Option<i64>) -> bool {
-    matches!(last_processed_sequence, Some(last) if event.sequence() <= last)
+    match (last_processed_sequence, event.sequence()) {
+        (Some(last), Some(sequence)) => sequence <= last,
+        _ => false,
+    }
 }

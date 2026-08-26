@@ -3,6 +3,7 @@
 use serde_json::json;
 
 use super::base::{Call, RequestBuilder};
+use super::refs::PageParams;
 use crate::contract::models::{
     FaucetResult, SandboxDeposit, SandboxReplay, SandboxReset, WebhookDelivery,
 };
@@ -21,7 +22,8 @@ impl<Tr: Clone> Sandbox<Tr> {
         Self { transport }
     }
 
-    /// `POST /v1/sandbox/faucet` — credit test funds. Payout key.
+    /// `POST /v1/sandbox/faucet` — credit test funds. **Payout key**, `test_` keys only
+    /// (`sandbox.live_key` otherwise).
     pub fn faucet(&self, params: SandboxFaucetRequest) -> RequestBuilder<Tr, FaucetResult> {
         RequestBuilder::new(
             self.transport.clone(),
@@ -40,12 +42,13 @@ impl<Tr: Clone> Sandbox<Tr> {
         )
     }
 
-    /// `GET /v1/sandbox/webhooks` — deliveries with their payloads.
-    pub fn webhooks(&self) -> Pager<Tr, WebhookDelivery> {
+    /// `GET /v1/sandbox/webhooks` — deliveries with their payloads. Paged like every other list
+    /// (`limit`/`offset` go on the query string, since the route is a GET).
+    pub fn webhooks(&self, page: PageParams) -> Pager<Tr, WebhookDelivery> {
         Pager::new(
             self.transport.clone(),
             &routes::GET_V1_SANDBOX_WEBHOOKS,
-            serde_json::Value::Null,
+            super::base::to_value(&page),
         )
     }
 
@@ -60,7 +63,8 @@ impl<Tr: Clone> Sandbox<Tr> {
         )
     }
 
-    /// `POST /v1/sandbox/reset` — cancel open invoices and zero balances. Payout key.
+    /// `POST /v1/sandbox/reset` — cancel open invoices and zero balances. **Payout key**,
+    /// `test_` keys only (`sandbox.live_key` otherwise).
     pub fn reset(&self) -> RequestBuilder<Tr, SandboxReset> {
         RequestBuilder::new(
             self.transport.clone(),

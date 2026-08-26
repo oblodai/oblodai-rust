@@ -3,20 +3,24 @@
 
 use crate::contract::enums::FeeBearerResult;
 
+/// What `Debug` prints instead of a one-time secret.
+pub(crate) const REDACTED: &str = "[redacted]";
+
+/// `Some("[redacted]")` for a secret that is present, `None` for one that is not: a debug line
+/// still says whether the gateway returned it, without ever printing it.
+pub(crate) fn redacted(value: &Option<String>) -> Option<&'static str> {
+    value.as_ref().map(|_| REDACTED)
+}
+
 /// Decimal amount rendered by the core at the asset's own scale (`"10.000000"` for USDT).
 /// Never a float: `f64` cannot hold 18 decimals, and rounding a payout is a real loss.
-#[derive(
-    Clone,
-    Debug,
-    Default,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    serde::Serialize,
-    serde::Deserialize,
-)]
+///
+/// `Money` intentionally implements neither `PartialOrd` nor `Ord`: the derived versions would
+/// compare the decimal *strings*, so `"9.00" > "10.00"` would be `true` and `sort` would order
+/// `["10", "2", "9"]`. Order amounts with [`crate::helpers::compare_amounts`], and test equality
+/// with [`crate::helpers::amounts_equal`] when trailing zeros may differ (derived `PartialEq` is
+/// exact string equality: `"25"` is not `"25.000000"`).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]
 pub struct Money(pub String);
 

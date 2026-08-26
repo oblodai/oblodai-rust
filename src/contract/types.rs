@@ -4,8 +4,10 @@
 //! exported from the core's own conformance table — so every route the SDK can call is one the core
 //! declares, with the same auth gate and idempotency wrapper.
 
-/// HTTP method of a route. The gateway speaks only these two.
+/// HTTP method of a route. The gateway speaks only these two today; the enum is
+/// `#[non_exhaustive]` so adding a third is not a breaking change.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Method {
     Get,
     Post,
@@ -28,6 +30,7 @@ impl std::fmt::Display for Method {
 
 /// Which credential the core's gate expects. Mirrors `api_conformance_test.go` constants.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum RouteAuth {
     /// No credentials: payer- and recipient-facing endpoints.
     Public,
@@ -55,6 +58,7 @@ impl RouteAuth {
 
 /// Shape of a list result.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum ListKind {
     /// `{ items, paginate }` — offset pagination.
     Paged,
@@ -63,7 +67,11 @@ pub enum ListKind {
 }
 
 /// One route of the merchant API.
+///
+/// Only the generated registry constructs these, so the struct is `#[non_exhaustive]`: the core
+/// can start declaring another per-route fact without a major version here.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct RouteSpec {
     /// `"POST /v1/payment"` — the key the core's conformance table uses.
     pub key: &'static str,

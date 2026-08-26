@@ -1,8 +1,9 @@
 //! Offset pagination over the core's `{items, paginate}` lists.
 //!
 //! A [`Pager`] is a lazy plan, not a result: nothing is requested until it is awaited, streamed or
-//! collected. `paginate.has_pages` is the server's own "there is more" flag; iteration stops on it,
-//! or on a short page, whichever comes first.
+//! collected. `paginate.has_pages` is the server's own "there is more" flag, and iteration stops
+//! on it (or on an empty page). A *short* page does NOT end the walk: the core may return fewer
+//! rows than the limit and still have more.
 
 use std::collections::VecDeque;
 use std::future::{Future, IntoFuture};
@@ -48,6 +49,7 @@ fn query_pairs(params: &Map<String, Value>) -> Vec<(String, String)> {
 /// }
 /// # Ok(()) }
 /// ```
+#[must_use = "a pager requests nothing until it is awaited, streamed or collected"]
 pub struct Pager<Tr, T> {
     transport: Tr,
     route: &'static RouteSpec,
@@ -55,6 +57,7 @@ pub struct Pager<Tr, T> {
     limit: i64,
     offset: i64,
     prefer_payout_key: bool,
+    headers: Vec<(String, String)>,
     timeout: Option<Duration>,
     deadline: Option<Duration>,
     finished: bool,
@@ -87,6 +90,7 @@ impl<Tr, T> Pager<Tr, T> {
             limit: limit.unwrap_or(DEFAULT_PAGE_LIMIT),
             offset: offset.unwrap_or(0),
             prefer_payout_key: false,
+            headers: Vec::new(),
             timeout: None,
             deadline: None,
             finished: false,
@@ -124,9 +128,16 @@ impl<Tr, T> Pager<Tr, T> {
         self
     }
 
+    /// An extra header on every page of this walk, merged over the client-wide ones.
+    pub fn header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.headers.push((name.into(), value.into()));
+        self
+    }
+
     fn call_options(&self, limit: i64, offset: i64) -> CallOptions {
         let mut opts = CallOptions {
             prefer_payout_key: self.prefer_payout_key,
+            headers: self.headers.clone(),
             timeout: self.timeout,
             deadline: self.deadline,
             // A key per page would be wrong on both sides: the core would replay page 1 forever.
@@ -222,6 +233,7 @@ type PageFuture<T> =
     Pin<Box<dyn Future<Output = (Pager<Transport, T>, Result<Option<Page<T>>>)> + Send>>;
 
 /// A [`Stream`](futures_core::Stream) of items across pages.
+#[must_use = "a stream fetches nothing until it is polled"]
 pub struct ItemStream<T> {
     pager: Option<Pager<Transport, T>>,
     pending: Option<PageFuture<T>>,

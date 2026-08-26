@@ -62,10 +62,20 @@
 //!
 //! - `reqwest-client` *(default)* — the async client over `reqwest` with rustls.
 //! - `blocking` — a synchronous [`blocking::Client`] over the same pure core.
+//! - `native-roots` — also trust the OS certificate store (a private CA, a TLS-inspecting proxy).
+//!   Without it the default client trusts the bundled webpki roots only.
 //!
-//! MSRV 1.86 (the SDK's own code builds on 1.75; the floor comes from the dependency tree).
+//! # Minimum supported Rust version
+//!
+//! **1.86**, checked in CI on exactly that toolchain. The floor comes from the dependency tree,
+//! not from the SDK's own code. Bumping it is a minor-version change.
 
 #![forbid(unsafe_code)]
+// With no client feature there is no `Client` to construct the resource namespaces or resolve a
+// configuration, so those private constructors look dead. They are not: `reqwest-client` (the
+// default) and `blocking` both use them. The pure core, the models and `webhooks` stay usable
+// on their own, which is what `--no-default-features` is for.
+#![cfg_attr(not(feature = "reqwest-client"), allow(dead_code))]
 // The error carries the gateway's whole envelope (code, message, request id, field) by value,
 // because that is what callers match on. Boxing it to satisfy `result_large_err` would put an
 // allocation on every failure path and an extra deref in every `match err.code()`.
@@ -103,10 +113,12 @@ pub use crate::core::pagination::{ItemStream, Pager};
 pub use crate::core::retry::RetryOptions;
 pub use crate::core::signing::{canonical_string, sign_request, sign_webhook, SignInput};
 pub use crate::core::transport::Transport;
-pub use resources::{FileBuilder, FileResult, Lookup, PaymentLookup, PayoutLookup, RequestBuilder};
+pub use resources::{
+    FileBuilder, FileResult, IdRef, Lookup, PageParams, PaymentLookup, PayoutLookup, RequestBuilder,
+};
 pub use webhooks::{
-    is_stale_event, is_test_event, parse_webhook, verify_webhook, verify_webhook_delivery,
-    VerifyOptions, WebhookDeliveryInfo,
+    is_known_event, is_stale_event, is_test_event, parse_webhook, verify_webhook,
+    verify_webhook_delivery, VerifyOptions, WebhookDeliveryInfo,
 };
 
 #[cfg(feature = "blocking")]

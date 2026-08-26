@@ -9,6 +9,9 @@
 //! The test onboards its own merchant, takes a sandbox key and walks the journey, so it needs no
 //! fixtures and leaves no shared state behind.
 
+// A `Client` only exists with an HTTP backend feature on.
+#![cfg(feature = "reqwest-client")]
+
 mod support;
 
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -18,6 +21,7 @@ use oblodai::contract::requests::{
     SandboxDepositRequest, SandboxFaucetRequest,
 };
 use oblodai::helpers::is_payment_paid;
+use oblodai::resources::PageParams;
 use oblodai::{Client, ErrorKind, Lookup};
 
 const ADDRESS: &str = "TQrY8bkbpXKPt2LZbU8jqfnpFbUSF15sbx";
@@ -119,7 +123,7 @@ async fn live_sandbox_journey() {
     // A signed GET with a query string — the signature covers path + query.
     let hooks = client
         .sandbox()
-        .webhooks()
+        .webhooks(PageParams::default())
         .limit(5)
         .offset(0)
         .await

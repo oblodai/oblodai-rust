@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use super::engine::{CallOptions, Core, RawResponse, Step};
 use super::envelope::{decode_envelope, decode_result};
-use super::http::{HttpBackend, HttpRequest};
+use super::http::{HttpBackend, HttpRequest, MAX_FILE_BODY_BYTES, MAX_JSON_BODY_BYTES};
 use crate::contract::types::RouteSpec;
 use crate::error::{Error, Result};
 
@@ -45,7 +45,7 @@ impl Transport {
     ) -> Result<RawResponse> {
         let mut st = self.core.prepare(route, opts)?;
         loop {
-            let req = self.core.build(&st)?;
+            let req = self.core.build(&mut st)?;
             let outcome = self
                 .backend
                 .send(HttpRequest {
@@ -54,6 +54,7 @@ impl Transport {
                     headers: req.headers,
                     body: req.body,
                     timeout: st.next_timeout(),
+                    max_body_bytes: body_cap(route),
                 })
                 .await;
             let step = match outcome {
@@ -84,6 +85,15 @@ impl Transport {
         opts: CallOptions,
     ) -> Result<T> {
         decode_result(self.call_value(route, opts).await?, route.key)
+    }
+}
+
+/// How much of an answer the SDK is willing to hold: documents are large, envelopes are not.
+fn body_cap(route: &RouteSpec) -> usize {
+    if route.bare {
+        MAX_FILE_BODY_BYTES
+    } else {
+        MAX_JSON_BODY_BYTES
     }
 }
 
@@ -141,13 +151,14 @@ impl BlockingTransport {
     pub fn execute(&self, route: &'static RouteSpec, opts: CallOptions) -> Result<RawResponse> {
         let mut st = self.core.prepare(route, opts)?;
         loop {
-            let req = self.core.build(&st)?;
+            let req = self.core.build(&mut st)?;
             let outcome = self.backend.send(HttpRequest {
                 url: req.url,
                 method: req.method,
                 headers: req.headers,
                 body: req.body,
                 timeout: st.next_timeout(),
+                max_body_bytes: body_cap(route),
             });
             let step = match outcome {
                 Ok(raw) => self.core.on_response(&mut st, raw)?,

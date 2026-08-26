@@ -1,5 +1,9 @@
 //! Webhook verification, against real signed deliveries and against the rules.
 
+// The SDK's error carries the gateway's whole envelope by value, exactly as callers match on it;
+// boxing it here would only make the test disagree with the crate it exercises.
+#![allow(clippy::result_large_err)]
+
 mod support;
 
 use oblodai::webhooks::{
@@ -61,9 +65,9 @@ fn verifies_every_recorded_delivery() {
             "{event_name}"
         );
         if is_test {
-            assert_eq!(delivery.event.sequence(), 0, "{event_name}");
+            assert_eq!(delivery.event.sequence(), Some(0), "{event_name}");
         } else {
-            assert!(delivery.event.sequence() > 0, "{event_name}");
+            assert!(delivery.event.sequence().unwrap_or(0) > 0, "{event_name}");
         }
 
         // The same bytes under a different secret must not verify.
@@ -289,7 +293,7 @@ fn a_rehearsal_is_recognised_from_either_the_header_or_the_body() {
 fn parses_the_discriminated_union_and_detects_stale_sequences() {
     let event = parse_webhook(&body()).unwrap();
     assert!(matches!(event, WebhookEvent::Payment(_)));
-    assert_eq!(event.sequence(), 7);
+    assert_eq!(event.sequence(), Some(7));
     assert!(
         is_stale_event(&event, Some(7)),
         "the same sequence is not newer"
@@ -300,15 +304,43 @@ fn parses_the_discriminated_union_and_detects_stale_sequences() {
 }
 
 #[test]
-fn refuses_a_body_that_is_not_an_event() {
-    assert_eq!(
-        parse_webhook(br#"{"type":"alien","uuid":"x"}"#)
-            .unwrap_err()
-            .code(),
-        "webhook.bad_signature"
-    );
-    assert!(parse_webhook(b"not json").is_err());
-    assert!(parse_webhook(br#"{"uuid":"x"}"#).is_err());
+fn an_unknown_event_type_is_kept_not_refused() {
+    // A `type` this snapshot does not model must never make a receiver reject an authentic
+    // delivery: it arrives as `Other` with the body intact, and the helpers keep working.
+    let event = parse_webhook(br#"{"type":"alien","uuid":"x","sequence":9,"test":true}"#)
+        .expect("an unknown event type is data, not an error");
+    assert!(matches!(event, oblodai::WebhookEvent::Other(_)));
+    assert_eq!(event.event_kind(), "alien");
+    assert_eq!(event.uuid(), "x");
+    assert_eq!(event.sequence(), Some(9));
+    assert!(event.is_test());
+    assert!(is_test_event(&event));
+    assert!(is_stale_event(&event, Some(9)));
+    assert!(!is_stale_event(&event, Some(8)));
+    assert!(event.raw().is_some());
+}
+
+#[test]
+fn an_unreadable_body_is_a_contract_error_not_a_signature_failure() {
+    // A 401 answer to an authentic delivery makes the gateway retry it for ~26 h. Anything that
+    // verified but cannot be read is `webhook.bad_payload` in the contract family instead.
+    for body in [
+        &b"not json"[..],
+        br#"{"uuid":"x"}"#,                              // no `type`
+        br#"{"type":42}"#,                               // `type` is not a string
+        br#"{"type":"payment","uuid":{"nested":true}}"#, // known type, wrong field shape
+    ] {
+        let err = parse_webhook(body).unwrap_err();
+        assert_eq!(err.code(), "webhook.bad_payload", "{body:?}");
+        assert_eq!(err.kind(), oblodai::ErrorKind::Contract, "{body:?}");
+    }
+}
+
+#[test]
+fn an_event_without_a_sequence_is_never_stale() {
+    let event = parse_webhook(br#"{"type":"alien","uuid":"x"}"#).unwrap();
+    assert_eq!(event.sequence(), None);
+    assert!(!is_stale_event(&event, Some(1_000_000)));
 }
 
 #[test]
@@ -318,4 +350,98 @@ fn a_non_integer_timestamp_header_is_refused() {
     headers.insert("x-webhook-signature", "aa");
     let err = verify_webhook(&body(), &headers, &VerifyOptions::new("whsec")).unwrap_err();
     assert_eq!(err.code(), "webhook.bad_signature");
+}
+
+// --- configuration and ordering ---------------------------------------------------------------
+
+/// An empty secret would compute an HMAC with the empty key and happily "verify" a delivery an
+/// attacker signed the same way. It has to be refused before any crypto runs.
+#[test]
+fn an_empty_secret_is_a_config_error_not_a_verification_attempt() {
+    let err = verify_webhook(&body(), &headers_for("whsec"), &VerifyOptions::new("")).unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::Config);
+    assert_eq!(err.field(), Some("secret"));
+
+    let options = VerifyOptions::new("whsec").previous_secret("");
+    let err = verify_webhook(&body(), &headers_for("whsec"), &options).unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::Config);
+    assert_eq!(err.field(), Some("previous_secret"));
+}
+
+#[test]
+fn a_negative_tolerance_is_a_config_error_not_a_disabled_check() {
+    let options = VerifyOptions::new("whsec").tolerance_seconds(-1).now(TS);
+    let err = verify_webhook(&body(), &headers_for("whsec"), &options).unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::Config);
+    assert_eq!(err.field(), Some("tolerance_seconds"));
+}
+
+/// The freshness window used to be checked before the MAC, so an unauthenticated caller could ask
+/// "is this timestamp inside your window?" and get an answer. The MAC comes first now.
+#[test]
+fn the_signature_is_checked_before_the_freshness_window() {
+    let mut headers = Headers::new();
+    headers.insert("x-webhook-timestamp", (TS - 100_000).to_string());
+    headers.insert("x-webhook-signature", "00".repeat(32));
+    let options = VerifyOptions::new("whsec").now(TS);
+    let err = verify_webhook(&body(), &headers, &options).unwrap_err();
+    assert_eq!(
+        err.code(),
+        "webhook.bad_signature",
+        "a forged delivery must not learn anything about the freshness window"
+    );
+
+    // The same stale timestamp WITH a valid signature is the one that reports staleness.
+    let mut headers = Headers::new();
+    headers.insert("x-webhook-timestamp", (TS - 100_000).to_string());
+    headers.insert(
+        "x-webhook-signature",
+        sign_webhook("whsec", TS - 100_000, &body()),
+    );
+    let err = verify_webhook(&body(), &headers, &options).unwrap_err();
+    assert_eq!(err.code(), "webhook.stale_timestamp");
+}
+
+#[test]
+fn a_signature_header_is_trimmed_and_case_insensitive_but_never_prefixed() {
+    let signature = sign_webhook("whsec", TS, &body());
+    let with = |value: String| {
+        let mut headers = Headers::new();
+        headers.insert("x-webhook-timestamp", TS.to_string());
+        headers.insert("x-webhook-signature", value);
+        verify_webhook(&body(), &headers, &VerifyOptions::new("whsec").now(TS))
+    };
+    assert!(
+        with(format!("  {signature}  ")).is_ok(),
+        "whitespace is tolerated"
+    );
+    assert!(
+        with(signature.to_uppercase()).is_ok(),
+        "upper-case hex is hex"
+    );
+    let err = with(format!("0x{signature}")).unwrap_err();
+    assert_eq!(err.code(), "webhook.bad_signature");
+    assert!(err.message().contains("0x"), "{}", err.message());
+}
+
+#[test]
+fn inserting_a_header_twice_replaces_it() {
+    let mut headers = Headers::new();
+    headers.insert("X-Webhook-Id", "first");
+    headers.insert("x-webhook-id", "second");
+    assert_eq!(headers.get("X-WEBHOOK-ID"), Some("second"));
+}
+
+#[test]
+fn is_known_event_tells_a_modelled_event_from_a_newer_one() {
+    use oblodai::webhooks::is_known_event;
+    let known = parse_webhook(&body()).unwrap();
+    assert!(is_known_event(&known));
+    assert!(known.is_known());
+    assert!(known.raw().is_none());
+
+    let newer = parse_webhook(br#"{"type":"settlement","uuid":"s1"}"#).unwrap();
+    assert!(!is_known_event(&newer));
+    assert!(!newer.is_known());
+    assert_eq!(newer.event_kind(), "settlement");
 }

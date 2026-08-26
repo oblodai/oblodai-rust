@@ -2,7 +2,8 @@
 
 use serde_json::json;
 
-use super::base::{Call, PayoutLookup, RequestBuilder};
+use super::base::{Call, RequestBuilder};
+use super::refs::{IdRef, PayoutLookup};
 use crate::contract::models::{
     BatchElement, BatchSubmitted, Payout, PayoutCalculation, PayoutFeeConfig, PayoutValidation,
     RefundFeeConfig, ServiceMethod,
@@ -28,8 +29,13 @@ impl<Tr: Clone> Payouts<Tr> {
     }
 
     /// `POST /v1/payout` — create and (for API keys) auto-approve a payout. Idempotent by
-    /// `order_id` and by `Idempotency-Key`. Errors worth handling: `payout.insufficient_funds`
-    /// (retryable), `payout.funds_maturing`, `payout.bad_address`, `payout.memo_required`.
+    /// `order_id` and by `Idempotency-Key`. **Payout key.**
+    ///
+    /// Codes to branch on: `payout.insufficient_funds` (retryable — top up and repeat with the
+    /// SAME key), `payout.funds_maturing` (retryable — deposits not mature yet),
+    /// `payout.bad_address`, `payout.address_network_mismatch`, `payout.memo_required`,
+    /// `payout.amount_below_fee`, `payout.frozen`, `payout.order_id_required`,
+    /// `idempotency.key_reused`, `merchant.wrong_key_kind` (a payment key on a payout route).
     pub fn create(&self, params: PayoutRequest) -> RequestBuilder<Tr, Payout> {
         RequestBuilder::new(
             self.transport.clone(),
@@ -75,20 +81,25 @@ impl<Tr: Clone> Payouts<Tr> {
 
     /// `POST /v1/payout/cancel` — cancel while not yet broadcast (pending/approved/awaiting_cosign);
     /// 409 `payout.not_pending` after.
-    pub fn cancel(&self, uuid: impl Into<String>) -> RequestBuilder<Tr, Payout> {
+    pub fn cancel(&self, payout: impl Into<IdRef>) -> RequestBuilder<Tr, Payout> {
         RequestBuilder::new(
             self.transport.clone(),
             &routes::POST_V1_PAYOUT_CANCEL,
-            Call::new().json(json!({ "uuid": uuid.into() })).done(),
+            Call::new()
+                .json(json!({ "uuid": payout.into().into_string() }))
+                .done(),
         )
     }
 
-    /// `POST /v1/payout/approve` — approve a payout awaiting manual approval.
-    pub fn approve(&self, uuid: impl Into<String>) -> RequestBuilder<Tr, Payout> {
+    /// `POST /v1/payout/approve` — approve a payout awaiting manual approval. **Payout key.**
+    /// Codes to branch on: `payout.not_found`, `payout.bad_state`, `payout.approver_is_creator`.
+    pub fn approve(&self, payout: impl Into<IdRef>) -> RequestBuilder<Tr, Payout> {
         RequestBuilder::new(
             self.transport.clone(),
             &routes::POST_V1_PAYOUT_APPROVE,
-            Call::new().json(json!({ "uuid": uuid.into() })).done(),
+            Call::new()
+                .json(json!({ "uuid": payout.into().into_string() }))
+                .done(),
         )
     }
 
@@ -106,8 +117,12 @@ impl<Tr: Clone> Payouts<Tr> {
         self.history(params)
     }
 
-    /// `POST /v1/payout/mass` — SYNCHRONOUS batch (≤100): each element reports its own outcome in
-    /// the response.
+    /// `POST /v1/payout/mass` — SYNCHRONOUS batch (**≤ 100**): each element reports its own
+    /// outcome, so a 200 can still contain failures — check every `items[].ok`. **Payout key.**
+    ///
+    /// Call-level codes to branch on: `payout.batch_too_large` (> 100), `payout.empty_batch`,
+    /// `payout.insufficient_funds` (retryable), `payout.frozen`, `merchant.wrong_key_kind`.
+    /// Per-element failures use the same vocabulary as `create`.
     pub fn mass(
         &self,
         params: PayoutMassRequest,
@@ -119,8 +134,11 @@ impl<Tr: Clone> Payouts<Tr> {
         )
     }
 
-    /// `POST /v1/payout/batch` — ASYNCHRONOUS batch (≤5000): returns a ticket; poll
-    /// `batches().info()`. `order_id` is required on every item.
+    /// `POST /v1/payout/batch` — ASYNCHRONOUS batch (**≤ 5000**): returns a ticket; poll
+    /// `batches().info()`. `order_id` is required on every item. **Payout key.**
+    ///
+    /// Codes to branch on: `batch.too_large`, `batch.empty`, `batch.order_id_required`,
+    /// `batch.duplicate_order_id`, `batch.disabled`, `merchant.wrong_key_kind`.
     pub fn batch(&self, params: PayoutBatchRequest) -> RequestBuilder<Tr, BatchSubmitted> {
         RequestBuilder::new(
             self.transport.clone(),
@@ -147,7 +165,7 @@ impl<Tr: Clone> Payouts<Tr> {
         )
     }
 
-    /// `POST /v1/payout/fee-config/set` — who bears the network fee by default.
+    /// `POST /v1/payout/fee-config/set` — who bears the network fee by default. **Payout key.**
     pub fn set_fee_config(
         &self,
         params: PayoutFeeConfigSetRequest,
@@ -168,7 +186,7 @@ impl<Tr: Clone> Payouts<Tr> {
         )
     }
 
-    /// `POST /v1/payout/refund-fee-config/set` — who bears the fee on refunds.
+    /// `POST /v1/payout/refund-fee-config/set` — who bears the fee on refunds. **Payout key.**
     pub fn set_refund_fee_config(
         &self,
         params: PayoutRefundFeeConfigSetRequest,

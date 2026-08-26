@@ -1,4 +1,4 @@
-// GENERATED FILE - do not edit. Source: contract/contract.json (core bfca971cce71).
+// GENERATED FILE - do not edit. Source: contract/contract.json (core 7ec04293c426).
 // Regenerate with: python3 scripts/codegen.py
 
 #![allow(clippy::struct_excessive_bools)]

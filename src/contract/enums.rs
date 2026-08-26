@@ -1,4 +1,4 @@
-// GENERATED FILE - do not edit. Source: contract/contract.json (core bfca971cce71).
+// GENERATED FILE - do not edit. Source: contract/contract.json (core 7ec04293c426).
 // Regenerate with: python3 scripts/codegen.py
 
 /// Invoice lifecycle, as `payment.status` carries it.
@@ -1095,6 +1095,8 @@ pub const ERROR_CODES: &[&str] = &[
     "autopilot.bad_usd",
     "autopilot.energy_no_free_trx",
     "autopilot.energy_too_large",
+    "autopilot.freeze_unknown",
+    "autopilot.frozen",
     "autopilot.gas_deep_deficit",
     "autopilot.gas_target_below_min",
     "autopilot.usd_too_large",

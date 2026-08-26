@@ -1,6 +1,7 @@
 //! Invoices: create, look up, cancel, list, and the payer-facing checkout endpoints. Payment key.
 
-use super::base::{Call, PaymentLookup, RequestBuilder};
+use super::base::{Call, RequestBuilder};
+use super::refs::PaymentLookup;
 use crate::contract::models::{
     BatchSubmitted, EmailSent, OkResult, Payment, PublicPayment, QrCode, ServiceMethod,
 };
@@ -23,6 +24,11 @@ impl<Tr: Clone> Payments<Tr> {
     }
 
     /// `POST /v1/payment` — create an invoice. Idempotent by `order_id` and by `Idempotency-Key`.
+    /// **Payment key.**
+    ///
+    /// Codes to branch on: `invoice.bad_price`, `payment.bad_amount`, `payment.below_minimum`,
+    /// `payment.unsupported_network`, `payment.network_required`, `accepted.no_network`,
+    /// `request.unknown_currency`, `idempotency.key_reused`, `request.rate_limited`.
     pub fn create(&self, params: PaymentRequest) -> RequestBuilder<Tr, Payment> {
         RequestBuilder::new(
             self.transport.clone(),

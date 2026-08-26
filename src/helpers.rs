@@ -17,6 +17,29 @@ use crate::contract::models::Money;
 #[error("not a decimal amount: \"{0}\"")]
 pub struct AmountError(pub String);
 
+impl AmountError {
+    /// The SDK error code this maps to, the same string in every Oblodai SDK.
+    pub const CODE: &'static str = "sdk.bad_amount";
+
+    /// The offending input.
+    pub fn value(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<AmountError> for crate::Error {
+    /// A bad amount is a caller mistake caught before anything is sent, so it becomes a
+    /// [`ErrorKind::Config`](crate::ErrorKind::Config) error with code `sdk.bad_amount`.
+    fn from(err: AmountError) -> Self {
+        crate::Error::config(AmountError::CODE, err.to_string(), Some("amount"))
+    }
+}
+
+/// Longest string these helpers accept as an amount. Every real amount is far shorter (the widest
+/// asset on the gateway has 18 decimals); the bound exists so hostile input costs nothing and can
+/// never reach a formatting or allocation edge.
+pub const MAX_AMOUNT_LEN: usize = 64;
+
 struct Parts {
     negative: bool,
     integer: String,
@@ -25,6 +48,9 @@ struct Parts {
 
 fn parts(amount: &str) -> Result<Parts, AmountError> {
     let bad = || AmountError(amount.to_string());
+    if amount.len() > MAX_AMOUNT_LEN {
+        return Err(bad());
+    }
     let negative = amount.starts_with('-');
     let body = if negative { &amount[1..] } else { amount };
     if body.is_empty() {
@@ -50,7 +76,10 @@ fn parts(amount: &str) -> Result<Parts, AmountError> {
 fn scaled(amount: &str, scale: usize) -> Result<i128, AmountError> {
     let p = parts(amount)?;
     let mut digits = p.integer;
-    digits.push_str(&format!("{:0<width$}", p.fraction, width = scale));
+    digits.push_str(&p.fraction);
+    // Right-pad to the common scale. `"0".repeat` rather than a format width: the width argument
+    // is a `u16`, so a long fraction would panic instead of returning `AmountError`.
+    digits.push_str(&"0".repeat(scale.saturating_sub(p.fraction.len())));
     let value: i128 = digits
         .parse()
         .map_err(|_| AmountError(amount.to_string()))?;
@@ -77,7 +106,8 @@ fn unscale(value: i128, scale: usize) -> Money {
     Money(out)
 }
 
-/// Compare two decimal amounts exactly.
+/// Compare two decimal amounts exactly. This is the only correct way to order [`Money`]: the type
+/// deliberately has no `Ord`, because `"9.00"` sorts before `"10.00"` as a string.
 pub fn compare_amounts(a: &str, b: &str) -> Result<std::cmp::Ordering, AmountError> {
     let scale = scale_of(a, b)?;
     Ok(scaled(a, scale)?.cmp(&scaled(b, scale)?))

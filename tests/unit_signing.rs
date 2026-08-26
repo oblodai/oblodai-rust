@@ -56,7 +56,9 @@ fn the_idempotency_slot_is_empty_not_absent() {
 
 #[test]
 fn signs_the_body_bytes_so_non_ascii_survives() {
-    let body = r#"{"additional_data":"тест"}"#;
+    // Deliberately non-ASCII: the signature covers the body BYTES, so a multi-byte character must
+    // hash identically whether it arrives as a `&str` or as a `Vec<u8>`.
+    let body = r#"{"additional_data":"café 日本語 🚀"}"#;
     let input = SignInput {
         ts: 5,
         method: "POST",

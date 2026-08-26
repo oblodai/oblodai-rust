@@ -11,12 +11,16 @@
 //! a subsystem the stand may lack (documents, email) are probed and skipped when the core reports
 //! them disabled.
 
+// A `Client` only exists with an HTTP backend feature on.
+#![cfg(feature = "reqwest-client")]
+
 mod support;
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use futures_util::StreamExt;
 use oblodai::contract::requests::*;
+use oblodai::resources::{PageParams, SignedLinkQuery};
 use oblodai::{Client, ErrorKind, Result};
 
 const ADDRESS: &str = "TQrY8bkbpXKPt2LZbU8jqfnpFbUSF15sbx";
@@ -568,7 +572,7 @@ async fn live_sweep() {
     assert!(
         client
             .payment_links()
-            .get(&created.link_id, Some(5), Some(0))
+            .get(&created.link_id, PageParams::default().limit(5).offset(0))
             .await
             .unwrap()
             .active
@@ -835,7 +839,12 @@ async fn live_sweep() {
             .await,
         "webhooks.test_legacy",
     );
-    let inspector = client.sandbox().webhooks().limit(5).await.unwrap();
+    let inspector = client
+        .sandbox()
+        .webhooks(PageParams::default())
+        .limit(5)
+        .await
+        .unwrap();
     if let Some(terminal) = inspector.items.iter().find(|d| {
         matches!(
             d.status,
@@ -967,7 +976,7 @@ async fn live_sweep() {
             .unwrap_or_default();
         let document = public
             .documents()
-            .download(segments[2], segments[3], exp, sig, Default::default())
+            .download(segments[2], segments[3], SignedLinkQuery::new(exp, sig))
             .await
             .unwrap();
         assert!(document.content_type.contains("pdf"));

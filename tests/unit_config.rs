@@ -1,5 +1,8 @@
 //! Configuration resolution, and the money/status helpers every integration touches.
 
+// A `Client` only exists with an HTTP backend feature on.
+#![cfg(feature = "reqwest-client")]
+
 mod support;
 
 use std::cmp::Ordering;

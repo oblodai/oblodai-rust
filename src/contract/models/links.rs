@@ -4,7 +4,11 @@ use crate::contract::enums::{AmountMode, FeeBearer, Network, PaymentStatus, Payo
 use crate::contract::models::common::{Money, Timestamp};
 
 /// Payout link (cheque) as `/v1/payout/link`, `/info`, `/list`, `/cancel` and batch elements render it.
-#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+///
+/// `Debug` never prints `claim_token`, `claim_url` (it embeds the token) or `passcode`: whoever
+/// holds them can take the money. Serialization keeps them — they are shown once and you have to
+/// be able to store and deliver them.
+#[derive(Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct PayoutLink {
     pub link_id: String,
     pub status: PayoutLinkStatus,
@@ -43,6 +47,35 @@ pub struct PayoutLink {
     /// The generated passcode, shown once on create when `passcode: "auto"` was requested.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub passcode: Option<String>,
+}
+
+impl std::fmt::Debug for PayoutLink {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PayoutLink")
+            .field("link_id", &self.link_id)
+            .field("status", &self.status)
+            .field("amount", &self.amount)
+            .field("currency", &self.currency)
+            .field("network", &self.network)
+            .field("commission", &self.commission)
+            .field("payer_amount", &self.payer_amount)
+            .field("fee_bearer", &self.fee_bearer)
+            .field("fee_type", &self.fee_type)
+            .field("reference", &self.reference)
+            .field("title", &self.title)
+            .field("note", &self.note)
+            .field("passcode_protected", &self.passcode_protected)
+            .field("expires_at", &self.expires_at)
+            .field("created_at", &self.created_at)
+            .field("claim_token", &super::common::redacted(&self.claim_token))
+            .field("claim_url", &super::common::redacted(&self.claim_url))
+            .field("batch_id", &self.batch_id)
+            .field("payout_id", &self.payout_id)
+            .field("claim_address", &self.claim_address)
+            .field("email", &self.email)
+            .field("passcode", &super::common::redacted(&self.passcode))
+            .finish()
+    }
 }
 
 /// `GET /v1/claim/{token}` — what the recipient sees before claiming.

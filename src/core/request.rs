@@ -6,8 +6,8 @@ use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
 use url::Url;
 
 use super::signing::{
-    sign_request, SignInput, HEADER_IDEMPOTENCY_KEY, HEADER_PUBLIC_ID, HEADER_SIGNATURE,
-    HEADER_TIMESTAMP,
+    sign_request, SignInput, HEADER_ADMIN_TOKEN, HEADER_IDEMPOTENCY_KEY, HEADER_PUBLIC_ID,
+    HEADER_SIGNATURE, HEADER_TIMESTAMP,
 };
 use crate::contract::types::{Method, RouteAuth, RouteSpec};
 use crate::error::{Error, Result};
@@ -41,6 +41,9 @@ pub struct BuildInput<'a> {
     /// Unix seconds; signed into `X-Timestamp`.
     pub ts: i64,
     pub user_agent: &'a str,
+    /// Admin token of a self-hosted gateway. Sent on `onboard` routes and nowhere else, whatever
+    /// the caller configured.
+    pub admin_token: Option<&'a str>,
     pub extra_headers: &'a [(String, String)],
 }
 
@@ -55,16 +58,51 @@ pub struct BuiltRequest {
     pub request_uri: String,
 }
 
-/// Headers the SDK owns; a caller-supplied header with one of these names is dropped.
-const RESERVED_HEADERS: [&str; 7] = [
+/// Headers the SDK owns; a caller-supplied header with one of these names is dropped, compared
+/// case-insensitively. `Accept`, `User-Agent` and `X-Admin-Token` are here too: `reqwest` (like
+/// most clients) *appends* headers, so leaving them out put two `Accept` lines on the wire and let
+/// a caller header shadow the configured admin token.
+const RESERVED_HEADERS: [&str; 10] = [
     "x-public-id",
     "x-signature",
     "x-timestamp",
+    "x-admin-token",
     "idempotency-key",
     "content-type",
     "content-length",
     "host",
+    "accept",
+    "user-agent",
 ];
+
+/// Reject a caller-supplied header before it reaches the socket.
+///
+/// A CR or LF in a value is request splitting; a non-ASCII byte is not representable in an HTTP/1
+/// field and different clients mangle it differently. Both are configuration mistakes, so they are
+/// refused up front rather than silently dropped.
+fn assert_header(name: &str, value: &str) -> Result<()> {
+    let bad = |what: &str, field: &str| {
+        Err(Error::config(
+            "sdk.bad_header",
+            format!("header {name:?}: {what}"),
+            Some(field),
+        ))
+    };
+    if name.is_empty()
+        || !name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b))
+    {
+        return bad("name must be a non-empty HTTP token", "header_name");
+    }
+    if value.bytes().any(|b| b == b'\r' || b == b'\n') {
+        return bad("value must not contain CR or LF", "header_value");
+    }
+    if !value.is_ascii() {
+        return bad("value must be ASCII", "header_value");
+    }
+    Ok(())
+}
 
 /// `encodeURIComponent`: everything but ASCII alphanumerics and `-_.!~*'()`.
 const COMPONENT: &AsciiSet = &NON_ALPHANUMERIC
@@ -94,8 +132,19 @@ pub fn build_request(input: BuildInput<'_>) -> Result<BuiltRequest> {
 
     let mut headers: Vec<(String, String)> = Vec::new();
     for (k, v) in input.extra_headers {
-        if !RESERVED_HEADERS.contains(&k.to_ascii_lowercase().as_str()) {
-            headers.push((k.clone(), v.clone()));
+        assert_header(k, v)?;
+        let lower = k.to_ascii_lowercase();
+        if RESERVED_HEADERS.contains(&lower.as_str()) {
+            continue;
+        }
+        // Deduplicate the caller's own headers too: the backend appends, so two entries with the
+        // same name would both go on the wire. The last one given wins, as a map would.
+        match headers
+            .iter_mut()
+            .find(|(name, _)| name.eq_ignore_ascii_case(k))
+        {
+            Some(slot) => slot.1 = v.clone(),
+            None => headers.push((k.clone(), v.clone())),
         }
     }
     headers.push(("Accept".into(), "application/json".into()));
@@ -106,6 +155,11 @@ pub fn build_request(input: BuildInput<'_>) -> Result<BuiltRequest> {
     }
     if let Some(key) = input.idempotency_key {
         headers.push((HEADER_IDEMPOTENCY_KEY.into(), key.into()));
+    }
+    if route.auth == RouteAuth::Onboard {
+        if let Some(token) = input.admin_token {
+            headers.push((HEADER_ADMIN_TOKEN.into(), token.into()));
+        }
     }
 
     if route.auth != RouteAuth::Public && route.auth != RouteAuth::Onboard {
