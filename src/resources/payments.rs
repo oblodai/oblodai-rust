@@ -1,4 +1,4 @@
-//! Invoices: create, look up, cancel, list, and the payer-facing checkout endpoints. Payment key.
+//! Invoices: create, look up, cancel, list, and the payer-facing checkout endpoints.
 
 use super::base::{Call, RequestBuilder};
 use super::refs::PaymentLookup;
@@ -24,7 +24,6 @@ impl<Tr: Clone> Payments<Tr> {
     }
 
     /// `POST /v1/payment` — create an invoice. Idempotent by `order_id` and by `Idempotency-Key`.
-    /// **Payment key.**
     ///
     /// Codes to branch on: `invoice.bad_price`, `payment.bad_amount`, `payment.below_minimum`,
     /// `payment.unsupported_network`, `payment.network_required`, `accepted.no_network`,

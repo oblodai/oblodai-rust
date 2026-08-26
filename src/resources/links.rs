@@ -140,7 +140,7 @@ impl<Tr: Clone> PayoutLinks<Tr> {
     }
 }
 
-/// Reusable payment links (tip jars, price tags): each checkout spawns an invoice. Payment key.
+/// Reusable payment links (tip jars, price tags): each checkout spawns an invoice.
 #[derive(Clone, Debug)]
 pub struct PaymentLinks<Tr> {
     transport: Tr,
@@ -151,7 +151,7 @@ impl<Tr: Clone> PaymentLinks<Tr> {
         Self { transport }
     }
 
-    /// `POST /v1/payment/link` — mint a reusable link. **Payment key.**
+    /// `POST /v1/payment/link` — mint a reusable link.
     ///
     /// Codes to branch on: `paylink.bad_mode`, `paylink.amount_required`, `paylink.bad_amount`,
     /// `paylink.bad_bounds`, `paylink.bad_range`, `paylink.order_id_invalid`,
