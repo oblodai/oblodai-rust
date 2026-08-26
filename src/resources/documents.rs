@@ -2,8 +2,8 @@
 //!
 //! The file-returning methods answer with [`FileResult`](crate::resources::FileResult) — the bytes,
 //! the content type and the filename. `create_job` and `job_info` are ordinary JSON routes and
-//! return [`DocumentJob`]; only `job_file` hands back the finished bytes. Payment key, except
-//! `download`, which is public.
+//! return [`DocumentJob`]; only `job_file` hands back the finished bytes. Every route is signed with the
+//! API key except `download`, which is public.
 
 use serde_json::json;
 
