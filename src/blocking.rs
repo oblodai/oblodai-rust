@@ -20,7 +20,7 @@ use crate::resources::{
 /// ```no_run
 /// # use oblodai::{blocking::Client, contract::requests::PaymentRequest};
 /// # fn demo() -> oblodai::Result<()> {
-/// let client = Client::new("pk_live_…", "…")?;
+/// let client = Client::new("oblodai_…", "oblodai_live_…")?;
 /// let invoice = client
 ///     .payments()
 ///     .create(PaymentRequest { amount: "25".into(), currency: "USDT".into(), ..Default::default() })

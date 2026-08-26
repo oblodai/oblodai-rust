@@ -36,15 +36,16 @@
 //!
 //! # Two key kinds
 //!
-//! The gateway issues a payment key (`pk_…`) and a payout key (`wk_…`). Money-out routes need the
-//! payout one. Configure both and the SDK picks the right pair per route:
+//! A live key is a unified API key (`oblodai_<hex>` plus an `oblodai_live_<hex>` secret); the legacy
+//! kinds are a payment key (`oblodai_pk_<hex>`) and a payout key (`oblodai_wk_<hex>`), and money-out
+//! routes need the payout one. Configure both and the SDK picks the right pair per route:
 //!
 //! ```no_run
 //! # fn demo() -> oblodai::Result<()> {
 //! let client = oblodai::Client::builder()
-//!     .public_id("pk_live_…")
+//!     .public_id("oblodai_pk_…")
 //!     .secret("…")
-//!     .payout_public_id("wk_live_…")
+//!     .payout_public_id("oblodai_wk_…")
 //!     .payout_secret("…")
 //!     .build()?;
 //! # Ok(()) }

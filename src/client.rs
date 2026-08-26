@@ -16,7 +16,7 @@ use crate::resources::{
 /// ```no_run
 /// # use oblodai::{Client, contract::requests::PaymentRequest};
 /// # async fn demo() -> oblodai::Result<()> {
-/// let client = Client::new("pk_live_…", "…")?;
+/// let client = Client::new("oblodai_…", "oblodai_live_…")?;
 /// let invoice = client
 ///     .payments()
 ///     .create(PaymentRequest {
