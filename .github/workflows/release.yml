@@ -3,7 +3,7 @@
 name: Release
 on:
   push:
-    tags: ['v*']
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
 permissions:
   contents: read
 jobs:
@@ -12,6 +12,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      # A missing token must stop the release loudly, before anything is built or published.
+      - name: The publishing token is present
+        run: |
+          test -n "$CARGO_REGISTRY_TOKEN" \
+            || { echo "::error::CARGO_REGISTRY_TOKEN is not set; cannot publish to crates.io"; exit 1; }
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      # The same gates CI runs, on the exact commit being published.
+      - name: Formatting
+        run: cargo fmt --all --check
+      - name: Contract drift
+        run: python3 scripts/codegen.py --check
+      - name: Lints
+        run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Tests
+        run: cargo test --all-features
       - run: cargo publish --all-features
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

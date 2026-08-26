@@ -1,9 +1,16 @@
-//! Every Rust snippet in README.md, AGENTS.md and MIGRATION-1.3.md, compiled.
+//! Every Rust snippet in README.md, README.ru.md, AGENTS.md and MIGRATION-1.3.md, compiled.
 //!
-//! Documentation that does not compile is documentation that is wrong, and these three files are
-//! the first thing both a human and an LLM read. Each function below is one snippet, copied
-//! verbatim apart from the wrapper it needs (a signature, and stubs for the caller's own helpers).
-//! If a snippet changes, change it here too — the compiler is the reviewer.
+//! Documentation that does not compile is documentation that is wrong, and these files are the
+//! first thing both a human and an LLM read. Each function below holds one snippet between
+//! `// @snippet <name>` and `// @end` markers, copied verbatim apart from the wrapper it needs (a
+//! signature, and stubs for the caller's own helpers).
+//!
+//! Two tests keep the files honest without any copying by hand:
+//!
+//! * [`readme_snippets_match_this_file`] — the fenced `rust` blocks of README.md are, in order,
+//!   byte-identical to the marked snippets here once the wrapper's indent is removed.
+//! * [`russian_readme_carries_the_same_code`] — README.ru.md carries exactly the same code blocks,
+//!   in the same order, byte for byte. Translations drift; code must not.
 
 // A `Client` only exists with an HTTP backend feature on.
 #![cfg(feature = "blocking")]
@@ -13,35 +20,27 @@
 
 use std::time::Duration;
 
-use futures_util::StreamExt;
 use oblodai::contract::requests::{PaymentRequest, PayoutHistoryRequest, PayoutRequest};
-use oblodai::{Client, PayoutKind};
+use oblodai::{Client, Payment, PayoutKind};
 
 fn mark_order_paid(_order_id: Option<&str>) {}
 fn schedule_retry(_seconds: u64) {}
 
-// --- README: start in the sandbox -------------------------------------------------------------
+// --- README: installation / blocking client -----------------------------------------------------
 
-async fn readme_quickstart() -> oblodai::Result<()> {
-    let client = Client::from_env()?;
-
-    let invoice = client
-        .payments()
-        .create(PaymentRequest {
-            amount: "25".into(),
-            currency: "USDT".into(),
-            network: Some("tron".into()),
-            order_id: Some("order-1001".into()),
-            url_callback: Some("https://shop.example/oblodai/webhook".into()),
-            ..Default::default()
-        })
-        .await?;
-
-    println!("{} {} {}", invoice.url, invoice.address, invoice.status);
+fn readme_blocking(params: PaymentRequest) -> oblodai::Result<()> {
+    // @snippet readme_blocking
+    let client = oblodai::blocking::Client::from_env()?;
+    let invoice = client.payments().create(params).send()?;
+    for payout in client.payouts().history(Default::default()).iter() {
+        println!("{}", payout?.uuid);
+    }
+    // @end
+    let _ = invoice;
     Ok(())
 }
 
-// --- README: two keys ---------------------------------------------------------------------------
+// --- README: where to get keys ------------------------------------------------------------------
 
 fn readme_two_keys(
     public_id: &str,
@@ -49,19 +48,123 @@ fn readme_two_keys(
     payout_public_id: &str,
     payout_secret: &str,
 ) -> oblodai::Result<()> {
+    // @snippet readme_two_keys
     let client = oblodai::Client::builder()
         .public_id(public_id)
         .secret(secret)
         .payout_public_id(payout_public_id)
         .payout_secret(payout_secret)
         .build()?;
+    // @end
     let _ = client;
+    Ok(())
+}
+
+// --- README: quick start ------------------------------------------------------------------------
+
+async fn readme_quickstart() -> oblodai::Result<()> {
+    // @snippet readme_quickstart
+    use oblodai::contract::requests::PaymentRequest;
+    use oblodai::Client;
+
+    let client = Client::from_env()?;
+    let invoice = client
+        .payments()
+        .create(PaymentRequest {
+            amount: "25".into(),                 // amounts are decimal strings, never floats
+            currency: "USDT".into(),             // what you price in: a fiat or an asset
+            network: Some("tron".into()),        // omit to let the payer choose on the pay page
+            order_id: Some("order-1001".into()), // your reference; idempotent per order_id
+            url_callback: Some("https://shop.example/oblodai/webhook".into()),
+            ..Default::default()
+        })
+        .await?;
+    println!(
+        "pay at {} — {} {}",
+        invoice.url, invoice.address, invoice.status
+    );
+    // @end
+    Ok(())
+}
+
+async fn readme_payout(client: &Client) -> oblodai::Result<()> {
+    // @snippet readme_payout
+    use oblodai::contract::requests::PayoutRequest;
+
+    let payout = client
+        .payouts()
+        .create(PayoutRequest {
+            amount: "10".into(),
+            currency: "USDT".into(),
+            network: Some("tron".into()),
+            address: "TQrY8bkbpXKPt2LZbU8jqfnpFbUSF15sbx".into(),
+            order_id: "payout-1001".into(),
+            ..Default::default()
+        })
+        .idempotency_key("payout-1001") // makes the retry safe across restarts too
+        .await?;
+    println!("{} {}", payout.uuid, payout.status);
+    // @end
+    Ok(())
+}
+
+// --- README: sandbox / testing ------------------------------------------------------------------
+
+async fn readme_sandbox(client: &Client, invoice: Payment) -> oblodai::Result<()> {
+    // @snippet readme_sandbox
+    use oblodai::contract::requests::{
+        SandboxDepositRequest, SandboxFaucetRequest, TestWebhookPaymentRequest,
+    };
+    use oblodai::WebhookKind;
+
+    // test money to pay out from (payout key, `test_` keys only)
+    client
+        .sandbox()
+        .faucet(SandboxFaucetRequest {
+            amount: "1000".into(),
+            asset: "USDT".into(),
+            ..Default::default()
+        })
+        .await?;
+
+    // "pay" an invoice; repeat the same txid with more confirmations to walk the pending→paid path
+    client
+        .sandbox()
+        .deposit(SandboxDepositRequest {
+            invoice_id: invoice.uuid.clone(),
+            ..Default::default()
+        })
+        .await?;
+
+    // a rehearsal delivery: signed exactly like a live one, and marked `test: true`
+    client
+        .webhooks()
+        .test(
+            WebhookKind::Payment,
+            TestWebhookPaymentRequest {
+                url_callback: "https://shop.example/oblodai/webhook".into(),
+                ..Default::default()
+            },
+        )
+        .await?;
+
+    // what was delivered, with payloads — then a clean slate
+    let deliveries = client
+        .sandbox()
+        .webhooks(Default::default())
+        .all(None)
+        .await?;
+    client.sandbox().reset().await?;
+    // @end
     Ok(())
 }
 
 // --- README: lists ------------------------------------------------------------------------------
 
 async fn readme_lists(client: &Client) -> oblodai::Result<()> {
+    // @snippet readme_lists
+    use futures_util::StreamExt;
+
     // one page
     let page = client
         .payments()
@@ -85,24 +188,9 @@ async fn readme_lists(client: &Client) -> oblodai::Result<()> {
         })
         .all(Some(1000))
         .await?;
+    // @end
     let _ = refunds;
     Ok(())
-}
-
-// --- README: errors -----------------------------------------------------------------------------
-
-async fn readme_errors(client: &Client, params: PayoutRequest) -> oblodai::Result<oblodai::Payout> {
-    match client.payouts().create(params).await {
-        Ok(payout) => Ok(payout),
-        Err(err) => match err.code() {
-            // retryable — the balance may still arrive
-            "payout.insufficient_funds" | "payout.funds_maturing" => {
-                schedule_retry(err.retry_after().unwrap_or(60));
-                Err(err)
-            }
-            _ => Err(err), // the SDK already retried what was safe to retry
-        },
-    }
 }
 
 // --- README / AGENTS / MIGRATION: webhooks ------------------------------------------------------
@@ -112,6 +200,7 @@ fn readme_webhooks(
     raw_body: &[u8],
     secret: &str,
 ) -> oblodai::Result<()> {
+    // @snippet readme_webhooks
     use oblodai::webhooks::{verify_webhook_delivery, Headers, VerifyOptions};
 
     let headers = Headers::from_pairs(request_headers); // any (name, value) pairs
@@ -127,9 +216,11 @@ fn readme_webhooks(
         }
         _ => {}
     }
+    // @end
     Ok(())
 }
 
+/// AGENTS.md and MIGRATION-1.3.md carry the same call with their own line breaks.
 fn agents_webhooks(
     raw_body: &[u8],
     headers: Vec<(String, String)>,
@@ -145,21 +236,29 @@ fn agents_webhooks(
     Ok(())
 }
 
-// --- README: blocking client --------------------------------------------------------------------
+// --- README: errors -----------------------------------------------------------------------------
 
-fn readme_blocking(params: PaymentRequest) -> oblodai::Result<()> {
-    let client = oblodai::blocking::Client::from_env()?;
-    let invoice = client.payments().create(params).send()?;
-    for payout in client.payouts().history(Default::default()).iter() {
-        println!("{}", payout?.uuid);
+async fn readme_errors(client: &Client, params: PayoutRequest) -> oblodai::Result<oblodai::Payout> {
+    // @snippet readme_errors
+    match client.payouts().create(params).await {
+        Ok(payout) => Ok(payout),
+        Err(err) => match err.code() {
+            // retryable — the balance may still arrive
+            "payout.insufficient_funds" | "payout.funds_maturing" => {
+                schedule_retry(err.retry_after().unwrap_or(60));
+                Err(err)
+            }
+            _ => Err(err), // the SDK already retried what was safe to retry
+        },
     }
-    let _ = invoice;
-    Ok(())
+    // @end
 }
 
-// --- MIGRATION: per-call options ----------------------------------------------------------------
+// --- README / MIGRATION: per-call options -------------------------------------------------------
 
-async fn migration_per_call_options(client: &Client, params: PayoutRequest) -> oblodai::Result<()> {
+/// MIGRATION-1.3.md shows the same call with its own line breaks.
+async fn readme_per_call_options(client: &Client, params: PayoutRequest) -> oblodai::Result<()> {
+    // @snippet readme_per_call_options
     client
         .payouts()
         .create(params)
@@ -169,6 +268,7 @@ async fn migration_per_call_options(client: &Client, params: PayoutRequest) -> o
         .prefer_payout_key(true)
         .header("X-Request-Trace", "abc123") // this call only
         .await?;
+    // @end
     Ok(())
 }
 
@@ -176,12 +276,127 @@ async fn migration_per_call_options(client: &Client, params: PayoutRequest) -> o
 /// target rather than a dead module.
 #[test]
 fn every_documented_snippet_compiles() {
-    let _ = readme_quickstart;
+    let _ = readme_blocking;
     let _ = readme_two_keys;
+    let _ = readme_quickstart;
+    let _ = readme_payout;
+    let _ = readme_sandbox;
     let _ = readme_lists;
-    let _ = readme_errors;
     let _ = readme_webhooks;
     let _ = agents_webhooks;
-    let _ = readme_blocking;
-    let _ = migration_per_call_options;
+    let _ = readme_errors;
+    let _ = readme_per_call_options;
+}
+
+// --- the two files and this one, kept in step ---------------------------------------------------
+
+/// A fenced block of a markdown file: its info string and its body, verbatim.
+#[derive(Debug, PartialEq, Eq)]
+struct CodeBlock {
+    lang: String,
+    body: String,
+}
+
+fn code_blocks(markdown: &str) -> Vec<CodeBlock> {
+    let mut blocks = Vec::new();
+    let mut open: Option<CodeBlock> = None;
+    for line in markdown.lines() {
+        match (&mut open, line.strip_prefix("```")) {
+            // A fence inside an open block closes it; the info string of a closing fence is empty.
+            (Some(_), Some(_)) => blocks.push(open.take().expect("open block")),
+            (Some(block), None) => {
+                block.body.push_str(line);
+                block.body.push('\n');
+            }
+            (None, Some(info)) => {
+                open = Some(CodeBlock {
+                    lang: info.trim().to_string(),
+                    body: String::new(),
+                })
+            }
+            (None, None) => {}
+        }
+    }
+    assert!(open.is_none(), "unclosed code fence");
+    blocks
+}
+
+/// The marked snippets of this file, in source order, with the wrapper's four-space indent removed.
+fn marked_snippets(source: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let mut current: Option<(String, String)> = None;
+    for line in source.lines() {
+        let trimmed = line.trim_start();
+        if let Some(name) = trimmed.strip_prefix("// @snippet ") {
+            assert!(current.is_none(), "snippet {name} opened inside another");
+            current = Some((name.trim().to_string(), String::new()));
+        } else if trimmed == "// @end" {
+            out.push(current.take().expect("// @end without // @snippet"));
+        } else if let Some((name, body)) = &mut current {
+            let dedented = match line.is_empty() {
+                true => line,
+                false => line
+                    .strip_prefix("    ")
+                    .unwrap_or_else(|| panic!("snippet {name}: line is not indented: {line:?}")),
+            };
+            body.push_str(dedented);
+            body.push('\n');
+        }
+    }
+    assert!(current.is_none(), "unclosed snippet marker");
+    out
+}
+
+fn read(name: &str) -> String {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(name);
+    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+}
+
+/// Every `rust` block of README.md is one of the snippets compiled above, in the same order — so a
+/// snippet cannot be edited in the README without the compiler seeing the change.
+#[test]
+fn readme_snippets_match_this_file() {
+    let snippets = marked_snippets(include_str!("doc_snippets.rs"));
+    let readme: Vec<CodeBlock> = code_blocks(&read("README.md"))
+        .into_iter()
+        .filter(|b| b.lang == "rust")
+        .collect();
+
+    assert_eq!(
+        readme.len(),
+        snippets.len(),
+        "README.md has {} rust blocks, this file marks {} snippets",
+        readme.len(),
+        snippets.len()
+    );
+    for (block, (name, body)) in readme.iter().zip(&snippets) {
+        assert_eq!(
+            &block.body, body,
+            "README.md block does not match the compiled snippet `{name}`"
+        );
+    }
+}
+
+/// The Russian README is a translation of the prose only: its code blocks are the English ones,
+/// byte for byte, in the same order.
+#[test]
+fn russian_readme_carries_the_same_code() {
+    let english = code_blocks(&read("README.md"));
+    let russian = code_blocks(&read("README.ru.md"));
+
+    assert_eq!(
+        english.len(),
+        russian.len(),
+        "README.md has {} code blocks, README.ru.md has {}",
+        english.len(),
+        russian.len()
+    );
+    for (i, (en, ru)) in english.iter().zip(&russian).enumerate() {
+        assert_eq!(
+            en,
+            ru,
+            "code block #{} differs between the two READMEs",
+            i + 1
+        );
+    }
 }

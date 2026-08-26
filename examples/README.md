@@ -6,10 +6,10 @@
 | `payout.rs`            | quote a payout, dry-run it, send it, and handle a retryable refusal           |
 | `webhook_receiver.rs`  | verify a delivery over the raw bytes, deduplicate it, drop stale events       |
 
-Run one against the sandbox (a `test_` key is both key kinds at once):
+Run one against the sandbox (one sandbox pair serves both key kinds):
 
 ```sh
-export OBLODAI_PUBLIC_ID=pk_test_… OBLODAI_SECRET=…
+export OBLODAI_PUBLIC_ID=test_oblodai_… OBLODAI_SECRET=oblodai_test_…
 cargo run --example accept_payment
 cargo run --example payout
 
