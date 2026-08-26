@@ -64,9 +64,11 @@ let delivery = verify_webhook_delivery(raw_body, &Headers::from_pairs(headers),
     &VerifyOptions::new(secret))?;
 ```
 
-Verify over the **raw** bytes. Deduplicate on `delivery.id` (`X-Webhook-Id`); drop out-of-order
-events with `is_stale_event(&delivery.event, last_sequence)`. During a rotation pass
-`.previous_secret(old)` for ≥26 h.
+Verify over the **raw** bytes. `delivery.is_test` is true for rehearsal deliveries (`test: true` in
+the signed body, or `X-Webhook-Test: true`) — never treat them as money. Deduplicate on
+`delivery.id` (`X-Webhook-Id`); drop out-of-order events with
+`is_stale_event(&delivery.event, last_sequence)`. During a rotation pass `.previous_secret(old)`
+for ≥26 h.
 
 ## Machine-readable surface
 

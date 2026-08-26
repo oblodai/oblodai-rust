@@ -105,8 +105,8 @@ pub use crate::core::signing::{canonical_string, sign_request, sign_webhook, Sig
 pub use crate::core::transport::Transport;
 pub use resources::{FileBuilder, FileResult, Lookup, PaymentLookup, PayoutLookup, RequestBuilder};
 pub use webhooks::{
-    is_stale_event, parse_webhook, verify_webhook, verify_webhook_delivery, VerifyOptions,
-    WebhookDeliveryInfo,
+    is_stale_event, is_test_event, parse_webhook, verify_webhook, verify_webhook_delivery,
+    VerifyOptions, WebhookDeliveryInfo,
 };
 
 #[cfg(feature = "blocking")]
