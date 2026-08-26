@@ -17,7 +17,7 @@ use crate::contract::routes;
 use crate::core::envelope::PlainList;
 use crate::core::pagination::Pager;
 
-/// Payout links: funds reserved now, claimed later by whoever holds the token. Payout key.
+/// Payout links: funds reserved now, claimed later by whoever holds the token.
 #[derive(Clone, Debug)]
 pub struct PayoutLinks<Tr> {
     transport: Tr,
@@ -28,13 +28,13 @@ impl<Tr: Clone> PayoutLinks<Tr> {
         Self { transport }
     }
 
-    /// `POST /v1/payout/link` — reserve funds and mint a claim token (`claim_token`/`claim_url`
-    /// are returned once). Idempotent by `reference`. **Payout key.**
+    /// `POST /v1/payout/link` — reserve funds and mint a claim token (`claim_token`/`claim_url` are
+    /// returned once). Idempotent by `reference`.
     ///
-    /// Codes to branch on: `payoutlink.insufficient_funds` (retryable),
-    /// `payoutlink.funds_maturing` (retryable), `payoutlink.disabled`, `payoutlink.bad_amount`,
+    /// Codes to branch on: `payoutlink.insufficient_funds` (retryable), `payoutlink.funds_maturing`
+    /// (retryable), `payoutlink.disabled`, `payoutlink.bad_amount`,
     /// `payoutlink.duplicate_reference` (that `reference` already minted a different link),
-    /// `payoutlink.reference_required`, `merchant.wrong_key_kind`, `idempotency.key_reused`.
+    /// `payoutlink.reference_required`, `idempotency.key_reused`.
     pub fn create(&self, params: PayoutLinkRequest) -> RequestBuilder<Tr, PayoutLink> {
         RequestBuilder::new(
             self.transport.clone(),
@@ -68,10 +68,9 @@ impl<Tr: Clone> PayoutLinks<Tr> {
         )
     }
 
-    /// `POST /v1/payout/link/cancel` — release the reserved funds of an unclaimed link.
-    /// **Payout key.** Codes to branch on: `payoutlink.not_found`, `payoutlink.bad_state`,
-    /// `payoutlink.already_claimed`, `payoutlink.claim_in_progress`, `payoutlink.cancelled`,
-    /// `merchant.wrong_key_kind`.
+    /// `POST /v1/payout/link/cancel` — release the reserved funds of an unclaimed link. Codes to
+    /// branch on: `payoutlink.not_found`, `payoutlink.bad_state`, `payoutlink.already_claimed`,
+    /// `payoutlink.claim_in_progress`, `payoutlink.cancelled`.
     pub fn cancel(&self, link: impl Into<IdRef>) -> RequestBuilder<Tr, PayoutLink> {
         RequestBuilder::new(
             self.transport.clone(),
@@ -82,13 +81,13 @@ impl<Tr: Clone> PayoutLinks<Tr> {
         )
     }
 
-    /// `POST /v1/payout/link/batch` — SYNCHRONOUS: many links in one signed call (**≤ 500
-    /// items**), per-element outcomes. `reference` is required on every item. **Payout key.**
+    /// `POST /v1/payout/link/batch` — SYNCHRONOUS: many links in one signed call (**≤ 500 items**),
+    /// per-element outcomes. `reference` is required on every item.
     ///
     /// Call-level codes to branch on: `payoutlink.batch_too_large` (> 500),
     /// `payoutlink.empty_batch`, `payoutlink.disabled`, `payoutlink.insufficient_funds`
-    /// (retryable), `payoutlink.idempotency_required`, `merchant.wrong_key_kind`. A per-element
-    /// failure arrives inside the 200 as `items[].ok == false` — check every element.
+    /// (retryable), `payoutlink.idempotency_required`. A per-element failure arrives inside the 200
+    /// as `items[].ok == false` — check every element.
     pub fn batch(
         &self,
         params: PayoutLinkBatchRequest,
@@ -100,10 +99,8 @@ impl<Tr: Clone> PayoutLinks<Tr> {
         )
     }
 
-    /// `POST /v1/payout/link/cheque` — printable PDF cheque for a claim token. **Payout key**
-    /// (the route is `auth: payout`, so the payout pair is chosen automatically). Codes to branch
-    /// on: `cheque.token_required`, `payoutlink.not_found`, `payoutlink.token`,
-    /// `merchant.wrong_key_kind`.
+    /// `POST /v1/payout/link/cheque` — printable PDF cheque for a claim token. Codes to branch on:
+    /// `cheque.token_required`, `payoutlink.not_found`, `payoutlink.token`.
     pub fn cheque(&self, params: PayoutLinkChequeRequest) -> FileBuilder<Tr> {
         FileBuilder::new(
             self.transport.clone(),
@@ -158,7 +155,7 @@ impl<Tr: Clone> PaymentLinks<Tr> {
     ///
     /// Codes to branch on: `paylink.bad_mode`, `paylink.amount_required`, `paylink.bad_amount`,
     /// `paylink.bad_bounds`, `paylink.bad_range`, `paylink.order_id_invalid`,
-    /// `paylink.unavailable`, `merchant.wrong_key_kind`.
+    /// `paylink.unavailable`.
     pub fn create(&self, params: PaymentLinkRequest) -> RequestBuilder<Tr, PaymentLinkCreated> {
         RequestBuilder::new(
             self.transport.clone(),

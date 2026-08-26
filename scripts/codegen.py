@@ -28,6 +28,12 @@ GENERATED = ["routes.rs", "enums.rs", "requests.rs", "version.rs"]
 
 SKIP_PREFIXES = ("/healthz", "/readyz", "/docs", "/openapi.json", "/internal")
 
+# The core's auth vocabulary after the single-key cleanup. `key` = signed with the merchant's
+# one API key, `public` = unsigned, `onboard` = the self-hosted gateway's admin token. A value
+# outside this set means the contract and this SDK disagree about how a route is authenticated,
+# which is not something to guess about: fail the generation instead.
+ROUTE_AUTH = {"public": "Public", "key": "Key", "onboard": "Onboard"}
+
 HEADER = (
     "// GENERATED FILE - do not edit. Source: contract/contract.json (core {commit}).\n"
     "// Regenerate with: python3 scripts/codegen.py\n"
@@ -148,6 +154,19 @@ def is_safe(route: dict) -> bool:
     return value
 
 
+def route_auth(route: dict) -> str:
+    """The `RouteAuth` variant for a route, rejecting any vocabulary this SDK does not model."""
+    value = route.get("auth")
+    variant = ROUTE_AUTH.get(value) if isinstance(value, str) else None
+    if variant is None:
+        raise SystemExit(
+            f"contract.json: route {route_key(route)} has auth {value!r}; expected one of "
+            + ", ".join(sorted(ROUTE_AUTH))
+            + " - re-export the contract from the core"
+        )
+    return variant
+
+
 def doc_lines(text: str, indent: str = "") -> str:
     out = []
     for line in text.split("\n"):
@@ -169,6 +188,21 @@ def load() -> tuple[dict, dict, bytes]:
             + str(len(unclassified))
             + ' route(s) lack a boolean "safe" field: '
             + ", ".join(unclassified[:5])
+            + " - re-export the contract from the core"
+        )
+    unknown_auth = sorted(
+        {
+            str(r.get("auth"))
+            for r in contract.get("routes", [])
+            if r.get("auth") not in ROUTE_AUTH
+        }
+    )
+    if unknown_auth:
+        raise SystemExit(
+            "contract.json: unknown auth value(s) "
+            + ", ".join(unknown_auth)
+            + "; expected one of "
+            + ", ".join(sorted(ROUTE_AUTH))
             + " - re-export the contract from the core"
         )
     desc_path = os.path.join(ROOT, "contract", "descriptions.en.json")
@@ -202,7 +236,7 @@ def gen_routes(contract: dict, header: str) -> str:
             f'    key: "{key}",\n'
             f"    method: Method::{r['method'].capitalize()},\n"
             f'    path: "{r["path"]}",\n'
-            f"    auth: RouteAuth::{pascal(r['auth'])},\n"
+            f"    auth: RouteAuth::{route_auth(r)},\n"
             f"    idempotent: {str(r['idempotent']).lower()},\n"
             f"    safe: {str(is_safe(r)).lower()},\n"
             f"    bare: {str(r['bare']).lower()},\n"

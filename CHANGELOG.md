@@ -6,8 +6,21 @@ All notable changes to this crate are recorded here. The format follows
 
 ## [1.3.0] — 2026-08-26
 
-Rewrite generated from the gateway's contract snapshot (core `7ec04293c426`, 107 merchant routes,
-471 error codes). See MIGRATION-1.3.md.
+Rewrite generated from the gateway's contract snapshot (core `2cc44c16f516`, 107 merchant routes,
+469 error codes). See MIGRATION-1.3.md.
+
+### Removed
+
+- **One API key; the payout credential pair and the payout-key option are gone.** The gateway signs
+  every merchant route with the merchant's single API key, so `ClientBuilder::payout_public_id` /
+  `payout_secret`, `OBLODAI_PAYOUT_PUBLIC_ID` / `OBLODAI_PAYOUT_SECRET`, the per-call
+  `prefer_payout_key` on every builder and the payout-key fallback on `batches().info` (with its
+  `BatchInfoCall` type — `batches().info` is now an ordinary `RequestBuilder`) are removed. Six
+  environment variables remain: `OBLODAI_PUBLIC_ID`, `OBLODAI_SECRET`, `OBLODAI_ADMIN_TOKEN`,
+  `OBLODAI_BASE_URL`, `OBLODAI_LOG`, `OBLODAI_ALLOW_INSECURE`. `RouteAuth` is now
+  `Public` / `Key` / `Onboard`, onboarding returns `api_key` only (`payment_key`, `payout_key` and
+  `ApiKeyPair::kind` are gone), and `merchant.wrong_key_kind` has left the error catalogue — it can
+  still reach a merchant holding a legacy `oblodai_pk_…`/`oblodai_wk_…` pair.
 
 ### Security
 
@@ -89,10 +102,9 @@ Rewrite generated from the gateway's contract snapshot (core `7ec04293c426`, 107
   this snapshot arrives intact instead of failing verification; `event_kind()`, `uuid()`,
   `sequence()`, `is_test()` and `is_stale_event` all work on it. `sequence()` is now
   `Option<i64>`, and an event without one is never stale.
-- **`#[must_use]` on `RequestBuilder`, `FileBuilder`, `Pager` and `BatchInfoCall`** — a dropped
-  builder sent nothing and warned about nothing.
-- **`FileBuilder::prefer_payout_key`**, so all four builders take the same per-call options;
-  `FileBuilder::idempotency_key` is deprecated, since no `bare` route is deduplicated.
+- **`#[must_use]` on `RequestBuilder`, `FileBuilder` and `Pager`** — a dropped builder sent nothing
+  and warned about nothing.
+- **`FileBuilder::idempotency_key` is deprecated**, since no `bare` route is deduplicated.
 - **`PageParams`** and paging where it was missing: `payment_links().info(link, page)` and its alias
   `get` now have identical signatures and both page the invoices a link spawned, and
   `sandbox().webhooks(page)` pages like every other list.
@@ -103,12 +115,12 @@ Rewrite generated from the gateway's contract snapshot (core `7ec04293c426`, 107
   (`payments().create`, `payouts().create/mass/batch/approve`, `refunds().create/resolve/batch`,
   `payout_links().create/cancel/batch/cheque/claim`, `payment_links().create/checkout`,
   `wallets().create/refund_blocked_deposit`, `transfers().*`, `splits().create_rule`), taken from the
-  contract's error catalogue and gated by a test that refuses a code the catalogue does not contain, plus explicit "payout key" notes on `settings().*_auto_withdraw` and
-  `settings().*_api_allowlist`.
+  contract's error catalogue and gated by a test that refuses a code the catalogue does not
+  contain.
 - **`native-roots` feature** — also trust the OS certificate store. The default client trusts the
   bundled `webpki-roots` only, which silently fails behind a TLS-inspecting proxy or against a
   gateway with a private CA; the limitation is now documented and has a switch.
-- **Per-call `.header(name, value)`** on all four builders, and per-call options are documented per
+- **Per-call `.header(name, value)`** on all three builders, and per-call options are documented per
   builder rather than claimed uniformly.
 - **`is_known_event(&event)` / `event.is_known()` / `event.raw()`** for an event type newer than
   this snapshot.
@@ -131,18 +143,18 @@ Rewrite generated from the gateway's contract snapshot (core `7ec04293c426`, 107
 - Every merchant route (107) is present — cancel/validate, batches, documents, fee configs, split
   opt-in, secret rotation, payer-facing checkout and claim endpoints.
 - `Pager` (await one page, `.stream()` every item, `.all(max)`), `retryable`-driven retries with a
-  safe-to-repeat rule, automatic idempotency keys, dual key pairs, a per-call deadline.
+  safe-to-repeat rule, automatic idempotency keys, a per-call deadline.
 - `oblodai::webhooks` — rotation-aware `verify_webhook`, `verify_webhook_delivery`, `parse_webhook`,
   `is_stale_event`; no client and no API key needed.
 - A `blocking` feature: the same method tree over the same pure core, synchronous I/O.
 - `HttpBackend` / `BlockingHttpBackend` so the HTTP layer can be replaced.
 - Async by default on `reqwest` + `tokio` with rustls (no OpenSSL). MSRV 1.86.
-- Every method returns a builder that is also a future — per-call `idempotency_key`, `timeout`,
-  `deadline`, `prefer_payout_key` instead of client-wide settings.
+- Every method returns a builder that is also a future — per-call `idempotency_key`, `timeout` and
+  `deadline` instead of client-wide settings.
 - `Error` is one type with `code`, `http_status`, `retryable`, `retry_after`, `request_id`, `field`,
   `synthetic` and a `kind()`; the raw body is never printed or serialized.
 - Documentation is English-only, and the claims in README/AGENTS were re-checked against the code:
-  the four per-call options are now stated per builder, all eight `OBLODAI_*` variables are listed,
+  the per-call options are now stated per builder, all six `OBLODAI_*` variables are listed,
   `payout_links().batch` is ≤ 500 (not ≤ 100), `documents().create_job`/`job_info` return
   `DocumentJob` (not `FileResult`), and `payout_links().claim_preview`/`claim` are public routes
   that need no key.

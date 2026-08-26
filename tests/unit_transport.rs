@@ -462,14 +462,13 @@ async fn names_the_redirect_target_instead_of_a_bare_envelope_error() {
     assert!(err.message().contains("www.api.test"));
 }
 
+/// One API key signs everything: money out and money in are the same credential.
 #[tokio::test]
-async fn uses_the_payout_credentials_for_payout_routes_when_configured() {
+async fn signs_every_route_with_the_one_api_key() {
     let mock = MockBackend::new(vec![ok(json!({ "uuid": "p" })), ok(json!({ "uuid": "i" }))]);
     let client = Client::builder()
-        .public_id("pk_test_1")
+        .public_id("oblodai_test_1")
         .secret("secret-1")
-        .payout_public_id("wk_test_1")
-        .payout_secret("s2")
         .base_url("https://api.test")
         .env(Vec::<(String, String)>::new())
         .http_backend(mock.clone() as Arc<dyn HttpBackend>)
@@ -483,8 +482,8 @@ async fn uses_the_payout_credentials_for_payout_routes_when_configured() {
         .await
         .unwrap();
     let calls = mock.calls();
-    assert_eq!(calls[0].header("x-public-id"), Some("wk_test_1"));
-    assert_eq!(calls[1].header("x-public-id"), Some("pk_test_1"));
+    assert_eq!(calls[0].header("x-public-id"), Some("oblodai_test_1"));
+    assert_eq!(calls[1].header("x-public-id"), Some("oblodai_test_1"));
 }
 
 #[tokio::test]
@@ -636,12 +635,13 @@ async fn a_success_body_that_is_not_the_envelope_is_a_contract_error() {
     assert_eq!(err.code(), "sdk.bad_envelope");
 }
 
+/// `batch/info` is an ordinary signed call: one key, one attempt, no key-kind dance.
 #[tokio::test]
-async fn batch_info_retries_once_with_the_payout_key_on_a_wrong_key_kind() {
+async fn batch_info_signs_with_the_api_key_and_does_not_retry_a_refusal() {
     let mock = MockBackend::new(vec![
         api_error(
             403,
-            json!({ "code": "merchant.wrong_key_kind", "retryable": false }),
+            json!({ "code": "merchant.no_access", "retryable": false }),
         ),
         ok(json!({
             "batch_id": "b1", "kind": "payout", "status": "done", "on_error": "continue",
@@ -652,24 +652,25 @@ async fn batch_info_retries_once_with_the_payout_key_on_a_wrong_key_kind() {
     let client = Client::builder()
         .public_id("pk")
         .secret("s")
-        .payout_public_id("wk")
-        .payout_secret("s2")
         .base_url("https://api.test")
         .env(Vec::<(String, String)>::new())
         .http_backend(mock.clone() as Arc<dyn HttpBackend>)
         .build()
         .unwrap();
-    let info = client
+    let err = client
         .batches()
         .info(oblodai::contract::requests::BatchInfoRequest {
             batch_id: "b1".into(),
             ..Default::default()
         })
         .await
-        .unwrap();
-    assert_eq!(info.batch_id, "b1");
+        .unwrap_err();
+    assert_eq!(err.code(), "merchant.no_access");
     let calls = mock.calls();
-    assert_eq!(calls.len(), 2);
+    assert_eq!(
+        calls.len(),
+        1,
+        "a refusal is surfaced, not retried with another key"
+    );
     assert_eq!(calls[0].header("x-public-id"), Some("pk"));
-    assert_eq!(calls[1].header("x-public-id"), Some("wk"));
 }

@@ -36,7 +36,8 @@ pub struct Client {
 }
 
 impl Client {
-    /// A client for one key pair, everything else defaulted (and read from `OBLODAI_*` when set).
+    /// A client for the merchant's API key, everything else defaulted (and read from `OBLODAI_*`
+    /// when set).
     pub fn new(public_id: impl Into<String>, secret: impl Into<String>) -> Result<Self> {
         ClientBuilder::new()
             .public_id(public_id)
@@ -45,8 +46,7 @@ impl Client {
     }
 
     /// A client configured entirely from `OBLODAI_PUBLIC_ID`, `OBLODAI_SECRET`,
-    /// `OBLODAI_PAYOUT_PUBLIC_ID`, `OBLODAI_PAYOUT_SECRET`, `OBLODAI_BASE_URL`,
-    /// `OBLODAI_ADMIN_TOKEN`, `OBLODAI_LOG` and `OBLODAI_ALLOW_INSECURE`.
+    /// `OBLODAI_BASE_URL`, `OBLODAI_ADMIN_TOKEN`, `OBLODAI_LOG` and `OBLODAI_ALLOW_INSECURE`.
     pub fn from_env() -> Result<Self> {
         ClientBuilder::new().build()
     }
@@ -70,17 +70,17 @@ impl Client {
         Payments::new(self.transport.clone())
     }
 
-    /// Refunds and underpayment resolution. Payout key.
+    /// Refunds and underpayment resolution.
     pub fn refunds(&self) -> Refunds<Transport> {
         Refunds::new(self.transport.clone())
     }
 
-    /// Payouts to external addresses. Payout key.
+    /// Payouts to external addresses.
     pub fn payouts(&self) -> Payouts<Transport> {
         Payouts::new(self.transport.clone())
     }
 
-    /// Payout links (cheques). Payout key.
+    /// Payout links (cheques).
     pub fn payout_links(&self) -> PayoutLinks<Transport> {
         PayoutLinks::new(self.transport.clone())
     }
@@ -95,7 +95,7 @@ impl Client {
         Batches::new(self.transport.clone())
     }
 
-    /// Internal transfers between platform balances. Payout key.
+    /// Internal transfers between platform balances.
     pub fn transfers(&self) -> Transfers<Transport> {
         Transfers::new(self.transport.clone())
     }
@@ -115,7 +115,7 @@ impl Client {
         Documents::new(self.transport.clone())
     }
 
-    /// Revenue splits. Payout key.
+    /// Revenue splits.
     pub fn splits(&self) -> Splits<Transport> {
         Splits::new(self.transport.clone())
     }

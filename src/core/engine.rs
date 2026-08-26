@@ -17,7 +17,7 @@ use super::logger::{LogLevel, Logger, NoopLogger};
 use super::request::{build_request, serialize_body, BuildInput, BuiltRequest, Credentials};
 use super::retry::{jitter, retry_delay_ms, should_retry, RetryContext, RetryOptions};
 use super::signing::SIGNATURE_SKEW_SECONDS;
-use crate::contract::types::{RouteAuth, RouteSpec};
+use crate::contract::types::RouteSpec;
 use crate::error::{Error, Result};
 
 /// A response as it came off the wire, before any envelope is read.
@@ -48,8 +48,6 @@ pub struct CallOptions {
     pub path_params: Vec<(&'static str, String)>,
     /// Supply your own key to make the call idempotent across process restarts.
     pub idempotency_key: Option<String>,
-    /// Prefer the payout key pair on a route that accepts either kind.
-    pub prefer_payout_key: bool,
     /// Extra headers for this call only. They are merged over the client-wide ones; names the SDK
     /// owns (signing, `Accept`, `Content-Type`, `User-Agent`, `X-Admin-Token`) still win.
     pub headers: Vec<(String, String)>,
@@ -67,7 +65,6 @@ pub struct CallState {
     query: Vec<(String, String)>,
     path_params: Vec<(&'static str, String)>,
     idempotency_key: Option<String>,
-    prefer_payout_key: bool,
     headers: Vec<(String, String)>,
     safe_to_repeat: bool,
     attempt: u32,
@@ -120,7 +117,6 @@ const SIGNATURE_FAILURE_CODES: [&str; 2] = ["merchant.bad_signature", "auth.bad_
 pub struct Core {
     pub base_url: String,
     pub credentials: Option<Credentials>,
-    pub payout_credentials: Option<Credentials>,
     pub timeout: Duration,
     pub deadline: Duration,
     pub retry: RetryOptions,
@@ -136,7 +132,6 @@ impl std::fmt::Debug for Core {
         f.debug_struct("Core")
             .field("base_url", &self.base_url)
             .field("credentials", &self.credentials)
-            .field("payout_credentials", &self.payout_credentials)
             .field("timeout", &self.timeout)
             .field("deadline", &self.deadline)
             .field("retry", &self.retry)
@@ -150,7 +145,6 @@ impl Core {
         Self {
             base_url,
             credentials: None,
-            payout_credentials: None,
             timeout: Duration::from_secs(30),
             deadline: Duration::from_secs(90),
             retry: RetryOptions::default(),
@@ -192,7 +186,6 @@ impl Core {
             query: opts.query,
             path_params: opts.path_params,
             idempotency_key: key,
-            prefer_payout_key: opts.prefer_payout_key,
             headers: opts.headers,
             safe_to_repeat,
             attempt: 0,
@@ -203,17 +196,6 @@ impl Core {
             deadline_at: Instant::now() + opts.deadline.unwrap_or(self.deadline),
             attempt_timeout: opts.timeout.unwrap_or(self.timeout),
         })
-    }
-
-    /// Which key pair signs a route. `any` routes take the payment key unless told otherwise.
-    fn credentials_for(&self, route: &RouteSpec, prefer_payout: bool) -> Option<&Credentials> {
-        if route.auth == RouteAuth::Payout || (route.auth == RouteAuth::Any && prefer_payout) {
-            return self
-                .payout_credentials
-                .as_ref()
-                .or(self.credentials.as_ref());
-        }
-        self.credentials.as_ref()
     }
 
     /// Build and sign the next attempt.
@@ -232,7 +214,7 @@ impl Core {
             path_params: &st.path_params,
             query: &st.query,
             body: &st.body,
-            credentials: self.credentials_for(st.route, st.prefer_payout_key),
+            credentials: self.credentials.as_ref(),
             idempotency_key: st.idempotency_key.as_deref(),
             ts: self.clock.raw_now() + signed_offset,
             user_agent: &self.user_agent,

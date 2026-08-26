@@ -34,12 +34,8 @@ impl std::fmt::Display for Method {
 pub enum RouteAuth {
     /// No credentials: payer- and recipient-facing endpoints.
     Public,
-    /// The payment key pair.
-    Payment,
-    /// The payout key pair (falls back to the payment pair when none is configured).
-    Payout,
-    /// Either key kind is accepted.
-    Any,
+    /// Signed with the merchant's API key — the one pair, on every merchant route.
+    Key,
     /// Merchant provisioning: unsigned, gated by `X-Admin-Token` on a self-hosted gateway.
     Onboard,
 }
@@ -48,9 +44,7 @@ impl RouteAuth {
     pub fn as_str(self) -> &'static str {
         match self {
             RouteAuth::Public => "public",
-            RouteAuth::Payment => "payment",
-            RouteAuth::Payout => "payout",
-            RouteAuth::Any => "any",
+            RouteAuth::Key => "key",
             RouteAuth::Onboard => "onboard",
         }
     }

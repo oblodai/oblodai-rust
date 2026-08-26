@@ -55,13 +55,11 @@ impl<Tr: Clone> Wallets<Tr> {
         )
     }
 
-    /// `POST /v1/wallet/blocked-address-refund` — send funds that landed on a blocked address
-    /// back. **Payout key.**
+    /// `POST /v1/wallet/blocked-address-refund` — send funds that landed on a blocked address back.
     ///
     /// Codes to branch on: `wallet.bad_uuid`, `refund.no_address` (the deposit's sender address is
     /// not refundable — ask for one), `refund.nothing_to_refund`, `refund.dust` (below the network
-    /// minimum), `refund.destination_internal`, `payout.insufficient_funds` (retryable),
-    /// `merchant.wrong_key_kind`.
+    /// minimum), `refund.destination_internal`, `payout.insufficient_funds` (retryable).
     ///
     /// `blocked` is a field of the [`WalletBlocked`] model, not an error code — the wallet family
     /// has no "blocked" code in the catalogue, so do not branch on one.

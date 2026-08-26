@@ -36,7 +36,7 @@ impl<Tr: Clone> Webhooks<Tr> {
     }
 
     /// `POST /v1/webhooks/rotate-secret` — new secret; the old one keeps verifying until
-    /// `previous_secret_valid_until`. Payout key.
+    /// `previous_secret_valid_until`.
     pub fn rotate_secret(&self) -> RequestBuilder<Tr, WebhookSecretRotated> {
         RequestBuilder::new(
             self.transport.clone(),
@@ -57,7 +57,7 @@ impl<Tr: Clone> Webhooks<Tr> {
     /// `POST /v1/test-webhook/{payment|payout|wallet}` — deliver a sample event of that kind to
     /// `url_callback`, signed like a real one.
     ///
-    /// The three routes share one request shape; the `payout` variant needs the payout key.
+    /// The three routes share one request shape.
     pub fn test(
         &self,
         kind: WebhookKind,

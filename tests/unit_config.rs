@@ -119,11 +119,7 @@ fn refuses_half_a_key_pair() {
         .build()
         .unwrap_err();
     assert!(err.message().contains("together"));
-    let err = builder()
-        .payout_secret("s")
-        .env(empty_env())
-        .build()
-        .unwrap_err();
+    let err = builder().secret("s").env(empty_env()).build().unwrap_err();
     assert!(err.message().contains("together"));
 }
 

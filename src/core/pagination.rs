@@ -56,7 +56,6 @@ pub struct Pager<Tr, T> {
     params: Map<String, Value>,
     limit: i64,
     offset: i64,
-    prefer_payout_key: bool,
     headers: Vec<(String, String)>,
     timeout: Option<Duration>,
     deadline: Option<Duration>,
@@ -89,7 +88,6 @@ impl<Tr, T> Pager<Tr, T> {
             params: map,
             limit: limit.unwrap_or(DEFAULT_PAGE_LIMIT),
             offset: offset.unwrap_or(0),
-            prefer_payout_key: false,
             headers: Vec::new(),
             timeout: None,
             deadline: None,
@@ -122,12 +120,6 @@ impl<Tr, T> Pager<Tr, T> {
         self
     }
 
-    /// Sign with the payout key on a route that accepts either kind.
-    pub fn prefer_payout_key(mut self, prefer: bool) -> Self {
-        self.prefer_payout_key = prefer;
-        self
-    }
-
     /// An extra header on every page of this walk, merged over the client-wide ones.
     pub fn header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
         self.headers.push((name.into(), value.into()));
@@ -136,7 +128,6 @@ impl<Tr, T> Pager<Tr, T> {
 
     fn call_options(&self, limit: i64, offset: i64) -> CallOptions {
         let mut opts = CallOptions {
-            prefer_payout_key: self.prefer_payout_key,
             headers: self.headers.clone(),
             timeout: self.timeout,
             deadline: self.deadline,

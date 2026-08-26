@@ -9,7 +9,7 @@ pub enum ErrorKind {
     Validation,
     /// 401 — bad signature, unknown key, clock skew, IP not in the allow-list.
     Authentication,
-    /// 403 — the key is valid but not allowed to do this (wrong key kind, feature disabled).
+    /// 403 — the key is valid but not allowed to do this (feature disabled, IP not allowlisted).
     Permission,
     /// 404 — the referenced object does not exist for this merchant.
     NotFound,

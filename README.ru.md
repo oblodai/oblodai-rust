@@ -83,35 +83,28 @@ for payout in client.payouts().history(Default::default()).iter() {
 | боевой   | `oblodai_<hex>`         | `oblodai_live_<hex>`  |
 | песочный | `test_oblodai_<hex>`    | `oblodai_test_<hex>`  |
 
-Боевой ключ выдаётся как один **единый API-ключ**; прежнее деление по-прежнему поддерживается —
-**платёжный ключ** (`oblodai_pk_<hex>`) для счетов, платёжных ссылок, кошельков, справочников и
-отчётов и **выплатной ключ** (`oblodai_wk_<hex>`) для всего, что выводит деньги.
-
-**Песочный ключ** работает с копией шлюза без блокчейна — фейковый баланс из крана, симулированные
-депозиты, настоящие вебхуки, — и там одна пара служит обоими видами ключей. Интегрируйтесь сначала
-на нём; боевые и песочные ключи разделены, и ни один не видит данных другого.
-
-Выплатной ключ нужен для: `payouts()`, `refunds()`, `payout_links()` (сторона мерчанта — `create`,
-`info`/`get`, `list`, `cancel`, `batch`, `cheque`; обращённые к получателю `claim_preview` и `claim`
-публичные и ключа не требуют вовсе), `transfers()`, `splits()`,
-`wallets().refund_blocked_deposit`, `settings().*_auto_withdraw`, `settings().*_api_allowlist`,
-`webhooks().rotate_secret`, `webhooks().test(WebhookKind::Payout, …)`, `sandbox().faucet` и
-`sandbox().reset`. Передайте обе пары — SDK сам выберет нужную для каждого вызова:
+У мерчанта **один API-ключ**, и он подписывает все маршруты, доступные SDK: счета и платёжные
+ссылки, выплаты, возвраты и чеки, настройки, кошельки, отчёты. Выбирать нечего:
 
 ```rust
 let client = oblodai::Client::builder()
     .public_id(public_id)
     .secret(secret)
-    .payout_public_id(payout_public_id)
-    .payout_secret(payout_secret)
     .build()?;
 ```
 
-Вызов не тем видом ключа — это 403 `merchant.wrong_key_kind`.
+**Песочный ключ** работает с копией шлюза без блокчейна — фейковый баланс из крана, симулированные
+депозиты, настоящие вебхуки — и выдаётся песочным онбордингом (`merchants().sandbox(…)` или личный
+кабинет). Интегрируйтесь сначала на нём; боевые и песочные ключи разделены, и ни один не видит
+данных другого.
 
-Третий вид доступа, **админ-токен онбординга**, существует только на self-hosted шлюзе: он уходит
+Второй вид доступа, **админ-токен онбординга**, существует только на self-hosted шлюзе: он уходит
 в заголовке `X-Admin-Token` на маршрутах провижининга `merchants()` и больше нигде. Задаётся через
 `.admin_token(…)` или `OBLODAI_ADMIN_TOKEN`.
+
+Только мерчант, заведённый задолго до перехода на один ключ, может ещё держать старую разделённую
+пару (`oblodai_pk_…` для приёма, `oblodai_wk_…` для вывода); такая пара на маршрутах другой половины
+отбивается 403 `merchant.wrong_key_kind`. Замените её на API-ключ мерчанта.
 
 ## Быстрый старт
 
@@ -147,7 +140,7 @@ println!(
 currency: "USD".into(), to_currency: Some("USDT".into())` — `currency` это то, в чём вы выставили
 счёт, а `to_currency` — актив, который отправляет плательщик.
 
-Для вывода денег нужен выплатной ключ:
+Вывод денег идёт тем же ключом:
 
 ```rust
 use oblodai::contract::requests::PayoutRequest;
@@ -181,7 +174,7 @@ use oblodai::contract::requests::{
 };
 use oblodai::WebhookKind;
 
-// test money to pay out from (payout key, `test_` keys only)
+// test money to pay out from (`test_` keys only)
 client
     .sandbox()
     .faucet(SandboxFaucetRequest {
@@ -222,7 +215,7 @@ client.sandbox().reset().await?;
 ```
 
 `sandbox().replay(delivery_id)` повторно отправляет доставку, уже дошедшую до терминального
-состояния. `sandbox().reset()` отменяет открытые счета и обнуляет балансы (выплатной ключ).
+состояния. `sandbox().reset()` отменяет открытые счета и обнуляет балансы.
 Репетиционная доставка несёт `test: true` в подписанном теле и `X-Webhook-Test: true` в заголовках —
 это видно как `delivery.is_test`; никогда не засчитывайте по ней заказ.
 
@@ -374,7 +367,7 @@ match &delivery.event {
 | --------------------------------- | ----------- | ----------------------------------------------------------- |
 | `Validation`                      | 400         | запрос отклонён; `field()` называет виновное поле            |
 | `Authentication`                  | 401         | плохая подпись, отсутствующий или неизвестный ключ           |
-| `Permission`                      | 403         | ключу это не разрешено (`merchant.wrong_key_kind`)           |
+| `Permission`                      | 403         | ключу это не разрешено (функция выключена, IP не в списке)   |
 | `NotFound`                        | 404         | такого объекта нет                                           |
 | `Conflict` / `IdempotencyConflict` | 409         | конфликт состояния; ключ переиспользован с другим телом      |
 | `RateLimit`                       | 429         | превышен лимит; учитывайте `retry_after()`                   |
@@ -412,9 +405,9 @@ match client.payouts().create(params).await {
 
 Коды, которые стоит обрабатывать: `payout.insufficient_funds` и `payout.funds_maturing` (оба
 повторяемы), `idempotency.key_reused`, `invoice.not_payable`, `payment.not_found`,
-`merchant.wrong_key_kind`, `merchant.bad_signature`, `request.rate_limited`. Полный каталог — **471
-код** — доступен как `oblodai::ERROR_CODES`, и каждый метод, двигающий деньги, перечисляет свои коды
-в собственной rustdoc.
+`merchant.bad_signature`, `request.rate_limited`. Полный каталог — **469 кодов** — доступен как
+`oblodai::ERROR_CODES`, и каждый метод, двигающий деньги, перечисляет свои коды в собственной
+rustdoc.
 
 Коды, которые SDK поднимает сам, а не шлюз: `sdk.missing_credentials`, `sdk.bad_config`,
 `sdk.bad_header`, `sdk.bad_path_param`, `sdk.bad_idempotency_key`, `sdk.idempotency_unsupported`,
@@ -453,19 +446,17 @@ client
     .idempotency_key("payout-42")
     .timeout(Duration::from_secs(10)) // one attempt
     .deadline(Duration::from_secs(45)) // the whole call, retries and pauses included
-    .prefer_payout_key(true)
     .header("X-Request-Trace", "abc123") // this call only
     .await?;
 ```
 
 Набор опций билдера следует из того, что за маршрут он обслуживает:
 
-| билдер                                   | `.timeout` | `.deadline` | `.prefer_payout_key` | `.header` | `.idempotency_key`                                        |
-| ---------------------------------------- | ---------- | ----------- | -------------------- | --------- | --------------------------------------------------------- |
-| `RequestBuilder` (любой обычный маршрут) | ✓          | ✓           | ✓                    | ✓         | ✓                                                         |
-| `FileBuilder` (`documents()`, `cheque`)  | ✓          | ✓           | ✓                    | ✓         | устарел — ни один документный маршрут не дедуплицируется  |
-| `Pager` (любой список)                   | ✓          | ✓           | ✓                    | ✓         | — ключ на страницу заставил бы шлюз повторять первую       |
-| `BatchInfoCall` (`batches().info`)       | ✓          | ✓           | ✓                    | ✓         | — маршрут не дедуплицируется                              |
+| билдер                                   | `.timeout` | `.deadline` | `.header` | `.idempotency_key`                                        |
+| ---------------------------------------- | ---------- | ----------- | --------- | --------------------------------------------------------- |
+| `RequestBuilder` (любой обычный маршрут) | ✓          | ✓           | ✓         | ✓                                                         |
+| `FileBuilder` (`documents()`, `cheque`)  | ✓          | ✓           | ✓         | устарел — ни один документный маршрут не дедуплицируется  |
+| `Pager` (любой список)                   | ✓          | ✓           | ✓         | — ключ на страницу заставил бы шлюз повторять первую       |
 
 **Ограничивайте вызов через `.deadline(…)`, а не сбрасывая future.** Сброс отменяет вызов, а
 автоматически сгенерированный ключ идемпотентности живёт внутри этой future — запрос, уже ушедший в
@@ -480,8 +471,7 @@ client
 
 | опция                           | по умолчанию               | смысл                                                                   |
 | ------------------------------- | -------------------------- | ----------------------------------------------------------------------- |
-| `.public_id(…)` / `.secret(…)`  | —                          | платёжная пара ключей (`X-Public-Id` и секрет подписи)                  |
-| `.payout_public_id(…)` / `.payout_secret(…)` | —             | выплатная пара ключей; пара задаётся целиком или не задаётся вовсе       |
+| `.public_id(…)` / `.secret(…)`  | —                          | API-ключ (`X-Public-Id` и секрет подписи); задаётся целиком или никак    |
 | `.base_url(…)`                  | `https://api.oblodai.com`  | origin API; префикс пути (`https://gw.corp/oblodai`) сохраняется         |
 | `.timeout(…)`                   | 30 с                       | на одну попытку                                                         |
 | `.deadline(…)`                  | 90 с                       | на весь вызов, включая повторы и паузы                                  |
@@ -494,14 +484,12 @@ client
 | `.clock(…)`                     | системные часы             | часы для подписи, для тестов                                            |
 | `.env(…)`                       | окружение процесса         | брать запасные значения из карты, а не из окружения                     |
 
-Читаются ровно эти восемь переменных и никакие другие:
+Читаются ровно эти шесть переменных и никакие другие:
 
 | переменная                  | опция                         | смысл                                                            |
 | --------------------------- | ----------------------------- | ---------------------------------------------------------------- |
-| `OBLODAI_PUBLIC_ID`         | `.public_id(…)`               | платёжный ключ, публичная половина (`X-Public-Id`)                |
-| `OBLODAI_SECRET`            | `.secret(…)`                  | платёжный ключ, секретная половина                                |
-| `OBLODAI_PAYOUT_PUBLIC_ID`  | `.payout_public_id(…)`        | выплатной ключ, публичная половина                                |
-| `OBLODAI_PAYOUT_SECRET`     | `.payout_secret(…)`           | выплатной ключ, секретная половина                                |
+| `OBLODAI_PUBLIC_ID`         | `.public_id(…)`               | API-ключ, публичная половина (`X-Public-Id`)                      |
+| `OBLODAI_SECRET`            | `.secret(…)`                  | API-ключ, секретная половина                                      |
 | `OBLODAI_ADMIN_TOKEN`       | `.admin_token(…)`             | `X-Admin-Token`, уходит на маршрутах `merchants()` и больше нигде |
 | `OBLODAI_BASE_URL`          | `.base_url(…)`                | origin API; по умолчанию `https://api.oblodai.com`                |
 | `OBLODAI_LOG`               | `.logger(…)`                  | `debug\|info\|warn\|error` — ставит логгер в stderr               |
@@ -527,7 +515,7 @@ client
 `contract/` выгружается собственным тестовым набором шлюза: реестр маршрутов, схемы DTO запросов с
 английскими описаниями полей, перечисления, все коды ошибок, векторы подписи, эталонные тела ответов,
 записанные с живого шлюза, и настоящие подписанные доставки вебхуков. Этот снимок: **107 маршрутов
-мерчантского API, 471 код ошибки**, выгружен из ядра `7ec04293c426`. Файлы
+мерчантского API, 469 кодов ошибок**, выгружен из ядра `2cc44c16f516`. Файлы
 `src/contract/{routes,enums,requests,version}.rs` сгенерированы из него, а `oblodai::ROUTES`,
 `ERROR_CODES`, `NETWORKS`, `PAYMENT_STATUSES`, `PAYOUT_STATUSES` и `EVENT_TYPES` открывают его в
 рантайме.

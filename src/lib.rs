@@ -34,19 +34,17 @@
 //!   it did not help.
 //! - **Verifies webhooks** without a client: see [`webhooks`].
 //!
-//! # Two key kinds
+//! # One API key
 //!
-//! A live key is a unified API key (`oblodai_<hex>` plus an `oblodai_live_<hex>` secret); the legacy
-//! kinds are a payment key (`oblodai_pk_<hex>`) and a payout key (`oblodai_wk_<hex>`), and money-out
-//! routes need the payout one. Configure both and the SDK picks the right pair per route:
+//! A merchant has one API key — a public id (`oblodai_<hex>`, sandbox `test_oblodai_<hex>`) and a
+//! secret (`oblodai_live_<hex>`, sandbox `oblodai_test_<hex>`) — and it signs every route: payments,
+//! payouts, settings, documents.
 //!
 //! ```no_run
 //! # fn demo() -> oblodai::Result<()> {
 //! let client = oblodai::Client::builder()
-//!     .public_id("oblodai_pk_…")
-//!     .secret("…")
-//!     .payout_public_id("oblodai_wk_…")
-//!     .payout_secret("…")
+//!     .public_id("oblodai_…")
+//!     .secret("oblodai_live_…")
 //!     .build()?;
 //! # Ok(()) }
 //! ```

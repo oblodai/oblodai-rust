@@ -19,7 +19,7 @@ impl<Tr: Clone> Merchants<Tr> {
         Self { transport }
     }
 
-    /// `POST /v1/merchants` — create a merchant and mint its payment and payout keys (shown once).
+    /// `POST /v1/merchants` — create a merchant and mint its API key (shown once).
     pub fn create(&self, params: MerchantsRequest) -> RequestBuilder<Tr, MerchantOnboarded> {
         RequestBuilder::new(
             self.transport.clone(),

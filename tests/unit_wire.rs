@@ -28,8 +28,6 @@ fn client_with(
         Client::builder()
             .public_id("pk")
             .secret("s")
-            .payout_public_id("wk")
-            .payout_secret("s2")
             .base_url("https://api.test")
             .env(Vec::<(String, String)>::new()),
     )
@@ -87,9 +85,7 @@ async fn the_admin_token_goes_only_to_onboard_routes() {
 
     let mock = MockBackend::new(vec![ok(json!({
         "merchant_id": "m", "project_id": "p",
-        "api_key": {"public_id":"a","secret":"b","kind":"api"},
-        "payment_key": {"public_id":"a","secret":"b","kind":"api"},
-        "payout_key": {"public_id":"a","secret":"b","kind":"api"}
+        "api_key": {"public_id":"a","secret":"b"}
     }))]);
     let client = client_with(mock.clone(), |b| b.admin_token("adm"));
     let _ = client.merchants().create(Default::default()).await;
@@ -156,7 +152,6 @@ fn one_time_secrets_are_never_printed_by_debug() {
     let keys = ApiKeyPair {
         public_id: "pk_live_1".into(),
         secret: "SIGNING_KEY".into(),
-        kind: "api".into(),
     };
     let shown = format!("{keys:?}");
     assert!(!shown.contains("SIGNING_KEY"), "{shown}");
@@ -381,11 +376,10 @@ async fn a_file_builder_takes_the_same_per_call_options_as_a_request_builder() -
     let file = client
         .payout_links()
         .cheque(Default::default())
-        .prefer_payout_key(true)
         .timeout(std::time::Duration::from_secs(5))
         .deadline(std::time::Duration::from_secs(10))
         .await?;
     assert_eq!(file.content_type, "application/pdf");
-    assert_eq!(mock.first().header("x-public-id"), Some("wk"));
+    assert_eq!(mock.first().header("x-public-id"), Some("pk"));
     Ok(())
 }

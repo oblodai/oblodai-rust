@@ -1,4 +1,4 @@
-//! Outgoing transfers to external addresses. Every route here needs the payout key.
+//! Outgoing transfers to external addresses.
 
 use serde_json::json;
 
@@ -29,13 +29,12 @@ impl<Tr: Clone> Payouts<Tr> {
     }
 
     /// `POST /v1/payout` — create and (for API keys) auto-approve a payout. Idempotent by
-    /// `order_id` and by `Idempotency-Key`. **Payout key.**
+    /// `order_id` and by `Idempotency-Key`.
     ///
-    /// Codes to branch on: `payout.insufficient_funds` (retryable — top up and repeat with the
-    /// SAME key), `payout.funds_maturing` (retryable — deposits not mature yet),
-    /// `payout.bad_address`, `payout.address_network_mismatch`, `payout.memo_required`,
-    /// `payout.amount_below_fee`, `payout.frozen`, `payout.order_id_required`,
-    /// `idempotency.key_reused`, `merchant.wrong_key_kind` (a payment key on a payout route).
+    /// Codes to branch on: `payout.insufficient_funds` (retryable — top up and repeat with the SAME
+    /// key), `payout.funds_maturing` (retryable — deposits not mature yet), `payout.bad_address`,
+    /// `payout.address_network_mismatch`, `payout.memo_required`, `payout.amount_below_fee`,
+    /// `payout.frozen`, `payout.order_id_required`, `idempotency.key_reused`.
     pub fn create(&self, params: PayoutRequest) -> RequestBuilder<Tr, Payout> {
         RequestBuilder::new(
             self.transport.clone(),
@@ -91,8 +90,8 @@ impl<Tr: Clone> Payouts<Tr> {
         )
     }
 
-    /// `POST /v1/payout/approve` — approve a payout awaiting manual approval. **Payout key.**
-    /// Codes to branch on: `payout.not_found`, `payout.bad_state`, `payout.approver_is_creator`.
+    /// `POST /v1/payout/approve` — approve a payout awaiting manual approval. Codes to branch on:
+    /// `payout.not_found`, `payout.bad_state`, `payout.approver_is_creator`.
     pub fn approve(&self, payout: impl Into<IdRef>) -> RequestBuilder<Tr, Payout> {
         RequestBuilder::new(
             self.transport.clone(),
@@ -118,11 +117,11 @@ impl<Tr: Clone> Payouts<Tr> {
     }
 
     /// `POST /v1/payout/mass` — SYNCHRONOUS batch (**≤ 100**): each element reports its own
-    /// outcome, so a 200 can still contain failures — check every `items[].ok`. **Payout key.**
+    /// outcome, so a 200 can still contain failures — check every `items[].ok`.
     ///
     /// Call-level codes to branch on: `payout.batch_too_large` (> 100), `payout.empty_batch`,
-    /// `payout.insufficient_funds` (retryable), `payout.frozen`, `merchant.wrong_key_kind`.
-    /// Per-element failures use the same vocabulary as `create`.
+    /// `payout.insufficient_funds` (retryable), `payout.frozen`. Per-element failures use the same
+    /// vocabulary as `create`.
     pub fn mass(
         &self,
         params: PayoutMassRequest,
@@ -135,10 +134,10 @@ impl<Tr: Clone> Payouts<Tr> {
     }
 
     /// `POST /v1/payout/batch` — ASYNCHRONOUS batch (**≤ 5000**): returns a ticket; poll
-    /// `batches().info()`. `order_id` is required on every item. **Payout key.**
+    /// `batches().info()`. `order_id` is required on every item.
     ///
     /// Codes to branch on: `batch.too_large`, `batch.empty`, `batch.order_id_required`,
-    /// `batch.duplicate_order_id`, `batch.disabled`, `merchant.wrong_key_kind`.
+    /// `batch.duplicate_order_id`, `batch.disabled`.
     pub fn batch(&self, params: PayoutBatchRequest) -> RequestBuilder<Tr, BatchSubmitted> {
         RequestBuilder::new(
             self.transport.clone(),
@@ -165,7 +164,7 @@ impl<Tr: Clone> Payouts<Tr> {
         )
     }
 
-    /// `POST /v1/payout/fee-config/set` — who bears the network fee by default. **Payout key.**
+    /// `POST /v1/payout/fee-config/set` — who bears the network fee by default.
     pub fn set_fee_config(
         &self,
         params: PayoutFeeConfigSetRequest,
@@ -186,7 +185,7 @@ impl<Tr: Clone> Payouts<Tr> {
         )
     }
 
-    /// `POST /v1/payout/refund-fee-config/set` — who bears the fee on refunds. **Payout key.**
+    /// `POST /v1/payout/refund-fee-config/set` — who bears the fee on refunds.
     pub fn set_refund_fee_config(
         &self,
         params: PayoutRefundFeeConfigSetRequest,
