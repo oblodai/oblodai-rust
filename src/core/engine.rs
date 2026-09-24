@@ -214,6 +214,16 @@ impl Core {
                 assert_idempotency_key(&k)?;
                 match &mut body {
                     Some(Value::Object(map)) => {
+                        if map.get("idempotency_key").is_some_and(|v| !v.is_null()) {
+                            // Both the field and the option: ambiguous, refused rather than
+                            // silently picking one — in every Oblodai SDK.
+                            return Err(Error::config(
+                                "sdk.bad_idempotency_key",
+                                "idempotency_key is given twice: in the request and as the \
+                                 idempotency_key option; pass one",
+                                Some("idempotency_key"),
+                            ));
+                        }
                         map.insert("idempotency_key".into(), Value::String(k));
                     }
                     _ => body = Some(serde_json::json!({ "idempotency_key": k })),

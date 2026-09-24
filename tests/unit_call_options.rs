@@ -302,3 +302,23 @@ async fn the_faucet_takes_the_idempotency_key_in_its_body() {
         json!({"amount": "10", "asset": "USDT", "idempotency_key": "tap-1"})
     );
 }
+
+/// The faucet's key given twice — in the request's own field and as the call option — is
+/// ambiguous: refused before the network, as in every Oblodai SDK.
+#[tokio::test]
+async fn the_faucet_key_given_twice_is_an_error_before_the_network() {
+    let mock = MockBackend::new(vec![ok(json!({}))]);
+    let client = client_on(&mock, |b| b);
+    let mut req = FaucetRequest::new("10", "USDT");
+    req.idempotency_key = Some("own".into());
+    let err = client
+        .sandbox()
+        .faucet(req)
+        .idempotency_key("tap-2")
+        .send_json()
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), "sdk.bad_idempotency_key");
+    assert!(err.to_string().contains("idempotency_key"), "{err}");
+    assert_eq!(mock.call_count(), 0);
+}
