@@ -106,7 +106,7 @@ fn the_readme_method_table_lists_every_locked_name() {
 #[test]
 fn version_and_msrv_agree_everywhere() {
     let version = cargo_field("version");
-    assert_eq!(version, "2.0.0");
+    assert_eq!(version, env!("CARGO_PKG_VERSION"));
     assert!(read("CHANGELOG.md").contains(&format!("## [{version}]")));
     let major_minor = version.rsplit_once('.').unwrap().0.to_string();
     for readme in ["README.md", "README.ru.md"] {
