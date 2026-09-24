@@ -4,9 +4,28 @@ All notable changes to this crate are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the versions follow
 [Semantic Versioning](https://semver.org/).
 
-## [2.0.0] — 2026-09-25
+## [2.0.0] — Unreleased
 
 Generated from the gateway's OpenAPI contract. See MIGRATION-2.0.md for every renamed method.
+
+### Added
+
+- A float anywhere in a request body (in `extra` or a `serde_json::Value` field) outside
+  `models::NON_MONEY_NUMBERS` is refused before the network with `sdk.float_amount`.
+
+- Call options `.max_retries(n)` and `.request_id(id)`; every call sends `X-Request-ID` (a fresh
+  UUID unless given), the same on every attempt.
+- `.with_raw_response()` → `RawApiResponse` (status, headers, request id, `parse()`).
+- `Client::with_options(ClientOptions)`, `ClientBuilder::max_retries`, `ClientBuilder::hooks`
+  (`on_request` / `on_response` per attempt, the signature redacted).
+- `Pager::by_page()` (async stream of pages; blocking iterator).
+- Long-running operations: `.job()` on batches and document exports, `Job::wait()`,
+  `Job::wait_with()`, `Job::download()` (`oblodai::lro`).
+- `oblodai::from_json` builds a request model from JSON; a float amount is `sdk.float_amount`.
+- `WebhookEvent::Conversion`.
+- Tests: the backend's shared conformance suite (`tests/conformance.rs`, signing and webhook vectors
+  from the spec's `x-oblodai-signing`), the examples and every README block run against a fake
+  gateway; `make ci` runs every gate, the drift check of `src/generated` included.
 
 ### Changed
 
@@ -31,25 +50,6 @@ Generated from the gateway's OpenAPI contract. See MIGRATION-2.0.md for every re
   `is_success()`, from `x-status-classes`; `helpers::FINAL_PAYMENT_STATUSES` is now a slice) and
   the non-money numbers of request bodies (`models::NON_MONEY_NUMBERS`). The method tables of
   README.md and README.ru.md and `names.lock` are written by the generator as well.
-
-### Added
-
-- A float anywhere in a request body (in `extra` or a `serde_json::Value` field) outside
-  `models::NON_MONEY_NUMBERS` is refused before the network with `sdk.float_amount`.
-
-- Call options `.max_retries(n)` and `.request_id(id)`; every call sends `X-Request-ID` (a fresh
-  UUID unless given), the same on every attempt.
-- `.with_raw_response()` → `RawApiResponse` (status, headers, request id, `parse()`).
-- `Client::with_options(ClientOptions)`, `ClientBuilder::max_retries`, `ClientBuilder::hooks`
-  (`on_request` / `on_response` per attempt, the signature redacted).
-- `Pager::by_page()` (async stream of pages; blocking iterator).
-- Long-running operations: `.job()` on batches and document exports, `Job::wait()`,
-  `Job::wait_with()`, `Job::download()` (`oblodai::lro`).
-- `oblodai::from_json` builds a request model from JSON; a float amount is `sdk.float_amount`.
-- `WebhookEvent::Conversion`.
-- Tests: the backend's shared conformance suite (`tests/conformance.rs`, signing and webhook vectors
-  from the spec's `x-oblodai-signing`), the examples and every README block run against a fake
-  gateway; `make ci` runs every gate, the drift check of `src/generated` included.
 
 ### Removed
 
