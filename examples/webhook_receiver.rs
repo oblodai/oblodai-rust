@@ -7,7 +7,8 @@
 //! ```
 //!
 //! 1. Verify over the **raw** request bytes. A re-serialized parse will not match the signature.
-//! 2. Deduplicate on `X-Webhook-Id`: retries of one delivery carry the same id.
+//! 2. Deduplicate on `X-Webhook-Event-Id`: retries AND resends of one state carry the same id
+//!    (`X-Webhook-Id` changes on a resend).
 //! 3. Drop out-of-order events with `is_stale_event` — a retried `paid` can arrive after a refund.
 //! 4. Never act on a rehearsal (`delivery.is_test`) as if money moved: it is signed like a live one.
 
@@ -87,9 +88,10 @@ impl Receiver {
             return (200, "ok");
         }
 
-        if let Some(id) = &delivery.id {
+        // A core that does not send the event id yet leaves the delivery id as the next best key.
+        if let Some(id) = delivery.event_id.as_ref().or(delivery.id.as_ref()) {
             if !self.seen.insert(id.clone()) {
-                println!("duplicate delivery {id} — already handled");
+                println!("duplicate event {id} — already handled");
                 return (200, "ok");
             }
         }

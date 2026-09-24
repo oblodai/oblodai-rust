@@ -23,6 +23,9 @@ Generated from the gateway's OpenAPI contract. See MIGRATION-2.0.md for every re
   `Job::wait_with()`, `Job::download()` (`oblodai::lro`).
 - `oblodai::from_json` builds a request model from JSON; a float amount is `sdk.float_amount`.
 - `WebhookEvent::Conversion`.
+- `WebhookDeliveryInfo::event_id` (`X-Webhook-Event-Id`, `HEADER_WEBHOOK_EVENT_ID`): the id of the
+  state a delivery carries, the same across retries and resends — the key to deduplicate on
+  (`id`, `X-Webhook-Id`, changes on a resend).
 - Tests: the backend's shared conformance suite (`tests/conformance.rs`, signing and webhook vectors
   from the spec's `x-oblodai-signing`), the examples and every README block run against a fake
   gateway; `make ci` runs every gate, the drift check of `src/generated` included.

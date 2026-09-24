@@ -410,8 +410,11 @@ match &delivery.event {
 }
 ```
 
-- **Duplicates and order.** `delivery.id` (`X-Webhook-Id`) is stable across retries — deduplicate
-  on it. `event.sequence()` orders events; `is_stale_event` drops an out-of-order one.
+- **Duplicates and order.** Deduplicate on `delivery.event_id` (`X-Webhook-Event-Id`): it names the
+  state and is the same for every retry and every resend of it. `delivery.id` (`X-Webhook-Id`) names
+  one delivery and changes on a resend (`webhooks().resend_payment()`, a sandbox replay) — keyed on
+  it, a resent `invoice.paid` is processed twice. `event.sequence()` orders events;
+  `is_stale_event` drops an out-of-order one.
 - **Rotation.** After `webhooks().rotate_secret()` pass `.previous_secret(old)` until
   `previous_secret_valid_until` has passed.
 - **Unknown event types** arrive as `WebhookEvent::Other(Value)` (the enum is `#[non_exhaustive]`);

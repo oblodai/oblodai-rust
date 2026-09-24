@@ -39,6 +39,10 @@ fn verifies_every_recorded_delivery() {
                 .unwrap_or_else(|e| panic!("{event_name}: {e}"));
         assert_eq!(delivery.event.uuid(), sample.body["uuid"].as_str().unwrap());
         assert_eq!(delivery.id.as_deref(), sample.header("X-Webhook-Id"));
+        assert_eq!(
+            delivery.event_id.as_deref(),
+            sample.header("X-Webhook-Event-Id")
+        );
         assert_eq!(delivery.event_type.as_deref(), Some(event_name));
         assert_eq!(delivery.sent_at, ts);
         assert_eq!(
@@ -142,6 +146,19 @@ fn headers_for(secret: &str) -> Headers {
     headers.insert("x-webhook-timestamp", TS.to_string());
     headers.insert("x-webhook-signature", sign_webhook(secret, TS, &body()));
     headers
+}
+
+#[test]
+fn reads_the_event_id_apart_from_the_delivery_id() {
+    let mut headers = headers_for("whsec");
+    headers.insert("x-webhook-id", "d-1");
+    headers.insert("x-webhook-event-id", "e-1");
+    let options = VerifyOptions::new("whsec").now(TS);
+    let delivery = verify_webhook_delivery(&body(), &headers, &options).unwrap();
+    assert_eq!(delivery.id.as_deref(), Some("d-1"));
+    assert_eq!(delivery.event_id.as_deref(), Some("e-1"));
+    let bare = verify_webhook_delivery(&body(), &headers_for("whsec"), &options).unwrap();
+    assert_eq!(bare.event_id, None);
 }
 
 #[test]

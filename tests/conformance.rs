@@ -19,7 +19,10 @@ use std::time::Duration;
 
 use oblodai::core::engine::RawResponse;
 use oblodai::models::{LookupRequest, PaymentRequest};
-use oblodai::webhooks::{verify_webhook, Headers, VerifyOptions};
+use oblodai::webhooks::{
+    verify_webhook, verify_webhook_delivery, Headers, VerifyOptions, WEBHOOK_EVENTS,
+};
+use oblodai::WebhookEvent;
 use oblodai::{
     canonical_string, from_json, sign_request, sign_webhook, BackendFuture, BlockingHttpBackend,
     Error, HttpBackend, HttpRequest, RetryOptions, SignInput,
@@ -175,6 +178,79 @@ fn webhooks_verify_like_the_core() {
             }
         }
     }
+}
+
+#[test]
+fn webhook_deliveries_parse_and_expose_every_header() {
+    let Some(dir) = conformance_dir() else { return };
+    let suite = suite(&dir, "webhook_delivery");
+    let (_, deliveries) = source(&dir, &suite);
+    let mut events: Vec<&str> = deliveries
+        .iter()
+        .map(|d| d["event"].as_str().unwrap())
+        .collect();
+    events.sort_unstable();
+    let mut known: Vec<&str> = WEBHOOK_EVENTS.iter().map(|(e, _)| *e).collect();
+    known.sort_unstable();
+    assert_eq!(
+        events, known,
+        "a delivery of every event this release knows"
+    );
+
+    let mut ran = 0;
+    for check in suite["checks"].as_array().unwrap() {
+        assert_eq!(check["kind"], "webhook_delivery", "unknown check kind");
+        let key = match check["key"].as_str().unwrap() {
+            "current" => "secret",
+            "previous" => "previous_secret",
+            other => panic!("unknown key {other:?}"),
+        };
+        for d in &deliveries {
+            let name = format!("{} — {}", check["name"].as_str().unwrap(), d["event"]);
+            let headers = Headers::from_pairs(
+                d["headers"]
+                    .as_object()
+                    .unwrap()
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.as_str().unwrap().to_string())),
+            );
+            let options =
+                VerifyOptions::new(d[key].as_str().unwrap()).now(d["ts"].as_i64().unwrap());
+            let delivery = verify_webhook_delivery(
+                d["payload"].as_str().unwrap().as_bytes(),
+                &headers,
+                &options,
+            )
+            .unwrap_or_else(|e| panic!("{name}: {e}"));
+            assert!(
+                !matches!(delivery.event, WebhookEvent::Other(_)),
+                "{name}: parsed as an unknown kind"
+            );
+            assert_eq!(
+                delivery.event.event_kind(),
+                d["kind"].as_str().unwrap(),
+                "{name}"
+            );
+            assert!(!delivery.event.uuid().is_empty(), "{name}: no object id");
+            for (header, field) in suite["headers"].as_object().unwrap() {
+                let want = d["headers"][header].as_str().unwrap();
+                let got = match field.as_str().unwrap() {
+                    "" => continue,
+                    "id" => delivery.id.clone(),
+                    "event_id" => delivery.event_id.clone(),
+                    "event_type" => delivery.event_type.clone(),
+                    "event_time" => delivery.event_time.map(|v| v.to_string()),
+                    "sent_at" => Some(delivery.sent_at.to_string()),
+                    other => {
+                        panic!("{name}: the delivery info has no field {other:?} for {header}")
+                    }
+                };
+                assert_eq!(got.as_deref(), Some(want), "{name}: {field} ≠ {header}");
+            }
+            ran += 1;
+        }
+    }
+    assert!(ran > 0);
 }
 
 // --- calls ------------------------------------------------------------------------------------

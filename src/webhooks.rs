@@ -7,7 +7,8 @@
 //! X-Webhook-Signature:      hex(HMAC-SHA256(secret, "<ts>." + rawBody))
 //! X-Webhook-Signature-Prev: same, with the previous secret — only during a rotation overlap
 //! X-Webhook-Event:          the event name, one of WEBHOOK_EVENTS (invoice.paid, payout.failed, …)
-//! X-Webhook-Id:             stable per delivery (identical across retries) — your dedup key
+//! X-Webhook-Id:             the delivery — identical across its retries; a resend gets a new one
+//! X-Webhook-Event-Id:       the state — identical across retries AND resends; your dedup key
 //! X-Webhook-Event-Time:     unix seconds when the state change committed (order events by it)
 //! X-Webhook-Test:           "true" on a rehearsal delivery — the body also carries `test: true`
 //! ```
@@ -46,6 +47,7 @@ pub const HEADER_WEBHOOK_SIGNATURE: &str = "X-Webhook-Signature";
 pub const HEADER_WEBHOOK_SIGNATURE_PREV: &str = "X-Webhook-Signature-Prev";
 pub const HEADER_WEBHOOK_EVENT: &str = "X-Webhook-Event";
 pub const HEADER_WEBHOOK_ID: &str = "X-Webhook-Id";
+pub const HEADER_WEBHOOK_EVENT_ID: &str = "X-Webhook-Event-Id";
 pub const HEADER_WEBHOOK_EVENT_TIME: &str = "X-Webhook-Event-Time";
 pub const HEADER_WEBHOOK_TEST: &str = "X-Webhook-Test";
 
@@ -161,8 +163,12 @@ impl VerifyOptions {
 #[non_exhaustive]
 pub struct WebhookDeliveryInfo {
     pub event: WebhookEvent,
-    /// `X-Webhook-Id` — stable across retries of the same delivery; use it as your dedup key.
+    /// `X-Webhook-Id` — the delivery: identical across its retries, but a resend
+    /// (`webhooks().resend_payment()`, a sandbox replay) is a new delivery with a new id.
     pub id: Option<String>,
+    /// `X-Webhook-Event-Id` — the state the delivery carries: identical for the original, every
+    /// retry and every resend of the same state, different once the state changes. Deduplicate on it.
+    pub event_id: Option<String>,
     /// `X-Webhook-Event` — the event name, one of [`WEBHOOK_EVENTS`].
     pub event_type: Option<String>,
     /// `X-Webhook-Event-Time` — unix seconds when the state change committed.
@@ -183,7 +189,7 @@ pub fn verify_webhook(
     Ok(verify_webhook_delivery(raw_body, headers, options)?.event)
 }
 
-/// Like [`verify_webhook`], and also returns the delivery id, event type and times.
+/// Like [`verify_webhook`], and also returns the delivery and event ids, event type and times.
 pub fn verify_webhook_delivery(
     raw_body: &[u8],
     headers: &Headers,
@@ -260,6 +266,7 @@ pub fn verify_webhook_delivery(
         is_test: headers.get(HEADER_WEBHOOK_TEST).map(str::trim) == Some("true") || event.is_test(),
         event,
         id: headers.get(HEADER_WEBHOOK_ID).map(str::to_string),
+        event_id: headers.get(HEADER_WEBHOOK_EVENT_ID).map(str::to_string),
         event_type: headers.get(HEADER_WEBHOOK_EVENT).map(str::to_string),
         event_time: headers
             .get(HEADER_WEBHOOK_EVENT_TIME)
