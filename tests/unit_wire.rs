@@ -375,3 +375,41 @@ async fn a_file_builder_takes_the_same_per_call_options_as_a_request_builder() -
     assert_eq!(mock.first().header("x-public-id"), Some("pk"));
     Ok(())
 }
+
+// --- floats in a body -------------------------------------------------------------------------
+
+/// Typed amounts cannot be floats (`Money`), but `extra` and `serde_json::Value` fields can carry
+/// anything: a float there is refused before the network, except in the request fields the
+/// contract types as non-money numbers (`models::NON_MONEY_NUMBERS`, generated).
+#[tokio::test]
+async fn a_float_outside_the_non_money_numbers_never_leaves_the_process() {
+    use oblodai::models::{PaymentBatchItem, PaymentBatchRequest, SetAccuracyRequest};
+
+    assert!(oblodai::models::NON_MONEY_NUMBERS.contains(&"accuracy_payment_percent"));
+    let mock = MockBackend::new(vec![ok(json!({"enabled": true, "accuracy_percent": 1}))]);
+    let client = client_with(mock.clone(), |b| b);
+
+    let mut req = SetAccuracyRequest::new(true);
+    req.extra.insert("tip".into(), json!({"amount": 1.5}));
+    let err = client.settings().set_accuracy(req).await.unwrap_err();
+    assert_eq!(err.code(), "sdk.float_amount");
+    assert_eq!(err.kind(), ErrorKind::Config);
+    assert_eq!(err.field(), Some("tip.amount"));
+    assert!(mock.calls().is_empty(), "nothing was sent");
+
+    let mock = MockBackend::new(vec![ok(
+        json!({"batch_id": "b", "count": 1, "kind": "payment",
+        "status": "pending"}),
+    )]);
+    let client = client_with(mock.clone(), |b| b);
+    let item = PaymentBatchItem {
+        accuracy_payment_percent: Some(2.5),
+        ..Default::default()
+    };
+    let req = PaymentBatchRequest {
+        payments: vec![item],
+        ..Default::default()
+    };
+    client.batches().create_payment(req).await.unwrap();
+    assert_eq!(mock.calls().len(), 1);
+}

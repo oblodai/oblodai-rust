@@ -88,7 +88,9 @@ the signed body, or `X-Webhook-Test: true`) — never treat them as money. Dedup
 
 `oblodai::routes::ROUTES` and `routes::route(operation_id)` — every operation with `operation_id`,
 method, path, auth, `idempotent`, `safe`, `bare` (answers with a file), `list_kind`.
-`oblodai::lro::LRO` — which operations are long-running and how they are polled. `names.lock` —
+`oblodai::lro::LRO` — which operations are long-running and how they are polled (generated from
+`x-sdk-poll`). `oblodai::webhooks::KNOWN_EVENT_KINDS` / `WEBHOOK_EVENTS` — the webhook kinds and
+event names (generated). `names.lock` —
 the public method names.
 
 ## Environment

@@ -96,3 +96,34 @@ impl<'de> serde::Deserialize<'de> for Money {
         d.deserialize_any(V)
     }
 }
+
+/// Refuse a float anywhere in a request body, except under the request fields the contract types
+/// as numbers that are not money ([`NON_MONEY_NUMBERS`](crate::models::NON_MONEY_NUMBERS),
+/// generated). Typed amounts are [`Money`] and cannot be floats; this catches what `extra` and
+/// `serde_json::Value` fields carry. An integer is exact and passes.
+pub(crate) fn reject_float_amounts(value: &serde_json::Value, path: &str) -> crate::Result<()> {
+    use serde_json::Value;
+    match value {
+        Value::Number(n) if n.is_f64() => Err(crate::Error::config(
+            FLOAT_AMOUNT,
+            format!("amount passed as a float ({n}); pass a decimal string (\"{n}\")"),
+            Some(if path.is_empty() { "body" } else { path }),
+        )),
+        Value::Object(map) => map
+            .iter()
+            .filter(|(key, _)| !crate::models::NON_MONEY_NUMBERS.contains(&key.as_str()))
+            .try_for_each(|(key, item)| {
+                let at = if path.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{path}.{key}")
+                };
+                reject_float_amounts(item, &at)
+            }),
+        Value::Array(items) => items
+            .iter()
+            .enumerate()
+            .try_for_each(|(i, item)| reject_float_amounts(item, &format!("{path}[{i}]"))),
+        _ => Ok(()),
+    }
+}

@@ -136,30 +136,24 @@ pub fn is_zero_amount(a: &str) -> Result<bool, AmountError> {
     Ok(scaled(a, scale)? == 0)
 }
 
+// The status classes are facts of the contract (`x-status-classes`): `PaymentStatus::FINAL`,
+// `PaymentStatus::SUCCESS` and their `is_final()` / `is_success()` are generated; the helpers below
+// are the names this SDK has always offered for them.
+
 /// Invoice statuses after which nothing else can happen.
-pub const FINAL_PAYMENT_STATUSES: [PaymentStatus; 5] = [
-    PaymentStatus::Paid,
-    PaymentStatus::PaidOver,
-    PaymentStatus::WrongAmount,
-    PaymentStatus::Expired,
-    PaymentStatus::Cancelled,
-];
+pub const FINAL_PAYMENT_STATUSES: &[PaymentStatus] = PaymentStatus::FINAL;
 
 /// Payout statuses after which nothing else can happen.
-pub const FINAL_PAYOUT_STATUSES: [PayoutStatus; 3] = [
-    PayoutStatus::Confirmed,
-    PayoutStatus::Failed,
-    PayoutStatus::Cancelled,
-];
+pub const FINAL_PAYOUT_STATUSES: &[PayoutStatus] = PayoutStatus::FINAL;
 
 /// Nothing more will happen to this invoice.
 pub fn is_payment_final(status: &PaymentStatus) -> bool {
-    FINAL_PAYMENT_STATUSES.contains(status)
+    status.is_final()
 }
 
-/// `paid` or `paid_over` — the merchant has the money. `wrong_amount` is NOT paid: resolve it.
+/// The merchant has the money (`paid`, `paid_over`). `wrong_amount` is NOT paid: resolve it.
 pub fn is_payment_paid(status: &PaymentStatus) -> bool {
-    matches!(status, PaymentStatus::Paid | PaymentStatus::PaidOver)
+    status.is_success()
 }
 
 /// The invoice is waiting for a merchant decision (underpaid): call `payments().resolve()`.
@@ -169,10 +163,10 @@ pub fn is_payment_underpaid(status: &PaymentStatus) -> bool {
 
 /// Nothing more will happen to this payout.
 pub fn is_payout_final(status: &PayoutStatus) -> bool {
-    FINAL_PAYOUT_STATUSES.contains(status)
+    status.is_final()
 }
 
-/// The payout reached the chain and is irreversible.
+/// The payout reached the chain and is irreversible (`confirmed`).
 pub fn is_payout_succeeded(status: &PayoutStatus) -> bool {
-    matches!(status, PayoutStatus::Confirmed)
+    status.is_success()
 }

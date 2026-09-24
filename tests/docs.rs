@@ -15,10 +15,13 @@ fn cargo_field(name: &str) -> String {
     line.split('"').nth(1).unwrap().to_string()
 }
 
+/// `names.2.0.txt` is the method list 2.0.0 shipped with, written once and never regenerated:
+/// the migration guide maps 1.x to exactly these, and a method a later contract adds does not
+/// need a 1.x row.
 #[test]
-fn the_2_0_migration_maps_every_locked_name() {
+fn the_2_0_migration_maps_every_2_0_name() {
     let text = read("MIGRATION-2.0.md");
-    let missing: Vec<String> = read("names.lock")
+    let missing: Vec<String> = read("names.2.0.txt")
         .split_whitespace()
         .map(|n| {
             let (resource, method) = n.split_once('.').unwrap();
@@ -32,15 +35,71 @@ fn the_2_0_migration_maps_every_locked_name() {
     );
 }
 
-#[test]
-fn every_locked_name_is_a_generated_method() {
+/// `resource.method` of every generated method, from the accessors and impls of resources.rs.
+fn generated_methods() -> Vec<String> {
     let resources = read("src/generated/resources.rs");
-    for name in read("names.lock").split_whitespace() {
-        let method = name.split_once('.').unwrap().1;
-        assert!(
-            resources.contains(&format!("    pub fn {method}(")),
-            "names.lock has {name}, src/generated has no such method"
-        );
+    let mut accessors = std::collections::HashMap::new();
+    for line in resources.lines() {
+        // `pub fn payments(&self) -> $crate::generated::resources::Payments<$tr> {`
+        if let Some(rest) = line.trim().strip_prefix("pub fn ") {
+            if let Some((name, tail)) = rest.split_once("(&self) -> $crate::generated::resources::")
+            {
+                accessors.insert(
+                    tail.split('<').next().unwrap().to_string(),
+                    name.to_string(),
+                );
+            }
+        }
+    }
+    let mut out = Vec::new();
+    let mut current = None;
+    for line in resources.lines() {
+        if let Some(rest) = line.strip_prefix("impl<Tr: Clone> ") {
+            current = accessors.get(rest.split('<').next().unwrap()).cloned();
+        } else if let (Some(res), Some(rest)) = (&current, line.strip_prefix("    pub fn ")) {
+            let method = rest.split(['(', '<']).next().unwrap();
+            if method != "new" {
+                out.push(format!("{res}.{method}"));
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+#[test]
+fn names_lock_is_every_generated_method() {
+    let mut locked: Vec<String> = read("names.lock")
+        .split_whitespace()
+        .map(str::to_string)
+        .collect();
+    locked.sort();
+    let generated = generated_methods();
+    assert!(generated.len() > 100, "parsed {} methods", generated.len());
+    assert_eq!(locked, generated, "names.lock and src/generated disagree");
+}
+
+/// The method table between the sdkgen markers is the generator's: every locked name is in it.
+#[test]
+fn the_readme_method_table_lists_every_locked_name() {
+    for readme in ["README.md", "README.ru.md"] {
+        let text = read(readme);
+        let table = text
+            .split_once("<!-- sdkgen:methods -->")
+            .and_then(|(_, rest)| rest.split_once("<!-- /sdkgen:methods -->"))
+            .unwrap_or_else(|| panic!("{readme} has no sdkgen:methods section"))
+            .0;
+        for name in read("names.lock").split_whitespace() {
+            let (resource, method) = name.split_once('.').unwrap();
+            let row = table
+                .lines()
+                .find(|l| l.starts_with(&format!("| `{resource}()` |")))
+                .unwrap_or_else(|| panic!("{readme}: no row for {resource}()"));
+            assert!(
+                row.contains(&format!("`{method}`")),
+                "{readme}: {name} missing from the method table"
+            );
+        }
     }
 }
 

@@ -24,8 +24,18 @@ Generated from the gateway's OpenAPI contract. See MIGRATION-2.0.md for every re
 - **Errors print `[code] message (request_id=…)`**, and every error that reached the network
   carries the call's request id.
 - `RouteSpec` is keyed by `operation_id` (`routes::route("createPayment")`), with `list_kind`.
+- **The API facts the runtime used to list by hand are generated too:** the long-running
+  operations (`lro::LRO`, `TERMINAL_STATUSES` and the `JobAck`/`JobStatus` implementations, from
+  `x-sdk-poll`), the webhook kinds, event names and `WebhookEvent` (`webhooks::KNOWN_EVENT_KINDS`,
+  `WEBHOOK_EVENTS`), the status classes (`PaymentStatus::FINAL`/`SUCCESS`, `is_final()`,
+  `is_success()`, from `x-status-classes`; `helpers::FINAL_PAYMENT_STATUSES` is now a slice) and
+  the non-money numbers of request bodies (`models::NON_MONEY_NUMBERS`). The method tables of
+  README.md and README.ru.md and `names.lock` are written by the generator as well.
 
 ### Added
+
+- A float anywhere in a request body (in `extra` or a `serde_json::Value` field) outside
+  `models::NON_MONEY_NUMBERS` is refused before the network with `sdk.float_amount`.
 
 - Call options `.max_retries(n)` and `.request_id(id)`; every call sends `X-Request-ID` (a fresh
   UUID unless given), the same on every attempt.
