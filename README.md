@@ -195,28 +195,32 @@ The request id links your logs with the gateway's: it is in every error's text,
 
 ## Method overview
 
-`client.<resource>().<method>(…)` — sixteen namespaces, one method per OpenAPI operation, the name
-being the `operationId` without the resource. `names.lock` pins every name; the full list with the
-1.x names is in [MIGRATION-2.0.md](MIGRATION-2.0.md).
+`client.<resource>().<method>(…)` — one method per OpenAPI operation, the name being the
+`operationId` without the resource. `names.lock` pins every name; the 1.x names are mapped in
+[MIGRATION-2.0.md](MIGRATION-2.0.md). The table below is written by the generator.
 
-| namespace           | examples                                                                                  |
-| ------------------- | ----------------------------------------------------------------------------------------- |
-| `payments()`        | `create` · `get_info` · `cancel` · `list_history` · `get_qr` · `resolve` · `send_email`   |
-| `payment_links()`   | `create` · `get` · `list` · `toggle`                                                      |
-| `refunds()`         | `payment` · `blocked_wallet`                                                              |
-| `payouts()`         | `create` · `calculate` · `validate` · `get_info` · `list_history` · `transfer_to_user`    |
-| `payout_links()`    | `create` · `create_batch` · `get` · `list` · `cancel` · `claim_payout`                    |
-| `batches()`         | `create_payment` · `create_payout` · `create_refund` · `get_info`                         |
-| `splits()`          | `create_rule` · `list_rules` · `get_config` · `set_config`                                |
-| `wallets()`         | `create` · `block` · `get_qr`                                                             |
-| `account()`         | `get_balance` · `get_summary` · `list_exchange_rates`                                     |
-| `webhooks()`        | `register` · `rotate_secret` · `list_deliveries` · `send_test_payment`                    |
-| `settings()`        | accuracy, discounts, auto-refund, auto-convert, fees, accepted currencies, auto-withdraw  |
-| `api_allowlist()`   | `list` · `add_entry` · `remove_entry` · `set_enabled`                                     |
-| `referrals()`       | `get_info`                                                                                |
-| `documents()`       | `get_statement` · `get_ledger` · `create_job` · `get_job` · `download_job_file`           |
-| `checkout()`        | payer-facing, no credentials: `get` · `select_method` · `list_currencies`                 |
-| `sandbox()`         | `faucet` · `simulate_deposit` · `list_webhooks` · `replay_webhook` · `reset`              |
+<!-- sdkgen:methods -->
+16 resources, 120 methods.
+
+| Resource | Methods |
+| --- | --- |
+| `payments()` | `create` · `get_info` · `get_qr` · `list_history` · `list_services` · `cancel` · `send_email` · `set_checkout_config` · `get_checkout_config` · `get_aml_links` · `resolve` |
+| `payment_links()` | `create` · `list` · `get` · `toggle` |
+| `refunds()` | `payment` · `blocked_wallet` |
+| `payouts()` | `create` · `create_mass` · `get_info` · `list_history` · `calculate` · `validate` · `cancel` · `approve` · `list_services` · `transfer_to_personal` · `transfer_to_user` · `create_transfer_batch` |
+| `payout_links()` | `create` · `create_batch` · `list` · `get` · `cancel` · `get_payout_claim` · `claim_payout` |
+| `batches()` | `create_payment` · `create_refund` · `create_payout` · `get_info` |
+| `splits()` | `create_rule` · `list_rules` · `delete_rule` · `set_config` · `get_config` · `set_recipient_opt_in` · `get_recipient_opt_in` |
+| `wallets()` | `create` · `block` · `get_qr` |
+| `account()` | `get_balance` · `get_summary` · `list_exchange_rates` |
+| `webhooks()` | `resend_payment` · `register` · `list_deliveries` · `requeue_delivery` · `send_legacy_test` · `send_test_payment` · `send_test_wallet` · `send_test_payout` · `send_test_conversion` · `rotate_secret` · `set_active` |
+| `settings()` | `set_accuracy` · `get_accuracy` · `set_auto_refund` · `get_auto_refund` · `set_discount` · `list_discounts` · `list_api_log` · `get_auto_convert` · `set_auto_convert` · `set_accepted_currencies` · `list_accepted_currencies` · `set_payout_fee_config` · `get_payout_fee_config` · `set_refund_fee_config` · `get_refund_fee_config` · `set_payment_fee_config` · `get_payment_fee_config` · `set_auto_withdraw_rule` · `list_auto_withdraw_rules` · `delete_auto_withdraw_rule` · `configure_vrcs` |
+| `api_allowlist()` | `list` · `add_entry` · `remove_entry` · `set_enabled` |
+| `referrals()` | `get_info` |
+| `documents()` | `get_signed` · `get_balance` · `get_fees` · `get_ledger` · `get_split` · `get_payout_link_cheque` · `get_statement` · `get_batch` · `get_payment_link` · `get_wallet_statement` · `get_referrals` · `create_job` · `get_job` · `download_job_file` |
+| `checkout()` | `get_source_of_funds_form` · `submit_source_of_funds` · `get_public_payment_link` · `payment_link` · `list_currencies` · `get` · `select_method` · `start_onramp` · `get_onramp` · `get_qr` |
+| `sandbox()` | `onboard_store` · `faucet` · `simulate_deposit` · `reset` · `list_webhooks` · `replay_webhook` |
+<!-- /sdkgen:methods -->
 
 A document route answers with `FileResult { bytes, content_type, filename }`. Models keep the
 fields this SDK version does not know in `extra`, and every enum has an `Other(String)` variant, so
@@ -306,7 +310,8 @@ if job.wait().await?.status() == "done" {
 
 `wait()` polls every 2 s for at most 5 minutes (`wait_with(timeout, interval)` to change that) and
 returns the terminal answer — a `failed` job is returned, not raised; running out of time is
-`sdk.job_timeout`. Which operations are long-running is a table of this SDK (`oblodai::lro::LRO`).
+`sdk.job_timeout`. Which operations are long-running, and when a job is finished, comes from the
+contract (`x-sdk-poll`): `oblodai::lro::LRO` is generated.
 
 ### Raw responses, client copies, hooks
 

@@ -1,9 +1,13 @@
-//! Long-running operations (batches, document jobs) and how to follow them — a decision of this
-//! SDK, not of the API: the generator knows nothing of this table (Ruling 3).
+//! Long-running operations (batches, document jobs) and how to follow them.
+//!
+//! Which operations are long-running, how each is polled and when it is finished is a fact of the
+//! contract (`x-sdk-poll`): [`LRO`], [`TERMINAL_STATUSES`] and the [`JobAck`] / [`JobStatus`]
+//! implementations of the answers are generated (`crate::generated::lro`). This module is the
+//! waiter.
 //!
 //! A create call listed in [`LRO`] can be sent with [`Request::job`] instead of `.await`: it
-//! returns a [`Job`] around the create answer, and [`Job::wait`] polls the operation named here
-//! until the status is terminal ([`TERMINAL_STATUSES`]).
+//! returns a [`Job`] around the create answer, and [`Job::wait`] polls the operation named there
+//! until the status is terminal.
 //!
 //! ```no_run
 //! # async fn demo(client: &oblodai::Client) -> oblodai::Result<()> {
@@ -29,24 +33,9 @@ use crate::core::engine::CallOptions;
 use crate::core::route::RouteSpec;
 use crate::core::transport::Transport;
 use crate::error::{Error, Result};
-use crate::generated::models::{
-    BatchInfoResponse, BatchSubmitResponse, DocumentJobAccepted, DocumentJobView,
-};
-use crate::generated::routes;
 use crate::resources::base::{Decode, FileResult, Request};
 
-/// `create operationId -> poll operationId`.
-pub const LRO: &[(&str, &str)] = &[
-    ("createPaymentBatch", "getBatchInfo"),
-    ("createPayoutBatch", "getBatchInfo"),
-    ("createRefundBatch", "getBatchInfo"),
-    ("createTransferBatch", "getBatchInfo"),
-    ("createDocumentJob", "getDocumentJob"),
-];
-
-/// Statuses after which a job no longer changes: a batch ends `completed` or `stopped`
-/// (`on_error=stop`), a document job `done`, `failed` or `expired`.
-pub const TERMINAL_STATUSES: &[&str] = &["completed", "stopped", "done", "failed", "expired"];
+pub use crate::generated::lro::{LRO, TERMINAL_STATUSES};
 
 /// The poll operation of a long-running create operation, if it is one.
 pub fn poll_of(operation_id: &str) -> Option<&'static str> {
@@ -76,50 +65,10 @@ pub trait JobStatus {
     /// The status literal (`pending`, `completed`, `done`, …).
     fn status(&self) -> &str;
 
-    /// Whether the job will not change any more.
+    /// Whether the job will not change any more. The generated implementations answer with the
+    /// terminal statuses of their own operation; this default, with any operation's.
     fn is_terminal(&self) -> bool {
         TERMINAL_STATUSES.contains(&self.status())
-    }
-}
-
-impl JobAck for BatchSubmitResponse {
-    type Status = BatchInfoResponse;
-    fn poll_route() -> &'static RouteSpec {
-        &routes::GET_BATCH_INFO
-    }
-    fn id_field() -> &'static str {
-        "batch_id"
-    }
-    fn job_id(&self) -> &str {
-        &self.batch_id
-    }
-}
-
-impl JobStatus for BatchInfoResponse {
-    fn status(&self) -> &str {
-        self.status.as_str()
-    }
-}
-
-impl JobAck for DocumentJobAccepted {
-    type Status = DocumentJobView;
-    fn poll_route() -> &'static RouteSpec {
-        &routes::GET_DOCUMENT_JOB
-    }
-    fn id_field() -> &'static str {
-        "job_id"
-    }
-    fn job_id(&self) -> &str {
-        &self.job_id
-    }
-    fn download_route() -> Option<&'static RouteSpec> {
-        Some(&routes::DOWNLOAD_DOCUMENT_JOB_FILE)
-    }
-}
-
-impl JobStatus for DocumentJobView {
-    fn status(&self) -> &str {
-        self.status.as_str()
     }
 }
 

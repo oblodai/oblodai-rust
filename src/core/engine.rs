@@ -220,6 +220,9 @@ impl Core {
                 }
             }
         }
+        if let Some(b) = &body {
+            super::money::reject_float_amounts(b, "")?;
+        }
         let body = serialize_body(body.as_ref(), route.method);
         if let Some(k) = &key {
             assert_idempotency_key(k)?;

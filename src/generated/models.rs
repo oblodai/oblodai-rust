@@ -18,6 +18,10 @@ use super::enums::{
     WebhookDeliveryStatus,
 };
 
+/// JSON names of the request fields that are numbers but not money (`type: number` in the
+/// contract). A float anywhere else in a request body is an amount losing precision.
+pub const NON_MONEY_NUMBERS: &[&str] = &["accuracy_payment_percent"];
+
 #[derive(Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct AMLLinkView {
     /// До какого момента ссылка действует (UTC).

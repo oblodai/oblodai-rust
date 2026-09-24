@@ -448,3 +448,26 @@ fn is_known_event_tells_a_modelled_event_from_a_newer_one() {
     assert!(!newer.is_known());
     assert_eq!(newer.event_kind(), "settlement");
 }
+
+/// The kinds and their models come from the contract: every delivered event name maps to a kind
+/// this SDK models, and a conversion delivery parses to its own variant.
+#[test]
+fn every_event_of_the_contract_is_a_known_kind() {
+    use oblodai::webhooks::{parse_webhook, KNOWN_EVENT_KINDS, WEBHOOK_EVENTS};
+    for (event, kind) in WEBHOOK_EVENTS {
+        assert!(KNOWN_EVENT_KINDS.contains(kind), "{event} → {kind}");
+    }
+    assert!(WEBHOOK_EVENTS.contains(&("conversion.completed", "conversion")));
+    let body = serde_json::json!({
+        "type": "conversion", "id": "c-1", "mode": "auto", "from": "USDT", "to": "BTC",
+        "sent": "10", "fee_percent": "1", "status": "completed", "reason": "", "is_final": true,
+        "document_url": "", "created_at": "t", "completed_at": "t", "sequence": 3, "event_at": "t"
+    });
+    let event = parse_webhook(body.to_string().as_bytes()).unwrap();
+    assert!(matches!(event, oblodai::WebhookEvent::Conversion(_)));
+    assert!(event.is_known());
+    assert_eq!(
+        (event.uuid(), event.sequence(), event.order_id()),
+        ("c-1", Some(3), None)
+    );
+}

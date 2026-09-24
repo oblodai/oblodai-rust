@@ -405,6 +405,22 @@ impl BatchStatus {
             Self::Other(v) => v,
         }
     }
+
+    /// Statuses after which nothing else can happen (`x-status-classes.final` of the contract).
+    pub const FINAL: &'static [Self] = &[Self::Completed, Self::Stopped];
+
+    /// The final statuses that mean success (`x-status-classes.success` of the contract).
+    pub const SUCCESS: &'static [Self] = &[];
+
+    /// Nothing more will happen to an object in this status: one of [`Self::FINAL`].
+    pub fn is_final(&self) -> bool {
+        Self::FINAL.contains(self)
+    }
+
+    /// A final status that means success: one of [`Self::SUCCESS`].
+    pub fn is_success(&self) -> bool {
+        Self::SUCCESS.contains(self)
+    }
 }
 
 impl Default for BatchStatus {
@@ -572,6 +588,22 @@ impl DocumentJobStatus {
             Self::Expired => "expired",
             Self::Other(v) => v,
         }
+    }
+
+    /// Statuses after which nothing else can happen (`x-status-classes.final` of the contract).
+    pub const FINAL: &'static [Self] = &[Self::Done, Self::Failed, Self::Expired];
+
+    /// The final statuses that mean success (`x-status-classes.success` of the contract).
+    pub const SUCCESS: &'static [Self] = &[Self::Done];
+
+    /// Nothing more will happen to an object in this status: one of [`Self::FINAL`].
+    pub fn is_final(&self) -> bool {
+        Self::FINAL.contains(self)
+    }
+
+    /// A final status that means success: one of [`Self::SUCCESS`].
+    pub fn is_success(&self) -> bool {
+        Self::SUCCESS.contains(self)
     }
 }
 
@@ -2652,6 +2684,28 @@ impl PaymentStatus {
             Self::Other(v) => v,
         }
     }
+
+    /// Statuses after which nothing else can happen (`x-status-classes.final` of the contract).
+    pub const FINAL: &'static [Self] = &[
+        Self::Paid,
+        Self::PaidOver,
+        Self::WrongAmount,
+        Self::Expired,
+        Self::Cancelled,
+    ];
+
+    /// The final statuses that mean success (`x-status-classes.success` of the contract).
+    pub const SUCCESS: &'static [Self] = &[Self::Paid, Self::PaidOver];
+
+    /// Nothing more will happen to an object in this status: one of [`Self::FINAL`].
+    pub fn is_final(&self) -> bool {
+        Self::FINAL.contains(self)
+    }
+
+    /// A final status that means success: one of [`Self::SUCCESS`].
+    pub fn is_success(&self) -> bool {
+        Self::SUCCESS.contains(self)
+    }
 }
 
 impl Default for PaymentStatus {
@@ -2998,6 +3052,22 @@ impl PayoutStatus {
             Self::Sent => "sent",
             Self::Other(v) => v,
         }
+    }
+
+    /// Statuses after which nothing else can happen (`x-status-classes.final` of the contract).
+    pub const FINAL: &'static [Self] = &[Self::Cancelled, Self::Confirmed, Self::Failed];
+
+    /// The final statuses that mean success (`x-status-classes.success` of the contract).
+    pub const SUCCESS: &'static [Self] = &[Self::Confirmed];
+
+    /// Nothing more will happen to an object in this status: one of [`Self::FINAL`].
+    pub fn is_final(&self) -> bool {
+        Self::FINAL.contains(self)
+    }
+
+    /// A final status that means success: one of [`Self::SUCCESS`].
+    pub fn is_success(&self) -> bool {
+        Self::SUCCESS.contains(self)
     }
 }
 
