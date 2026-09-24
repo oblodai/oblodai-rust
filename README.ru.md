@@ -24,11 +24,13 @@
 
 Официальный Rust SDK для платёжного шлюза **Oblodai**: приём платежей, выплаты, массовые операции
 (батчи), платёжные ссылки, выплатные ссылки (крипточеки), сплиты, статические кошельки, переводы,
-вебхуки. Подпись запросов, разбор ответов, типизированные ошибки, идемпотентность и повторы — из
-коробки. Rust 2021, **MSRV 1.86**, асинхронный клиент на `reqwest` + `tokio` с rustls (без
-OpenSSL); синхронный клиент включается фичей, а с `--no-default-features` собираются типы контракта,
-помощники для сумм, проверка вебхуков и точка расширения `HttpBackend` — вообще без `reqwest` в
-дереве зависимостей.
+вебхуки, документы. Все пространства имён, методы и модели **сгенерированы из OpenAPI-контракта
+шлюза** — 120 операций, по методу на каждую — поверх рукописного runtime, который подписывает
+запросы, безопасно повторяет, держит один ключ идемпотентности на вызов и помечает каждый вызов
+заголовком `X-Request-ID`. Rust 2021, **MSRV 1.86**, асинхронный клиент на `reqwest` + `tokio` с
+rustls (без OpenSSL); синхронный клиент включается фичей, а с `--no-default-features` модели,
+помощники для сумм, проверка вебхуков и точка расширения `HttpBackend` собираются вообще без
+`reqwest`.
 
 > **Базовый URL.** По умолчанию `https://api.oblodai.com`. При необходимости переопределите
 > `base_url` и передайте свои ключи при инициализации. Схема должна быть `https://`; обычный
@@ -39,52 +41,58 @@ OpenSSL); синхронный клиент включается фичей, а 
 
 ```toml
 [dependencies]
-oblodai = "1.3"
+oblodai = "2.0"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-futures-util = "0.3"   # only for `.stream()` — the `StreamExt` adapters live there
+futures-util = "0.3"   # only for `.stream()` / `.by_page()` — the `StreamExt` adapters live there
 ```
 
-Нужен Rust **1.86** или новее; CI проверяет сборку ровно на этом тулчейне. Нижняя граница задана
-деревом зависимостей (`reqwest` → `url` → `idna`/`icu`), а не кодом самого SDK; её подъём — это
-изменение минорной версии.
+Нужен Rust **1.86** или новее. Нижняя граница задаётся деревом зависимостей, а не кодом SDK; её
+повышение — минорная версия.
 
-Фичи:
-
-| фича              | что добавляет                                                                                                                                                          |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `reqwest-client`  | *(по умолчанию)* асинхронный `Client` на `reqwest` с rustls                                                                                                            |
-| `blocking`        | синхронный `blocking::Client` поверх того же чистого ядра                                                                                                              |
-| `native-roots`    | дополнительно доверять системному хранилищу сертификатов — нужно за TLS-инспектирующим прокси или для шлюза с приватным CA; без неё используются только вшитые корни webpki |
+| фича              | что добавляет                                                                                          |
+| ----------------- | ------------------------------------------------------------------------------------------------------ |
+| `reqwest-client`  | *(по умолчанию)* асинхронный `Client` на `reqwest` с rustls                                            |
+| `blocking`        | синхронный `blocking::Client` на том же чистом ядре                                                    |
+| `native-roots`    | доверять ещё и хранилищу сертификатов ОС (прокси с TLS-инспекцией, шлюз с частным УЦ)                  |
 
 ### Синхронный клиент
 
 ```toml
-oblodai = { version = "1.3", features = ["blocking"] }
+oblodai = { version = "2.0", features = ["blocking"] }
 ```
 
 ```rust
+use oblodai::models::{HistoryRequest, PaymentRequest};
+
 let client = oblodai::blocking::Client::from_env()?;
-let invoice = client.payments().create(params).send()?;
-for payout in client.payouts().history(Default::default()).iter() {
+let invoice = client
+    .payments()
+    .create(PaymentRequest::new("25", "USDT"))
+    .send()?;
+for payout in client
+    .payouts()
+    .list_history(HistoryRequest::default())
+    .iter()
+{
     println!("{}", payout?.uuid);
 }
 ```
 
-Это то же самое дерево методов поверх того же чистого ядра (подпись, конверты, решения о повторах);
-отличается только ввод-вывод.
+То же сгенерированное дерево методов на том же чистом ядре; билдеры отправляются `.send()`, списки
+перебираются `.iter()` / `.by_page()`.
 
 ## Где взять ключи
 
-Ключи выдаются в личном кабинете [my.oblodai.com](https://my.oblodai.com) → **API-ключи**. Ключ —
-это публичный идентификатор плюс секрет:
+Ключи — в кабинете [my.oblodai.com](https://my.oblodai.com) → **API-ключи**. Ключ — это публичный
+идентификатор и секрет:
 
-| ключ     | публичный идентификатор | секрет                |
-| -------- | ----------------------- | --------------------- |
-| боевой   | `oblodai_<hex>`         | `oblodai_live_<hex>`  |
-| песочный | `test_oblodai_<hex>`    | `oblodai_test_<hex>`  |
+| ключ      | публичный id         | секрет                |
+| --------- | -------------------- | --------------------- |
+| боевой    | `oblodai_<hex>`      | `oblodai_live_<hex>`  |
+| песочница | `test_oblodai_<hex>` | `oblodai_test_<hex>`  |
 
-У мерчанта **один API-ключ**, и он подписывает все маршруты, доступные SDK: счета и платёжные
-ссылки, выплаты, возвраты и чеки, настройки, кошельки, отчёты. Выбирать нечего:
+У мерчанта **один API-ключ**, и он подписывает все маршруты, которые умеет вызывать SDK, — выбирать
+ключ под вызов не нужно:
 
 ```rust
 let client = oblodai::Client::builder()
@@ -93,37 +101,32 @@ let client = oblodai::Client::builder()
     .build()?;
 ```
 
-**Песочный ключ** работает с копией шлюза без блокчейна — фейковый баланс из крана, симулированные
-депозиты, настоящие вебхуки — и выдаётся песочным онбордингом (`merchants().sandbox(…)` или личный
-кабинет). Интегрируйтесь сначала на нём; боевые и песочные ключи разделены, и ни один не видит
-данных другого.
+`Client::from_env()` читает `OBLODAI_PUBLIC_ID` / `OBLODAI_SECRET`. **Ключ песочницы** работает с
+копией шлюза без блокчейна — баланс из крана, симулированные депозиты, настоящие вебхуки — и
+берётся в кабинете или через `sandbox().onboard_store(merchant_id)`. Интегрируйтесь сначала на нём.
 
-Второй вид доступа, **админ-токен онбординга**, существует только на self-hosted шлюзе: он уходит
-в заголовке `X-Admin-Token` на маршрутах провижининга `merchants()` и больше нигде. Задаётся через
-`.admin_token(…)` или `OBLODAI_ADMIN_TOKEN`.
+Второй вид учётных данных, **админ-токен онбординга**, есть только у самостоятельно развёрнутого
+шлюза: он уходит заголовком `X-Admin-Token` на маршрут подключения магазина
+(`sandbox().onboard_store`) и больше никуда. Задаётся `.admin_token(…)` или `OBLODAI_ADMIN_TOKEN`.
 
-Только мерчант, заведённый задолго до перехода на один ключ, может ещё держать старую разделённую
-пару (`oblodai_pk_…` для приёма, `oblodai_wk_…` для вывода); такая пара на маршрутах другой половины
-отбивается 403 `merchant.wrong_key_kind`. Замените её на API-ключ мерчанта.
+Только мерчант, подключённый задолго до перехода на один ключ, может ещё держать старую пару
+(`oblodai_pk_…` / `oblodai_wk_…`); на маршрутах другой половины такая пара получает 403
+`merchant.wrong_key_kind`. Замените её API-ключом мерчанта.
 
 ## Быстрый старт
 
-Создайте клиента из окружения и примите платёж:
-
 ```rust
-use oblodai::contract::requests::PaymentRequest;
+use oblodai::models::PaymentRequest;
 use oblodai::Client;
 
 let client = Client::from_env()?;
 let invoice = client
     .payments()
     .create(PaymentRequest {
-        amount: "25".into(),                 // amounts are decimal strings, never floats
-        currency: "USDT".into(),             // what you price in: a fiat or an asset
-        network: Some("tron".into()),        // omit to let the payer choose on the pay page
+        network: Some("tron".into()), // omit to let the payer choose on the pay page
         order_id: Some("order-1001".into()), // your reference; idempotent per order_id
         url_callback: Some("https://shop.example/oblodai/webhook".into()),
-        ..Default::default()
+        ..PaymentRequest::new("25", "USDT") // amount (a decimal string) and currency
     })
     .await?;
 println!(
@@ -132,152 +135,135 @@ println!(
 );
 ```
 
-`Client::from_env()` читает `OBLODAI_PUBLIC_ID` / `OBLODAI_SECRET` (и остальные `OBLODAI_*` ниже), но
-не требует их: клиент без учётных данных собирается нормально и падает на первом подписанном вызове
-с `sdk.missing_credentials`.
+Тела запросов — типизированные модели (`oblodai::models`): `Model::new(обязательные…)` задаёт
+обязательные поля, остальное — синтаксисом обновления структуры. Суммы — `Money`, десятичная
+строка; `From<f64>` нет, поэтому float не компилируется (а пришедший через `oblodai::from_json`
+отвергается с `sdk.float_amount` до отправки).
 
-Чтобы выставлять цену в фиате, берите одну валюту, а получайте другую: `amount: "25".into(),
-currency: "USD".into(), to_currency: Some("USDT".into())` — `currency` это то, в чём вы выставили
-счёт, а `to_currency` — актив, который отправляет плательщик.
-
-Вывод денег идёт тем же ключом:
+Выплата — тем же ключом:
 
 ```rust
-use oblodai::contract::requests::PayoutRequest;
+use oblodai::models::PayoutRequest;
 
 let payout = client
     .payouts()
     .create(PayoutRequest {
-        amount: "10".into(),
-        currency: "USDT".into(),
         network: Some("tron".into()),
-        address: "TQrY8bkbpXKPt2LZbU8jqfnpFbUSF15sbx".into(),
-        order_id: "payout-1001".into(),
-        ..Default::default()
+        ..PayoutRequest::new(
+            "TQrY8bkbpXKPt2LZbU8jqfnpFbUSF15sbx",
+            "10",
+            "USDT",
+            "payout-1001",
+        )
     })
     .idempotency_key("payout-1001") // makes the retry safe across restarts too
     .await?;
 println!("{} {}", payout.uuid, payout.status);
 ```
 
-Больше запускаемых программ — в [`examples/`](examples): счёт, доведённый до оплаты, выплата с
-предварительным расчётом и «сухим прогоном», и приёмник вебхуков.
+Готовые программы — в [`examples/`](examples); каждая прогоняется в `tests/examples.rs` против
+подставного шлюза.
 
-## Песочница и тестирование
+## Опции вызова
 
-С ключом `test_` шлюз держит полноценного мерчанта, который никогда не выходит в сеть блокчейна.
-Начислите себе денег, симулируйте депозит, прогоните вебхук и всё обнулите:
+Каждый метод возвращает билдер; ничего не уходит, пока его не дождались (`.send()` у синхронного
+клиента). Опции задаются на билдере:
 
 ```rust
-use oblodai::contract::requests::{
-    SandboxDepositRequest, SandboxFaucetRequest, TestWebhookPaymentRequest,
-};
-use oblodai::WebhookKind;
+use std::time::Duration;
 
-// test money to pay out from (`test_` keys only)
-client
-    .sandbox()
-    .faucet(SandboxFaucetRequest {
-        amount: "1000".into(),
-        asset: "USDT".into(),
-        ..Default::default()
-    })
+let balance = client
+    .account()
+    .get_balance()
+    .timeout(Duration::from_secs(10)) // one attempt
+    .deadline(Duration::from_secs(45)) // the whole call, retries and pauses included
+    .max_retries(5)
+    .extra_header("X-Tenant", "eu") // this call only
+    .request_id("order-1001-balance") // X-Request-ID; a fresh UUID when not set
     .await?;
-
-// "pay" an invoice; repeat the same txid with more confirmations to walk the pending→paid path
-client
-    .sandbox()
-    .deposit(SandboxDepositRequest {
-        invoice_id: invoice.uuid.clone(),
-        ..Default::default()
-    })
-    .await?;
-
-// a rehearsal delivery: signed exactly like a live one, and marked `test: true`
-client
-    .webhooks()
-    .test(
-        WebhookKind::Payment,
-        TestWebhookPaymentRequest {
-            url_callback: "https://shop.example/oblodai/webhook".into(),
-            ..Default::default()
-        },
-    )
-    .await?;
-
-// what was delivered, with payloads — then a clean slate
-let deliveries = client
-    .sandbox()
-    .webhooks(Default::default())
-    .all(None)
-    .await?;
-client.sandbox().reset().await?;
 ```
 
-`sandbox().replay(delivery_id)` повторно отправляет доставку, уже дошедшую до терминального
-состояния. `sandbox().reset()` отменяет открытые счета и обнуляет балансы.
-Репетиционная доставка несёт `test: true` в подписанном теле и `X-Webhook-Test: true` в заголовках —
-это видно как `delivery.is_test`; никогда не засчитывайте по ней заказ.
+| опция                  | что делает                                                                                        |
+| ---------------------- | ------------------------------------------------------------------------------------------------- |
+| `.idempotency_key(k)`  | свой ключ (на маршрутах, которые шлюз дедуплицирует; иначе `sdk.idempotency_unsupported`)         |
+| `.timeout(Duration)`   | одна попытка (по умолчанию 30 с)                                                                  |
+| `.deadline(Duration)`  | весь вызов с повторами и паузами (по умолчанию 90 с)                                              |
+| `.max_retries(n)`      | повторов после первой попытки для этого вызова (по умолчанию 2; `0` — одна отправка)              |
+| `.extra_header(n, v)`  | заголовок только этого вызова; заголовки самого SDK не переопределяются                           |
+| `.request_id(id)`      | `X-Request-ID` вызова — один на все попытки; без него — свежий UUID                               |
+
+Идентификатор запроса связывает ваши логи с логами шлюза: он есть в тексте каждой ошибки,
+`[payout.insufficient_funds] not enough USDT (request_id=…)`, и в `err.request_id()`.
 
 ## Обзор методов
 
-Шестнадцать неймспейсов покрывают все **107 маршрутов** мерчантского API.
+`client.<ресурс>().<метод>(…)` — шестнадцать пространств имён, по методу на операцию OpenAPI; имя —
+`operationId` без имени ресурса. `names.lock` фиксирует все имена; полный список со старыми именами
+1.x — в [MIGRATION-2.0.md](MIGRATION-2.0.md).
 
-| неймспейс         | методы                                                                                                                                                                                                   | маршруты                                                                                                                                                                                                                                                  |
-| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `payments()`      | create · info/get · cancel · history/list · batch · qr · services · send_email · resend · public_view · select · public_qr                                                                                | `POST /v1/payment` · `/payment/info` · `/payment/cancel` · `/payment/history` · `/payment/batch` · `/payment/qr` · `/payment/services` · `/payment/send-email` · `/payment/resend` · `GET /v1/pay/{id}` · `POST /v1/pay/{id}/select` · `GET /v1/pay/{id}/qr` |
-| `refunds()`       | create · resolve · batch                                                                                                                                                                                 | `POST /v1/payment/refund` · `/payment/resolve` · `/refund/batch`                                                                                                                                                                                           |
-| `payouts()`       | create · validate · calculate · info/get · cancel · approve · history/list · mass · batch · services · get/set_fee_config · get/set_refund_fee_config                                                     | `POST /v1/payout` · `/payout/validate` · `/payout/calculate` · `/payout/info` · `/payout/cancel` · `/payout/approve` · `/payout/history` · `/payout/mass` · `/payout/batch` · `/payout/services` · `/payout/fee-config/{get,set}` · `/payout/refund-fee-config/{get,set}` |
-| `payout_links()`  | create · info/get · list · cancel · batch · cheque · claim_preview · claim                                                                                                                                | `POST /v1/payout/link` · `/payout/link/info` · `/payout/link/list` · `/payout/link/cancel` · `/payout/link/batch` · `/payout/link/cheque` · `GET /v1/claim/{token}` · `POST /v1/claim/{token}`                                                              |
-| `payment_links()` | create · info/get · list · toggle · public_view · checkout                                                                                                                                                | `POST /v1/payment/link` · `/payment/link/info` · `/payment/link/list` · `/payment/link/toggle` · `GET /v1/link/{id}` · `POST /v1/link/{id}/checkout`                                                                                                        |
-| `batches()`       | info                                                                                                                                                                                                     | `POST /v1/batch/info`                                                                                                                                                                                                                                     |
-| `transfers()`     | to_personal · to_user · batch                                                                                                                                                                            | `POST /v1/transfer/to-personal` · `/transfer/to-user` · `/transfer/batch`                                                                                                                                                                                 |
-| `wallets()`       | create · qr · block · refund_blocked_deposit                                                                                                                                                             | `POST /v1/wallet` · `/wallet/qr` · `/wallet/block` · `/wallet/blocked-address-refund`                                                                                                                                                                      |
-| `webhooks()`      | register · rotate_secret · deliveries · test · test_legacy *(устарел)*                                                                                                                                   | `POST /v1/webhooks` · `/webhooks/rotate-secret` · `/webhooks/deliveries` · `/test-webhook/{payment,payout,wallet}` · `/payment/testing-webhook`                                                                                                             |
-| `documents()`     | statement · ledger · balance_certificate · fee_schedule · split_report · batch_report · link_report · wallet_statement · referrals_report · create_job · job_info · job_file · download                    | `GET /v1/documents/statement` · `/documents/ledger` · `/documents/balance` · `/documents/fees` · `/documents/split` · `/documents/batch` · `/documents/link` · `/documents/wallet/statement` · `/documents/referrals` · `POST /v1/documents/jobs` · `/documents/jobs/info` · `GET /v1/documents/jobs/file` · `/documents/{kind}/{id}` |
-| `splits()`        | create_rule · list_rules · delete_rule · get/set_config · get/set_opt_in                                                                                                                                 | `POST /v1/split/rule` · `/split/rule/list` · `/split/rule/delete` · `/split/config/{get,set}` · `/split/recipient/optin/get` · `/split/recipient/optin`                                                                                                     |
-| `settings()`      | set_discount · list_discounts · get/set_accuracy · get/set_auto_refund · list/set_accepted · get/set_payment_fee_config · list/set/delete_auto_withdraw · list/add/remove/enable_api_allowlist             | `POST /v1/payment/discount/{set,list}` · `/payment/accuracy/{get,set}` · `/payment/autorefund/{get,set}` · `/payment/accepted/{list,set}` · `/payment/fee-config/{get,set}` · `/auto-withdraw/{list,set,delete}` · `/api-allowlist/{list,add,remove,enable}` |
-| `account()`       | balance · referral · vrcs/set_vrcs *(в референсном SDK это `vrcs(enabled?)`; здесь два метода, потому что в Rust нет необязательных аргументов)*                                                          | `POST /v1/balance` · `/referral/info` · `/vrcs`                                                                                                                                                                                                            |
-| `catalog()`       | currencies · exchange_rates                                                                                                                                                                              | `GET /v1/currencies` · `POST /v1/exchange-rate/list`                                                                                                                                                                                                       |
-| `sandbox()`       | faucet · deposit · webhooks · replay · reset                                                                                                                                                             | `POST /v1/sandbox/faucet` · `/sandbox/deposit` · `GET /v1/sandbox/webhooks` · `POST /v1/sandbox/webhooks/replay` · `/sandbox/reset`                                                                                                                         |
-| `merchants()`     | create · create_sandbox (провижининг; `admin_token` на self-hosted шлюзе)                                                                                                                                 | `POST /v1/merchants` · `/merchants/{id}/sandbox`                                                                                                                                                                                                           |
+| пространство        | примеры                                                                                   |
+| ------------------- | ----------------------------------------------------------------------------------------- |
+| `payments()`        | `create` · `get_info` · `cancel` · `list_history` · `get_qr` · `resolve` · `send_email`   |
+| `payment_links()`   | `create` · `get` · `list` · `toggle`                                                      |
+| `refunds()`         | `payment` · `blocked_wallet`                                                              |
+| `payouts()`         | `create` · `calculate` · `validate` · `get_info` · `list_history` · `transfer_to_user`    |
+| `payout_links()`    | `create` · `create_batch` · `get` · `list` · `cancel` · `claim_payout`                    |
+| `batches()`         | `create_payment` · `create_payout` · `create_refund` · `get_info`                         |
+| `splits()`          | `create_rule` · `list_rules` · `get_config` · `set_config`                                |
+| `wallets()`         | `create` · `block` · `get_qr`                                                             |
+| `account()`         | `get_balance` · `get_summary` · `list_exchange_rates`                                     |
+| `webhooks()`        | `register` · `rotate_secret` · `list_deliveries` · `send_test_payment`                    |
+| `settings()`        | точность, скидки, автовозврат, автоконвертация, комиссии, валюты приёма, автовывод        |
+| `api_allowlist()`   | `list` · `add_entry` · `remove_entry` · `set_enabled`                                     |
+| `referrals()`       | `get_info`                                                                                |
+| `documents()`       | `get_statement` · `get_ledger` · `create_job` · `get_job` · `download_job_file`           |
+| `checkout()`        | для плательщика, без ключа: `get` · `select_method` · `list_currencies`                   |
+| `sandbox()`         | `faucet` · `simulate_deposit` · `list_webhooks` · `replay_webhook` · `reset`              |
 
-Каждый метод возвращает билдер, который одновременно является future: сделайте `.await` или сначала
-задайте опции конкретного вызова.
-
-Для поиска подходит голый uuid или `Lookup`: `payments().info("uuid")`,
-`payments().info(Lookup::order_id("order-1001"))`. Там, где референсный SDK принимает
-`string | model`, методы на Rust принимают `impl Into<IdRef>`, поэтому работают и
-`payout_links().info(&link)`, и `payout_links().info("lnk_1")`.
-
-`documents()` в основном отвечает `FileResult { bytes, content_type, filename }`; два маршрута задач
-— обычный JSON: `create_job` и `job_info` возвращают `DocumentJob`, и только `job_file` отдаёт байты.
+Маршрут документа отвечает `FileResult { bytes, content_type, filename }`. Модели сохраняют
+незнакомые этой версии SDK поля в `extra`, у каждого enum есть вариант `Other(String)` — ответ более
+нового шлюза всё равно разбирается. `Debug` модели не печатает значения полей с «секретными»
+именами (`secret`, `token`, `passcode`, `claim_url`, …).
 
 ### Списки
 
-Списочные методы возвращают `Pager`. Пока вы его не потребите, ни одного запроса не уходит.
+Методы списков возвращают `Pager`. Ничего не запрашивается, пока его не начали читать.
 
 ```rust
 use futures_util::StreamExt;
+use oblodai::enums::PayoutKind;
+use oblodai::models::HistoryRequest;
 
 // one page
 let page = client
     .payments()
-    .history(Default::default())
+    .list_history(HistoryRequest::default())
     .limit(50)
     .await?;
 println!("{} of {}", page.items.len(), page.paginate.total);
 
 // every item, one page fetched at a time
-let mut payouts = client.payouts().history(Default::default()).stream();
+let mut payouts = client
+    .payouts()
+    .list_history(HistoryRequest::default())
+    .stream();
 while let Some(payout) = payouts.next().await {
     println!("{}", payout?.uuid);
+}
+
+// page by page
+let mut pages = client
+    .payments()
+    .list_history(HistoryRequest::default())
+    .by_page();
+while let Some(page) = pages.next().await {
+    println!("a page of {}", page?.items.len());
 }
 
 // or collect, with a cap
 let refunds = client
     .payouts()
-    .history(PayoutHistoryRequest {
+    .list_history(HistoryRequest {
         kind: Some(PayoutKind::Refund),
         ..Default::default()
     })
@@ -285,38 +271,128 @@ let refunds = client
     .await?;
 ```
 
-### Статусы
+### Долгие операции
 
-- Платёж: `select → created → confirm_check → paid | paid_over | wrong_amount | expired | cancelled`.
-  `is_payment_paid(&status)` истинно для `paid`/`paid_over`; `wrong_amount` (недоплата) ждёт
-  `refunds().resolve(…)`; остальное покрывает `is_payment_final`.
-- Выплата: `pending → approved → awaiting_cosign → broadcasting → sent → confirmed | failed | cancelled`,
-  для неё есть `is_payout_final`.
+Пакеты и выгрузки документов доделываются в фоне. `.job()` отправляет создание и возвращает `Job`,
+который умеет за ним следить:
 
-Смену состояний лучше ловить вебхуками, а `info` опрашивать только как запасной вариант. У каждого
-перечисления есть вариант `Other(String)`, поэтому значение, введённое более новым шлюзом, всё равно
-разберётся.
+```rust
+use oblodai::models::{DocumentJobRequest, PayoutBatchRequest};
+use oblodai::JobStatus;
 
-### Суммы
+// a batch: `job()` sends the create call, `wait()` polls batches().get_info() until it ends
+let job = client
+    .batches()
+    .create_payout(PayoutBatchRequest::default())
+    .job()
+    .await?;
+let batch = job.wait().await?; // status `completed` or `stopped`
+println!(
+    "{}: {} ok, {} failed",
+    job.id(),
+    batch.succeeded,
+    batch.failed
+);
 
-`add_amounts`, `subtract_amounts`, `compare_amounts`, `amounts_equal`, `is_zero_amount` — точная
-десятичная арифметика над строковыми суммами, которыми оперирует API. Никогда не разбирайте `Money`
-как `f64`.
+// a document export: wait, then download the file
+let job = client
+    .documents()
+    .create_job(DocumentJobRequest::new("statement"))
+    .job()
+    .await?;
+if job.wait().await?.status() == "done" {
+    let file = job.download().await?;
+    println!("{} bytes of {}", file.bytes.len(), file.content_type);
+}
+```
 
-`Money` намеренно не реализует ни `Ord`, ни `PartialOrd`: производные реализации сравнивали бы
-десятичные *строки*, и тогда `"9.00" > "10.00"` было бы истиной. `if amount > threshold` не
-компилируется — используйте `compare_amounts`. Производный `PartialEq` — это точное равенство строк,
-поэтому при возможных различиях в хвостовых нулях берите `amounts_equal`. Всё, что не является
-десятичной строкой длиной не более 64 символов, даёт `AmountError`; ни один ввод не приводит к
-панике.
+`wait()` опрашивает каждые 2 с не дольше 5 минут (`wait_with(timeout, interval)` — чтобы изменить)
+и возвращает конечный ответ — задача в `failed` возвращается, а не бросается; не уложились —
+`sdk.job_timeout`. Какие операции долгие — таблица этого SDK (`oblodai::lro::LRO`).
+
+### Сырой ответ, копии клиента, хуки
+
+```rust
+use oblodai::{ClientOptions, Hooks};
+use std::time::Duration;
+
+// status, headers and request id of a successful call; `parse()` gives the usual value
+let raw = client.account().get_balance().with_raw_response().await?;
+println!("{} {}", raw.status(), raw.request_id());
+let balance = raw.parse()?;
+
+// a copy of the client with other settings; the original is untouched
+let patient = client.with_options(ClientOptions::new().timeout(Duration::from_secs(60)));
+
+// hooks see every attempt (the signature is redacted)
+let traced = client.with_options(
+    ClientOptions::new().hooks(
+        Hooks::new()
+            .on_request(|r| println!("-> {} {} #{}", r.method, r.url, r.attempt))
+            .on_response(|r| println!("<- {} in {:?}", r.status, r.elapsed)),
+    ),
+);
+traced.account().get_balance().await?;
+```
+
+### Статусы и суммы
+
+- Платёж: `select → created → confirm_check → paid | paid_over | wrong_amount | expired | cancelled`
+  (между ними — `under_review`). `helpers::is_payment_paid(&status)` истинно для `paid`/`paid_over`;
+  `wrong_amount` (недоплата) ждёт `payments().resolve(…)`.
+- Выплата: `pending → approved → awaiting_cosign → broadcasting → sent → confirmed | failed | cancelled`.
+- `add_amounts`, `subtract_amounts`, `compare_amounts`, `amounts_equal`, `is_zero_amount` — точная
+  десятичная арифметика над `Money`. У `Money` нет `Ord`: порядок строк — не порядок чисел.
+
+## Песочница и тестирование
+
+С ключом `test_` шлюз держит полноценного мерчанта, который не касается блокчейна:
+
+```rust
+use oblodai::generated::resources::SandboxListWebhooksQuery;
+use oblodai::models::{FaucetRequest, SimulateDepositRequest, TestWebhookKindRequest};
+
+// test money to pay out from (`test_` keys only)
+client
+    .sandbox()
+    .faucet(FaucetRequest::new("1000", "USDT"))
+    .await?;
+
+// "pay" an invoice; repeat the same txid with more confirmations to walk pending → paid
+client
+    .sandbox()
+    .simulate_deposit(SimulateDepositRequest::new(invoice_uuid))
+    .await?;
+
+// a rehearsal delivery: signed exactly like a live one, and marked `test: true`
+client
+    .webhooks()
+    .send_test_payment(TestWebhookKindRequest::new(
+        "https://shop.example/oblodai/webhook",
+    ))
+    .await?;
+
+// what was delivered, with payloads — then a clean slate
+let deliveries = client
+    .sandbox()
+    .list_webhooks(SandboxListWebhooksQuery::default())
+    .all(None)
+    .await?;
+client.sandbox().reset().await?;
+```
+
+Репетиционная доставка несёт `test: true` в подписанном теле и `X-Webhook-Test: true` в заголовках,
+это `delivery.is_test` — никогда не зачисляйте по ней заказ.
 
 ## Вебхуки
 
-Зарегистрируйте эндпоинт через `webhooks().register(url)` — секрет подписи показывается один раз — и
+Зарегистрируйте адрес через `webhooks().register(…)` — секрет подписи показывается один раз — и
 проверяйте каждую доставку по **сырым** байтам, до любого разбора:
 
 ```rust
+use oblodai::enums::PaymentStatus;
 use oblodai::webhooks::{verify_webhook_delivery, Headers, VerifyOptions};
+use oblodai::WebhookEvent;
 
 let headers = Headers::from_pairs(request_headers); // any (name, value) pairs
 let delivery = verify_webhook_delivery(raw_body, &headers, &VerifyOptions::new(secret))?;
@@ -326,230 +402,104 @@ if delivery.is_test {
 }
 
 match &delivery.event {
-    oblodai::WebhookEvent::Payment(p) if p.status == oblodai::PaymentStatus::Paid => {
-        mark_order_paid(p.order_id.as_deref())
-    }
+    WebhookEvent::Payment(p) if p.status == PaymentStatus::Paid => mark_order_paid(&p.order_id),
     _ => {}
 }
 ```
 
-- **Репетиции.** `webhooks().test()` и песочница подписывают доставки ровно так же, как боевые, и
-  ставят `test: true` (плюс `X-Webhook-Test: true`). Проверяйте `delivery.is_test` (или
-  `is_test_event(&delivery.event)` / `event.is_test()`) и никогда не реагируйте на такую доставку
-  так, будто деньги двинулись.
 - **Дубли и порядок.** `delivery.id` (`X-Webhook-Id`) не меняется между повторами — дедуплицируйте
-  по нему. `event.sequence()` (это `Option<i64>`) задаёт порядок событий; `is_stale_event` отбрасывает
-  пришедшее не по порядку и никогда не истинно, если последовательность отсутствует.
-- **Ротация.** После `webhooks().rotate_secret()` передавайте `.previous_secret(old)` не менее 26
-  часов — пока не пройдёт `previous_secret_valid_until`.
-- **Неизвестные типы событий.** `WebhookEvent` помечен `#[non_exhaustive]` и имеет вариант
-  `Other(Value)`: событие типа новее этого снимка приходит целым, а не ломается, поэтому всегда
-  добавляйте ветку `_`. `is_known_event(&delivery.event)` (или `event.is_known()`) говорит, знает ли
-  снимок `type` этого события; `event.raw()` отдаёт тело того, которого не знает.
-- **Плохое тело — не плохая подпись.** Доставка с верной подписью, тело которой прочитать не удалось,
-  даёт `webhook.bad_payload` с `kind() == Contract` — намеренно *не* ошибку подписи. Отвечайте
-  **401 только на ошибки подписи**, иначе приёмник, отбивающий подделки, отобьёт и подлинное событие
-  и заработает 26 часов повторов.
-- Пустой секрет или отрицательный допуск — это ошибка `Config`, поднятая до какого-либо хеширования;
-  `tolerance_seconds(0)` отключает проверку свежести (по умолчанию ±300 с).
+  по нему. `event.sequence()` упорядочивает события; `is_stale_event` отбрасывает опоздавшее.
+- **Ротация.** После `webhooks().rotate_secret()` передавайте `.previous_secret(old)`, пока не
+  пройдёт `previous_secret_valid_until`.
+- **Незнакомые типы событий** приходят как `WebhookEvent::Other(Value)` (enum `#[non_exhaustive]`);
+  известные — `Payment`, `Payout`, `Wallet` и `Conversion` поверх сгенерированных моделей.
+- **Плохое тело — не плохая подпись.** Проверенная доставка, тело которой не читается, —
+  `webhook.bad_payload` (`kind() == Contract`). Отвечайте 401 только на провал подписи.
 
-Модулю `oblodai::webhooks` не нужны ни клиент, ни API-ключ; он доступен и с
-`--no-default-features`. Типы событий — `invoice.<status>`, `payout.<status>` и `wallet.paid`; поле
-`type` в теле — `payment | payout | wallet`, а `WebhookEvent` — соответствующее перечисление.
+Модулю `oblodai::webhooks` не нужны ни клиент, ни ключ; он собирается с `--no-default-features`.
 
 ## Ошибки
 
-Любой сбой — это `oblodai::Error`, несущий конверт ошибки API: `code()`
-(`payout.insufficient_funds`), `http_status()`, `retryable()`, `retry_after()`, `request_id()`,
-`field()`, `synthetic()` (ответил прокси, а не API) и `kind()` для сопоставления:
-
-| `kind()`                          | HTTP        | когда                                                       |
-| --------------------------------- | ----------- | ----------------------------------------------------------- |
-| `Validation`                      | 400         | запрос отклонён; `field()` называет виновное поле            |
-| `Authentication`                  | 401         | плохая подпись, отсутствующий или неизвестный ключ           |
-| `Permission`                      | 403         | ключу это не разрешено (функция выключена, IP не в списке)   |
-| `NotFound`                        | 404         | такого объекта нет                                           |
-| `Conflict` / `IdempotencyConflict` | 409         | конфликт состояния; ключ переиспользован с другим телом      |
-| `RateLimit`                       | 429         | превышен лимит; учитывайте `retry_after()`                   |
-| `Unavailable`                     | 503         | шлюз занят или на обслуживании — можно повторить             |
-| `Internal`                        | прочие 5xx  | сбой шлюза                                                   |
-| `Api`                             | любой другой | статус, который шлюз вернул и который никуда больше не лёг   |
-| `Transport`                       | —           | ответа не было: таймаут, соединение, дедлайн                 |
-| `Config`                          | —           | отклонено до того, как что-либо было отправлено              |
-| `Contract`                        | —           | ответ не удалось прочитать как конверт                       |
-| `Signature`                       | —           | не прошла проверка подписи вебхука                           |
-
-`retryable()` — источник истины: SDK уже повторил то, что следовало; `retry_after()` говорит, сколько
-ждать; `request_id()` называйте в поддержке. Сырое тело никогда не печатается в `Debug` и никогда не
-сериализуется (`serde_json::to_value(&err)` сохраняет сообщение и выбрасывает тело).
-
-Конверт разбирается поле за полем: одно испорченное поле (дробный `retry_after`, числовой
-`request_id`) не отнимет у вас `code`, по которому вы ветвитесь, а перебить `retryable` шлюза может
-только литеральные `true`/`false`.
-
-Ветвитесь по коду, а не по сообщению:
+Любой сбой — `oblodai::Error`: `code()` (`payout.insufficient_funds`), `http_status()`,
+`retryable()`, `retry_after()`, `request_id()`, `field()`, `synthetic()` (ответил прокси, а не API)
+и `kind()` для сопоставления (`Validation` 400, `Authentication` 401, `Permission` 403,
+`NotFound` 404, `Conflict` / `IdempotencyConflict` 409, `RateLimit` 429, `Unavailable` 503,
+`Internal` прочие 5xx, `Transport`, `Config`, `Contract`, `Signature`). Напечатанная, ошибка
+выглядит как `[код] текст (request_id=…)`. Ветвитесь по коду, а не по тексту:
 
 ```rust
 match client.payouts().create(params).await {
     Ok(payout) => Ok(payout),
-    Err(err) => match err.code() {
-        // retryable — the balance may still arrive
-        "payout.insufficient_funds" | "payout.funds_maturing" => {
-            schedule_retry(err.retry_after().unwrap_or(60));
-            Err(err)
+    Err(err) => {
+        // `[payout.insufficient_funds] … (request_id=…)`
+        eprintln!("{err}");
+        match err.code() {
+            // retryable — the balance may still arrive
+            "payout.insufficient_funds" | "payout.funds_maturing" => {
+                schedule_retry(err.retry_after().unwrap_or(60));
+                Err(err)
+            }
+            _ => Err(err), // the SDK already retried what was safe to retry
         }
-        _ => Err(err), // the SDK already retried what was safe to retry
-    },
+    }
 }
 ```
 
-Коды, которые стоит обрабатывать: `payout.insufficient_funds` и `payout.funds_maturing` (оба
-повторяемы), `idempotency.key_reused`, `invoice.not_payable`, `payment.not_found`,
-`merchant.bad_signature`, `request.rate_limited`. Полный каталог — **469 кодов** — доступен как
-`oblodai::ERROR_CODES`, и каждый метод, двигающий деньги, перечисляет свои коды в собственной
-rustdoc.
-
-Коды, которые SDK поднимает сам, а не шлюз: `sdk.missing_credentials`, `sdk.bad_config`,
+Коды, которые выдаёт сам SDK, а не шлюз: `sdk.missing_credentials`, `sdk.bad_config`,
 `sdk.bad_header`, `sdk.bad_path_param`, `sdk.bad_idempotency_key`, `sdk.idempotency_unsupported`,
-`sdk.bad_amount`, `sdk.bad_envelope`, `sdk.response_too_large`, `webhook.bad_payload` и семейство
+`sdk.float_amount`, `sdk.bad_params`, `sdk.bad_amount`, `sdk.bad_envelope`,
+`sdk.response_too_large`, `sdk.job_timeout`, `sdk.no_download`, `webhook.bad_payload` и семейство
 `transport.timeout` / `transport.network` / `transport.deadline`.
 
 ## Повторы, идемпотентность и таймауты
 
-- **Безопасность повтора** берётся из флага `safe` самого контракта, проставленного шлюзом вручную
-  для каждого маршрута и доступного как `RouteSpec::safe`. Никаких эвристик по форме пути в SDK нет.
-- **Ключи идемпотентности** проставляются автоматически на маршрутах создания — один на логический
-  вызов, переиспользуемый при каждом повторе, — так что таймаут не может породить вторую выплату.
-  Передайте свой через `.idempotency_key(…)`, чтобы повтор был безопасен и между перезапусками; на
-  маршрутах, которые шлюз не дедуплицирует, SDK отклонит ключ с `sdk.idempotency_unsupported` ещё до
-  отправки.
-- **Когда происходит повтор.** Ошибка повторяется, только если API сказал `retryable: true`. Ответы
-  без конверта API (502/503 от прокси) и транспортные сбои повторяются только на читающих маршрутах
-  и на записях с ключом. `Retry-After` учитывается (в секундах или как HTTP-дата, с зажимом —
-  никогда не отрицательный и без переполнения), иначе — экспоненциальная пауза с джиттером.
-- **Настройки.** `ClientBuilder::retry(RetryOptions { max_retries, base_delay_ms, max_delay_ms,
-  max_retry_after_ms })` — по умолчанию 2 / 250 мс / 4 с / 30 с, а `max_retries: 0` отключает
-  повторы.
-- **Расхождение часов** корректируется один раз, по заголовку `Date` из ответа с ошибкой подписи, и
-  коррекция откатывается, если переподписанная попытка так и не прошла аутентификацию. Смещения
-  больше ±24 ч считаются сломанным прокси и игнорируются.
-- **Редиректы никогда не выполняются** — ответ с другого origin сообщается, а не принимается.
-- **Тела ответов ограничены**: 8 МиБ на маршрутах с конвертом и 64 МиБ на «голых» (`bare`)
-  документных маршрутах; всё, что больше, — `sdk.response_too_large`.
+- **Безопасно ли повторить** — из контракта: `GET` и операции с `x-retry-safe` либо запись, которую
+  шлюз дедуплицирует по `Idempotency-Key` (`x-idempotent`). Никаких эвристик по виду пути.
+- **Ключи идемпотентности** ставятся сами на дедуплицируемых маршрутах — один на логический вызов,
+  тот же на каждом повторе, — поэтому таймаут никогда не даст второй выплаты.
+- **Когда бывает повтор.** Только когда API говорит `retryable: true`; ответы без конверта API
+  (502/503 прокси) и сбои транспорта — только если повторять безопасно. `Retry-After` соблюдается,
+  иначе экспоненциальная пауза с разбросом. По умолчанию: 2 повтора, 250 мс → 4 с.
+- **Расхождение часов** правится один раз по заголовку `Date` сервера и откатывается, если не помогло.
+- **Редиректы не выполняются**; тела ответов ограничены (8 МиБ JSON, 64 МиБ документы).
+- **Ограничивайте вызов `.deadline(…)`, а не бросанием future**: автоматический ключ живёт в этом
+  future. Если повтор должен пережить перезапуск, передайте свой `.idempotency_key(…)`.
 
-Опции конкретного вызова задаются на билдере до `.await`:
+## Настройка
 
-```rust
-client
-    .payouts()
-    .create(params)
-    .idempotency_key("payout-42")
-    .timeout(Duration::from_secs(10)) // one attempt
-    .deadline(Duration::from_secs(45)) // the whole call, retries and pauses included
-    .header("X-Request-Trace", "abc123") // this call only
-    .await?;
-```
+`Client::new(public_id, secret)`, `Client::from_env()` или `Client::builder()`:
 
-Набор опций билдера следует из того, что за маршрут он обслуживает:
+| опция                           | по умолчанию               | смысл                                                     |
+| ------------------------------- | -------------------------- | --------------------------------------------------------- |
+| `.public_id(…)` / `.secret(…)`  | —                          | API-ключ; оба или ни одного                               |
+| `.base_url(…)`                  | `https://api.oblodai.com`  | адрес API; префикс пути сохраняется                       |
+| `.timeout(…)` / `.deadline(…)`  | 30 с / 90 с                | одна попытка / весь вызов                                 |
+| `.max_retries(n)`, `.retry(…)`  | 2 повтора                  | `0` отключает повторы                                     |
+| `.header(name, value)`          | —                          | дополнительный заголовок на каждом запросе                |
+| `.hooks(Hooks)`                 | нет                        | `on_request` / `on_response`, раз на попытку              |
+| `.admin_token(…)`               | —                          | `X-Admin-Token` только на маршруте подключения            |
+| `.allow_insecure_base_url(…)`   | `false`                    | разрешить обычный `http` не только для localhost          |
+| `.logger(…)`                    | нет                        | структурный логгер; секреты скрываются до него            |
+| `.http_backend(…)`              | `reqwest`                  | заменить HTTP-слой                                        |
 
-| билдер                                   | `.timeout` | `.deadline` | `.header` | `.idempotency_key`                                        |
-| ---------------------------------------- | ---------- | ----------- | --------- | --------------------------------------------------------- |
-| `RequestBuilder` (любой обычный маршрут) | ✓          | ✓           | ✓         | ✓                                                         |
-| `FileBuilder` (`documents()`, `cheque`)  | ✓          | ✓           | ✓         | устарел — ни один документный маршрут не дедуплицируется  |
-| `Pager` (любой список)                   | ✓          | ✓           | ✓         | — ключ на страницу заставил бы шлюз повторять первую       |
-
-**Ограничивайте вызов через `.deadline(…)`, а не сбрасывая future.** Сброс отменяет вызов, а
-автоматически сгенерированный ключ идемпотентности живёт внутри этой future — запрос, уже ушедший в
-сеть, может всё-таки дойти до шлюза, и повторная отправка выпустит *новый* ключ, с которым шлюз не
-сможет его сопоставить. Если повтор должен пережить отмену или перезапуск процесса, передайте свой
-`.idempotency_key(…)`.
-
-## Конфигурация
-
-`Client::new(public_id, secret)`, `Client::from_env()` или `Client::builder()`. Каждая опция билдера
-имеет запасной вариант — переменную окружения:
-
-| опция                           | по умолчанию               | смысл                                                                   |
-| ------------------------------- | -------------------------- | ----------------------------------------------------------------------- |
-| `.public_id(…)` / `.secret(…)`  | —                          | API-ключ (`X-Public-Id` и секрет подписи); задаётся целиком или никак    |
-| `.base_url(…)`                  | `https://api.oblodai.com`  | origin API; префикс пути (`https://gw.corp/oblodai`) сохраняется         |
-| `.timeout(…)`                   | 30 с                       | на одну попытку                                                         |
-| `.deadline(…)`                  | 90 с                       | на весь вызов, включая повторы и паузы                                  |
-| `.retry(RetryOptions { … })`    | 2 повтора                  | политика пауз; `max_retries: 0` отключает повторы                       |
-| `.header(name, value)`          | —                          | дополнительный заголовок на каждом запросе; подписываемые не подменяются |
-| `.admin_token(…)`               | —                          | `X-Admin-Token`, уходит на маршрутах `merchants()` и больше нигде        |
-| `.allow_insecure_base_url(…)`   | `false`                    | разрешить `http`-базовый URL за пределами локального хоста              |
-| `.logger(…)`                    | нет                        | структурированный логгер                                                |
-| `.http_backend(…)` / `.blocking_http_backend(…)` | `reqwest` | заменить HTTP-слой (клиент с прокси, записывающая заглушка)             |
-| `.clock(…)`                     | системные часы             | часы для подписи, для тестов                                            |
-| `.env(…)`                       | окружение процесса         | брать запасные значения из карты, а не из окружения                     |
-
-Читаются ровно эти шесть переменных и никакие другие:
-
-| переменная                  | опция                         | смысл                                                            |
-| --------------------------- | ----------------------------- | ---------------------------------------------------------------- |
-| `OBLODAI_PUBLIC_ID`         | `.public_id(…)`               | API-ключ, публичная половина (`X-Public-Id`)                      |
-| `OBLODAI_SECRET`            | `.secret(…)`                  | API-ключ, секретная половина                                      |
-| `OBLODAI_ADMIN_TOKEN`       | `.admin_token(…)`             | `X-Admin-Token`, уходит на маршрутах `merchants()` и больше нигде |
-| `OBLODAI_BASE_URL`          | `.base_url(…)`                | origin API; по умолчанию `https://api.oblodai.com`                |
-| `OBLODAI_LOG`               | `.logger(…)`                  | `debug\|info\|warn\|error` — ставит логгер в stderr               |
-| `OBLODAI_ALLOW_INSECURE`    | `.allow_insecure_base_url(…)` | `1` разрешает `http`-базовый URL за пределами локального хоста    |
-
-### Self-hosted или локальный шлюз
-
-`base_url("http://localhost:8095")` работает сразу; для остальных `http`-хостов нужен
-`.allow_insecure_base_url(true)` (или `OBLODAI_ALLOW_INSECURE=1`). Префикс пути в `base_url`
-сохраняется, и каждый маршрут дописывается к нему.
-
-### Секреты и логирование
-
-Значения, похожие на секреты, заменяются на `[redacted]` ещё до того, как попадут в *любой* логгер,
-включая ваш собственный. Модели ответов, несущие одноразовый секрет (`WebhookEndpoint.secret`,
-`WebhookSecretRotated.secret`, `ApiKeyPair.secret`,
-`PayoutLink.claim_token`/`claim_url`/`passcode`), скрывают его и в `Debug`, так что
-`tracing::info!(?response)` безопасен; при сериализации значения сохраняются — иначе вы не смогли бы
-сохранить то, что шлюз показал один раз.
-
-## Снимок контракта
-
-`contract/` выгружается собственным тестовым набором шлюза: реестр маршрутов, схемы DTO запросов с
-английскими описаниями полей, перечисления, все коды ошибок, векторы подписи, эталонные тела ответов,
-записанные с живого шлюза, и настоящие подписанные доставки вебхуков. Этот снимок: **107 маршрутов
-мерчантского API, 469 кодов ошибок**, выгружен из ядра `2cc44c16f516`. Файлы
-`src/contract/{routes,enums,requests,version}.rs` сгенерированы из него, а `oblodai::ROUTES`,
-`ERROR_CODES`, `NETWORKS`, `PAYMENT_STATUSES`, `PAYOUT_STATUSES` и `EVENT_TYPES` открывают его в
-рантайме.
-
-```sh
-python3 scripts/codegen.py            # regenerate after refreshing contract/
-python3 scripts/codegen.py --check    # CI gate: fail when the two disagree
-```
-
-`tests/contract_routes.rs` сверяет каждое поле каждого маршрута с `contract/contract.json`, так что
-сгенерированный код и снимок не могут незаметно разойтись.
+Окружение: `OBLODAI_PUBLIC_ID`, `OBLODAI_SECRET`, `OBLODAI_BASE_URL`, `OBLODAI_ADMIN_TOKEN`,
+`OBLODAI_LOG` (`debug|info|warn|error`), `OBLODAI_ALLOW_INSECURE` (`1`).
 
 ## Разработка
 
+Код в `src/generated/` генерирует `tools/sdkgen` бэкенда из `services/core/api/openapi.json`;
+руками его не править — перегенерировать `make sdk` в бэкенде. `make ci` прогоняет все ворота:
+проверку дрейфа (генерация во временный каталог и сравнение), `cargo fmt`, clippy по комбинациям
+фич, тесты (модульные, общий набор сценариев conformance бэкенда, примеры и этот README против
+подставного шлюза), rustdoc, упаковку и проверку MSRV.
+
 ```sh
-git clone https://github.com/oblodai/oblodai-rust.git
-cd oblodai-rust
-
-cargo fmt --all --check
-python3 scripts/codegen.py --check
-cargo clippy --all-targets --all-features -- -D warnings
-cargo clippy --all-targets --no-default-features -- -D warnings   # the feature matrix CI runs
-cargo test --all-features                                         # unit + contract tests, no network
-RUSTDOCFLAGS=-D warnings cargo doc --no-deps --all-features
-
-# against a real gateway
-OBLODAI_LIVE_URL=http://127.0.0.1:8095 cargo test --all-features -- --ignored --test-threads=1
+OBLODAI_BACKEND=../oblodai-backend make ci
+OBLODAI_LIVE_URL=http://127.0.0.1:8095 make live   # против настоящего шлюза
 ```
 
-Каждый Rust-блок в этом файле компилируется тестом `tests/doc_snippets.rs`; он же проверяет, что
-README.md несёт те же блоки кода байт в байт.
-
-Смотрите также [AGENTS.md](AGENTS.md) — сжатое руководство для кодовых агентов,
-[CHANGELOG.md](CHANGELOG.md) — что менялось, и [MIGRATION-1.3.md](MIGRATION-1.3.md) — переход с 1.x.
+[AGENTS.md](AGENTS.md) — сжатое руководство для агентов-программистов,
+[CHANGELOG.md](CHANGELOG.md) — что изменилось, [MIGRATION-2.0.md](MIGRATION-2.0.md) — переход с 1.x.
 
 ## Лицензия
 

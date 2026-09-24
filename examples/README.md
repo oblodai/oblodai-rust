@@ -6,6 +6,8 @@
 | `payout.rs`            | quote a payout, dry-run it, send it, and handle a retryable refusal           |
 | `webhook_receiver.rs`  | verify a delivery over the raw bytes, deduplicate it, drop stale events       |
 
+Each one also runs in `tests/examples.rs` against a fake gateway, so what you copy is code that works.
+
 Run one against the sandbox (one API key signs every route):
 
 ```sh

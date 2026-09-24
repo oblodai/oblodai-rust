@@ -4,67 +4,23 @@ on:
     branches: [main]
   pull_request:
 jobs:
-  test:
+  ci:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: oblodai/oblodai-backend
+          path: oblodai-backend
       - uses: dtolnay/rust-toolchain@1.97.1
         with:
           components: rustfmt, clippy
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.x'
-      - name: Formatting
-        run: cargo fmt --all --check
-      - name: Contract drift
-        run: python3 scripts/codegen.py --check
-      - name: Lints
-        run: cargo clippy --all-targets --all-features -- -D warnings
-      - name: Tests
-        run: cargo test --all-features
-      - name: Examples build
-        run: cargo build --examples --all-features
-      - name: Docs
-        run: cargo doc --no-deps --all-features
-        env:
-          RUSTDOCFLAGS: -D warnings
-
-  features:
-    # The `HttpBackend` seam is advertised as usable without reqwest, and `blocking` is advertised
-    # as opt-in. Both claims are only true if every combination compiles, warning-free.
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        features:
-          - "--no-default-features"
-          - "--no-default-features --features reqwest-client"
-          - "--features blocking"
-          - "--features native-roots"
-          - "--all-features"
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.97.1
-        with:
-          components: clippy
-      - name: Lints
-        run: cargo clippy --all-targets ${{ matrix.features }} -- -D warnings
-
-  msrv:
-    # `rust-toolchain.toml` pins the dev toolchain and would otherwise override the toolchain this
-    # job selects, quietly checking the MSRV on the newest compiler. RUSTUP_TOOLCHAIN wins over the
-    # file, so this really does build on the declared minimum.
-    runs-on: ubuntu-latest
-    env:
-      RUSTUP_TOOLCHAIN: 1.86.0
-    steps:
-      - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.86.0
-      - name: The declared MSRV really is the minimum
-        run: |
-          test "$(cargo --version | cut -d' ' -f2 | cut -d. -f1,2)" = "1.86" \
-            || { echo "the MSRV job is not running on 1.86"; cargo --version; exit 1; }
-          test "$(grep -m1 '^rust-version' Cargo.toml | cut -d'"' -f2)" = "1.86" \
-            || { echo "Cargo.toml rust-version disagrees with this job"; exit 1; }
-      - run: cargo check --all-features
-      - run: cargo check --no-default-features
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.6'
+      - name: Every gate
+        run: make ci
+        env:
+          OBLODAI_BACKEND: ${{ github.workspace }}/oblodai-backend
+          GOTOOLCHAIN: local

@@ -1,79 +1,72 @@
 # Oblodai Rust SDK — guide for coding agents
 
-Crate `oblodai` (1.3). Everything below is verified against the gateway's contract snapshot shipped
-in `contract/contract.json`.
+Crate `oblodai` (2.0). Namespaces, methods, models and enums are generated from the gateway's
+OpenAPI contract into `src/generated/` (never edit by hand; `make sdk` in the backend regenerates,
+`make drift` here checks). Names are pinned in `names.lock`; 1.x → 2.0 names are in
+`MIGRATION-2.0.md`.
 
 ## Non-negotiables
 
-- Amounts are decimal strings wrapped in `Money`: `amount: "25".into()`, never `25.0`. Do not parse
-  them as `f64`; use `oblodai::helpers::{add_amounts, subtract_amounts, compare_amounts}`.
-- Every method returns a builder that implements `IntoFuture`. `.await` it, or set per-call options
-  first. `.timeout(..)` and `.deadline(..)` exist on all three builders (`RequestBuilder`,
-  `FileBuilder`, `Pager`). `.idempotency_key(..)` exists only on `RequestBuilder` — a `Pager` must
-  not key its pages, every document route is not deduplicated, and `FileBuilder::idempotency_key` is
-  deprecated for exactly that reason. `.header(name, value)` is on all three too, for a header on
-  this call only.
-- Bound a call with `.deadline(..)`, never by dropping the future: the auto-generated idempotency key
-  lives in the future and dies with it, so a re-issued call cannot be deduplicated against the one
-  that may already be in flight. Supply `.idempotency_key(..)` when a retry must survive a restart.
+- Call shape: `client.<resource>().<method>(args…)` returns a builder; nothing is sent until it is
+  `.await`ed (async `Client`) or `.send()` (`blocking::Client`). Resources: `payments`,
+  `payment_links`, `refunds`, `payouts`, `payout_links`, `batches`, `splits`, `wallets`, `account`,
+  `webhooks`, `settings`, `api_allowlist`, `referrals`, `documents`, `checkout`, `sandbox`.
+- Bodies are typed models from `oblodai::models`: `PaymentRequest::new("25", "USDT")` sets the
+  required fields, `PaymentRequest { network: Some("tron".into()), ..PaymentRequest::new(..) }`
+  the optional ones. Query parameters of `GET` routes are one struct per method in
+  `oblodai::generated::resources` (`GetStatementDocumentQuery`, …). Path ids are plain strings.
+- Amounts are `Money` (a decimal string): `"25".into()`, never `25.0` — there is no `From<f64>`.
+  A float arriving through `oblodai::from_json` is `sdk.float_amount` before anything is sent.
+  Compare with `oblodai::helpers::{compare_amounts, amounts_equal}`; `Money` has no `Ord`.
+- Call options on every builder: `.idempotency_key(k)`, `.timeout(Duration)` (one attempt),
+  `.deadline(Duration)` (the whole call), `.max_retries(n)`, `.extra_header(n, v)`,
+  `.request_id(id)` (`X-Request-ID`; a fresh UUID otherwise, the same on every attempt).
+- Idempotency keys are generated automatically on the routes the gateway deduplicates
+  (`RouteSpec::idempotent`) and reused across retries. A key on any other route is refused with
+  `sdk.idempotency_unsupported` before sending — except `sandbox().faucet()`, whose body field
+  `idempotency_key` takes the option (no header).
+- Whether a failed call is re-sent comes from the contract (`RouteSpec::safe` — `GET` or
+  `x-retry-safe` — or a keyed idempotent route). No heuristics.
+- Bound a call with `.deadline(..)`, never by dropping the future (the auto key dies with it).
+- Lists return `Pager`: `.await` = one page (`Page { items, paginate }`), `.stream()` = every
+  item, `.by_page()` = page by page, `.all(max)` = a `Vec`; blocking: `.iter()`, `.by_page()`.
+- Long-running operations (`batches().create_*`, `payouts().create_transfer_batch`,
+  `documents().create_job`): `.job().await?` → `Job`; `job.wait()` polls to a terminal status
+  (returned, not raised; `sdk.job_timeout` after 5 min), `job.download()` for document jobs.
+- `.with_raw_response()` → `RawApiResponse` (`status()`, `headers()`, `request_id()`, `parse()`);
+  `client.with_options(ClientOptions::new()…)` is a copy with other settings;
+  `ClientBuilder::hooks(Hooks::new().on_request(..).on_response(..))` sees every attempt.
 - One API key. `public_id` + `secret` (or `OBLODAI_PUBLIC_ID` / `OBLODAI_SECRET`) sign every
-  merchant route — money in and money out alike. There is nothing to choose per call. The admin
-  token (`admin_token` / `OBLODAI_ADMIN_TOKEN`) goes only to the `merchants()` provisioning routes;
-  public routes carry no credential at all. Only a merchant still holding a legacy split pair
-  (`oblodai_pk_…` / `oblodai_wk_…`) can see a 403 `merchant.wrong_key_kind`.
-- List methods return `Pager`: `.await` = one page (`Page { items, paginate }`), `.stream()` = every
-  item as a `futures_core::Stream`, `.all(max)` = a `Vec`. Nothing is requested until consumed.
-- Idempotency keys are generated automatically on create routes and reused across retries. Passing
-  `.idempotency_key(..)` to a route the gateway does not deduplicate fails with
-  `sdk.idempotency_unsupported` before anything is sent.
-- Whether a failed request may be re-sent comes from `RouteSpec::safe`, taken verbatim from the
-  contract's own per-route flag. No heuristic, no path-shape guess.
-- Amounts: `Money` has no `Ord`/`PartialOrd` (string order is not numeric order) — use
-  `helpers::compare_amounts` / `amounts_equal`. Every helper refuses input that is not a decimal
-  string of at most 64 characters with `AmountError`; nothing panics.
-- Request structs derive `Default`: fill the fields you need, finish with `..Default::default()`.
-
-## Naming
-
-| intent            | call                                                                                                            |
-| ----------------- | ---------------------------------------------------------------------------------------------------------------- |
-| fetch one         | `.info(uuid)` or `.info(Lookup::order_id(..))` (alias `.get`)                                                    |
-| fetch many        | `.history(params)` on payments/payouts (alias `.list`), `.list(params)` elsewhere; `payment_links().info(link, PageParams)` pages the invoices a link spawned (alias `.get`, same signature) |
-| create            | `.create(params)`; webhooks: `.register(url)`                                                                    |
-| many, synchronous | `payouts().mass` (≤100), `payout_links().batch` (≤500) — per-element `{ idx, ok, result, message }`              |
-| many, async       | `payments().batch`, `payouts().batch`, `refunds().batch`, `transfers().batch` — ≤5000, poll `batches().info`     |
-| documents         | `documents().*` → `FileResult { bytes, content_type, filename }`, except `create_job`/`job_info` → `DocumentJob` |
-| provisioning      | `merchants().create(..)`, `merchants().create_sandbox(id)` — no HMAC; `admin_token` on self-hosted gateways      |
-| payer-facing      | `payments().public_view/select/public_qr`, `payment_links().public_view/checkout`, `payout_links().claim_preview/claim`, `documents().download` — no credentials |
+  merchant route. The admin token (`admin_token` / `OBLODAI_ADMIN_TOKEN`) goes only to
+  `sandbox().onboard_store` (`X-Admin-Token`); `checkout()` routes carry no credential.
 
 ## Errors
 
-`Err(err)` → `oblodai::Error` with `code()` (`family.reason`), `http_status()`, `retryable()`
-(authoritative — the SDK already retried what it should), `retry_after()`, `request_id()` (quote to
-support), `field()` (400s), `synthetic()` (a proxy answered, not the API), and `kind()`:
-`Validation` 400, `Authentication` 401, `Permission` 403, `NotFound` 404, `Conflict` /
-`IdempotencyConflict` 409, `RateLimit` 429, `Unavailable` 503, `Internal` other 5xx, `Transport`
-(no response), `Config` (before sending), `Contract` (unreadable envelope), `Signature` (webhooks),
-`Api` (any other status).
-`serde_json::to_value(&err)` keeps the message and drops the raw body.
+`Err(err)` → `oblodai::Error`; `err.to_string()` is `[code] message (request_id=…)`. Methods:
+`code()` (`family.reason`), `http_status()`, `retryable()` (authoritative — the SDK already retried
+what it should), `retry_after()`, `request_id()` (quote to support), `field()` (400s),
+`synthetic()` (a proxy answered, not the API), and `kind()`: `Validation` 400, `Authentication`
+401, `Permission` 403, `NotFound` 404, `Conflict` / `IdempotencyConflict` 409, `RateLimit` 429,
+`Unavailable` 503, `Internal` other 5xx, `Transport` (no response), `Config` (before sending),
+`Contract` (unreadable answer), `Signature` (webhooks), `Api` (any other status).
 
-Codes worth handling: `payout.insufficient_funds` (retryable), `payout.funds_maturing` (retryable),
-`idempotency.key_reused`, `invoice.not_payable`, `payment.not_found`,
-`merchant.bad_signature`, `request.rate_limited`. Full list: `oblodai::ERROR_CODES` (469 codes).
-Every money-moving method lists its own codes in its rustdoc.
+Codes worth handling: `payout.insufficient_funds` (retryable), `payout.funds_maturing`
+(retryable), `idempotency.key_reused`, `invoice.not_payable`, `payment.not_found`,
+`merchant.bad_signature`, `request.rate_limited`. Every method's rustdoc lists its own codes.
 
-Codes the SDK raises itself, never the gateway: `sdk.missing_credentials`, `sdk.bad_config`,
-`sdk.bad_header`, `sdk.bad_path_param`, `sdk.bad_idempotency_key`, `sdk.idempotency_unsupported`,
-`sdk.bad_amount`, `sdk.bad_envelope`, `sdk.response_too_large`, `webhook.bad_payload`,
-`transport.timeout` / `transport.network` / `transport.deadline`.
+Codes the SDK raises itself: `sdk.missing_credentials`, `sdk.bad_config`, `sdk.bad_header`,
+`sdk.bad_path_param`, `sdk.bad_idempotency_key`, `sdk.idempotency_unsupported`,
+`sdk.float_amount`, `sdk.bad_params`, `sdk.bad_amount`, `sdk.bad_envelope`,
+`sdk.response_too_large`, `sdk.job_timeout`, `sdk.no_download`, `sdk.not_long_running`,
+`webhook.bad_payload`, `transport.timeout` / `transport.network` / `transport.deadline`.
 
 ## Statuses
 
-- Payment: `select → created → confirm_check → paid | paid_over | wrong_amount | expired | cancelled`.
-  `is_payment_paid` = paid/paid_over. `wrong_amount` needs `refunds().resolve(..)`.
+- Payment: `select → created → confirm_check → paid | paid_over | wrong_amount | expired | cancelled`
+  (`under_review`). `is_payment_paid` = paid/paid_over. `wrong_amount` needs `payments().resolve(..)`.
 - Payout: `pending → approved → awaiting_cosign → broadcasting → sent → confirmed | failed | cancelled`.
-- Webhook event types: `invoice.<status>`, `payout.<status>`, `wallet.paid`; the body's `type` is
-  `payment | payout | wallet` and `WebhookEvent` is the matching enum.
+- Every enum has `Other(String)`: a value a newer gateway sends still decodes. Models keep unknown
+  fields in `extra`.
 
 ## Webhooks
 
@@ -86,33 +79,28 @@ let delivery = verify_webhook_delivery(raw_body, &Headers::from_pairs(headers),
 Verify over the **raw** bytes. `delivery.is_test` is true for rehearsal deliveries (`test: true` in
 the signed body, or `X-Webhook-Test: true`) — never treat them as money. Deduplicate on
 `delivery.id` (`X-Webhook-Id`); drop out-of-order events with
-`is_stale_event(&delivery.event, last_sequence)` (`event.sequence()` is `Option<i64>`; a missing
-sequence is never stale). During a rotation pass `.previous_secret(old)` for ≥26 h.
-
-`WebhookEvent` is `#[non_exhaustive]` with an `Other(Value)` arm — an unknown event `type` is data,
-not an error, so always match with a `_` arm; `is_known_event(&event)` / `event.is_known()` tell the
-two apart and `event.raw()` hands back the body. An empty secret or a negative `tolerance_seconds` is a
-`Config` error before any hashing; `0` disables the freshness check. A verified body that cannot be
-read is `webhook.bad_payload` with `kind() == Contract`, never a signature failure.
+`is_stale_event(&delivery.event, last_sequence)`. During a rotation pass `.previous_secret(old)`.
+`WebhookEvent` is `Payment` / `Payout` / `Wallet` / `Conversion` (generated `*Webhook` models) or
+`Other(Value)` — `#[non_exhaustive]`, match with a `_` arm. A verified body that cannot be read is
+`webhook.bad_payload` with `kind() == Contract`, never a signature failure.
 
 ## Machine-readable surface
 
-`oblodai::ROUTES` (107 routes, 469 error codes: key, method, path, auth, idempotent, safe, bare, list — every field
-equal to `contract/contract.json`, asserted per route in `tests/contract_routes.rs`),
-`oblodai::contract::requests` (a struct per route body), `ERROR_CODES`, `NETWORKS`,
-`PAYMENT_STATUSES`, `PAYOUT_STATUSES`, `EVENT_TYPES`, and `contract/` itself (schemas, golden
-response bodies per route, error samples, signed webhook samples).
+`oblodai::routes::ROUTES` and `routes::route(operation_id)` — every operation with `operation_id`,
+method, path, auth, `idempotent`, `safe`, `bare` (answers with a file), `list_kind`.
+`oblodai::lro::LRO` — which operations are long-running and how they are polled. `names.lock` —
+the public method names.
 
 ## Environment
 
 Six variables, all optional: `OBLODAI_PUBLIC_ID`, `OBLODAI_SECRET`, `OBLODAI_BASE_URL`,
-`OBLODAI_ADMIN_TOKEN`, `OBLODAI_ALLOW_INSECURE`, `OBLODAI_LOG`. `Client::from_env()` builds even with none of them set and fails on the first signed
-call with `sdk.missing_credentials`.
+`OBLODAI_ADMIN_TOKEN`, `OBLODAI_ALLOW_INSECURE`, `OBLODAI_LOG`. `Client::from_env()` builds even
+with none of them set and fails on the first signed call with `sdk.missing_credentials`.
 
 Secrets never print: sensitive-looking log fields are `[redacted]` before they reach any logger,
-including a caller-supplied one, and `WebhookEndpoint.secret`, `WebhookSecretRotated.secret`,
-`ApiKeyPair.secret`, `PayoutLink.claim_token`/`claim_url`/`passcode` redact in `Debug`.
-Serialization still carries them — that is how a merchant stores what was shown once.
+and `Debug` of every model hides the values of secret-looking fields (`secret`, `token`,
+`passcode`, `claim_url`, …), in `extra` too. Serialization still carries them.
 
-MSRV 1.86. Features: `reqwest-client` (default), `blocking`. `--no-default-features` builds the
-contract types, helpers, webhook verification and the `HttpBackend` seam with no `reqwest`.
+MSRV 1.86. Features: `reqwest-client` (default), `blocking`, `native-roots`.
+`--no-default-features` builds the models, helpers, webhook verification and the `HttpBackend`
+seam with no `reqwest`.

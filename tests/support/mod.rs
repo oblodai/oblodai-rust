@@ -277,3 +277,133 @@ pub fn sample(name: &str) -> Value {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("tests/fixtures/{name}.json"));
     serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
 }
+
+// --- a fake gateway on a real socket ------------------------------------------------------------
+
+/// One request the fake gateway received.
+#[derive(Clone, Debug)]
+pub struct Received {
+    pub method: String,
+    /// Path and query, as sent.
+    pub target: String,
+    pub headers: Vec<(String, String)>,
+    pub body: Vec<u8>,
+}
+
+impl Received {
+    pub fn path(&self) -> &str {
+        self.target.split('?').next().unwrap_or_default()
+    }
+
+    pub fn header(&self, name: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
+    }
+}
+
+type Answerer = dyn Fn(&Received) -> (u16, Vec<(String, String)>, Vec<u8>) + Send + Sync;
+
+/// An HTTP/1.1 server on 127.0.0.1 that answers every request with `answer(request)` — what a
+/// `Client::from_env()` pointed at `OBLODAI_BASE_URL` talks to in the README and example tests.
+pub struct FakeGateway {
+    pub base_url: String,
+    received: Arc<Mutex<Vec<Received>>>,
+}
+
+impl FakeGateway {
+    pub fn start(
+        answer: impl Fn(&Received) -> (u16, Vec<(String, String)>, Vec<u8>) + Send + Sync + 'static,
+    ) -> Self {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let received = Arc::new(Mutex::new(Vec::new()));
+        let log = received.clone();
+        let answer: Arc<Answerer> = Arc::new(answer);
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(stream) = stream else { return };
+                let (log, answer) = (log.clone(), answer.clone());
+                std::thread::spawn(move || serve(stream, &log, &*answer));
+            }
+        });
+        Self { base_url, received }
+    }
+
+    pub fn received(&self) -> Vec<Received> {
+        self.received.lock().unwrap().clone()
+    }
+}
+
+fn serve(mut stream: std::net::TcpStream, log: &Mutex<Vec<Received>>, answer: &Answerer) {
+    use std::io::{BufRead, BufReader, Read, Write};
+    let mut reader = BufReader::new(stream.try_clone().unwrap());
+    loop {
+        let mut line = String::new();
+        if reader.read_line(&mut line).unwrap_or(0) == 0 {
+            return;
+        }
+        let mut parts = line.split_whitespace();
+        let (method, target) = (
+            parts.next().unwrap_or_default().to_string(),
+            parts.next().unwrap_or_default().to_string(),
+        );
+        let mut headers = Vec::new();
+        let mut length = 0usize;
+        loop {
+            let mut header = String::new();
+            reader.read_line(&mut header).unwrap();
+            let header = header.trim_end();
+            if header.is_empty() {
+                break;
+            }
+            if let Some((k, v)) = header.split_once(':') {
+                if k.eq_ignore_ascii_case("content-length") {
+                    length = v.trim().parse().unwrap_or(0);
+                }
+                headers.push((k.trim().to_string(), v.trim().to_string()));
+            }
+        }
+        let mut body = vec![0u8; length];
+        reader.read_exact(&mut body).unwrap();
+        let request = Received {
+            method,
+            target,
+            headers,
+            body,
+        };
+        let (status, extra, bytes) = answer(&request);
+        log.lock().unwrap().push(request);
+        let mut head = format!("HTTP/1.1 {status} X\r\nContent-Length: {}\r\n", bytes.len());
+        for (k, v) in extra {
+            head.push_str(&format!("{k}: {v}\r\n"));
+        }
+        head.push_str("\r\n");
+        if stream.write_all(head.as_bytes()).is_err() || stream.write_all(&bytes).is_err() {
+            return;
+        }
+    }
+}
+
+/// The smallest answer a model accepts (its `Default`), with some fields set.
+pub fn model<T: Default + serde::Serialize>(fields: Value) -> Value {
+    let mut value = serde_json::to_value(T::default()).unwrap();
+    if let Some(map) = fields.as_object() {
+        for (k, v) in map {
+            value[k] = v.clone();
+        }
+    }
+    value
+}
+
+/// A `{state:0,result}` answer for the fake gateway.
+pub fn envelope(result: Value) -> (u16, Vec<(String, String)>, Vec<u8>) {
+    (
+        200,
+        vec![("Content-Type".into(), "application/json".into())],
+        json!({"state": 0, "result": result})
+            .to_string()
+            .into_bytes(),
+    )
+}
