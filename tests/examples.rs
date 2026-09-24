@@ -20,17 +20,8 @@ use oblodai::models::{
 };
 use oblodai::webhooks::Headers;
 use oblodai::{sign_webhook, Client, HttpBackend};
-use serde_json::{json, Value};
-use support::{api_error, ok, sample, MockBackend};
-
-/// The smallest answer a model accepts, with some fields set.
-fn model<T: Default + serde::Serialize>(fields: Value) -> Value {
-    let mut value = serde_json::to_value(T::default()).unwrap();
-    for (k, v) in fields.as_object().unwrap() {
-        value[k] = v.clone();
-    }
-    value
-}
+use serde_json::json;
+use support::{api_error, model, ok, sample, MockBackend};
 
 fn client_on(mock: &Arc<MockBackend>) -> Client {
     Client::builder()

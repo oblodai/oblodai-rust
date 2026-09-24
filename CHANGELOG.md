@@ -4,6 +4,49 @@ All notable changes to this crate are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [2.0.0] — 2026-09-25
+
+Generated from the gateway's OpenAPI contract. See MIGRATION-2.0.md for every renamed method.
+
+### Changed
+
+- **Namespaces, methods, models and enums are generated** from `services/core/api/openapi.json` by
+  the backend's `tools/sdkgen` into `src/generated/` — 120 operations, one method each, named
+  `client.<resource>().<method>()` after the `operationId`. `names.lock` pins the names; a rename
+  fails the generator as a breaking change. The hand-written resources, the `contract/` snapshot
+  and `scripts/codegen.py` are gone.
+- **Models** live in `oblodai::models`, enums in `oblodai::enums`; request models have
+  `new(required…)`, fields a newer gateway adds land in `extra`, and every enum has
+  `Other(String)`. `Debug` of a model hides the values of secret-looking fields, in `extra` too.
+- **One builder, `Request<Tr, T>`,** for ordinary and document routes (`FileBuilder` and
+  `RequestBuilder` are gone). `.header(..)` is `.extra_header(..)`, `.send_raw()` is
+  `.send_json()`.
+- **Errors print `[code] message (request_id=…)`**, and every error that reached the network
+  carries the call's request id.
+- `RouteSpec` is keyed by `operation_id` (`routes::route("createPayment")`), with `list_kind`.
+
+### Added
+
+- Call options `.max_retries(n)` and `.request_id(id)`; every call sends `X-Request-ID` (a fresh
+  UUID unless given), the same on every attempt.
+- `.with_raw_response()` → `RawApiResponse` (status, headers, request id, `parse()`).
+- `Client::with_options(ClientOptions)`, `ClientBuilder::max_retries`, `ClientBuilder::hooks`
+  (`on_request` / `on_response` per attempt, the signature redacted).
+- `Pager::by_page()` (async stream of pages; blocking iterator).
+- Long-running operations: `.job()` on batches and document exports, `Job::wait()`,
+  `Job::wait_with()`, `Job::download()` (`oblodai::lro`).
+- `oblodai::from_json` builds a request model from JSON; a float amount is `sdk.float_amount`.
+- `WebhookEvent::Conversion`.
+- Tests: the backend's shared conformance suite (`tests/conformance.rs`, signing and webhook vectors
+  from the spec's `x-oblodai-signing`), the examples and every README block run against a fake
+  gateway; `make ci` runs every gate, the drift check of `src/generated` included.
+
+### Removed
+
+- Method aliases (`get` = `info`, `list` = `history`, …), `merchants().create` (not part of the
+  merchant API contract), `Lookup`/`PaymentLookup`/`PayoutLookup`/`IdRef`/`PageParams` and the
+  document query helpers, `ERROR_CODES` and the other constants of the contract snapshot.
+
 ## [1.3.0] — 2026-08-26
 
 Rewrite generated from the gateway's contract snapshot (core `2cc44c16f516`, 107 merchant routes,

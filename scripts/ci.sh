@@ -38,11 +38,13 @@ echo "package: target/package/oblodai-$version.crate"
 
 echo "== MSRV"
 msrv="$(sed -n 's/^rust-version = "\(.*\)"/\1/p' Cargo.toml)"
-if rustup run "$msrv" cargo --version >/dev/null 2>&1; then
-  RUSTUP_TOOLCHAIN="$msrv" cargo check --locked --all-features
-  RUSTUP_TOOLCHAIN="$msrv" cargo check --locked --no-default-features
+toolchain="$msrv"
+[ "$(tr -cd . <<<"$msrv" | wc -c)" = 1 ] && toolchain="$msrv.0"
+if rustup run "$toolchain" cargo --version >/dev/null 2>&1; then
+  RUSTUP_TOOLCHAIN="$toolchain" cargo check --locked --all-features
+  RUSTUP_TOOLCHAIN="$toolchain" cargo check --locked --no-default-features
 else
-  echo "  (skipped: toolchain $msrv is not installed; rustup toolchain install $msrv)"
+  echo "  (skipped: toolchain $toolchain is not installed; rustup toolchain install $toolchain)"
 fi
 
 if [ "${1:-}" = "--live" ]; then

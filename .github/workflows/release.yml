@@ -14,9 +14,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-go@v5
         with:
-          python-version: '3.x'
+          go-version: '1.26.6'
+      - uses: actions/checkout@v4
+        with:
+          repository: oblodai/oblodai-backend
+          path: oblodai-backend
       # A missing token must stop the release loudly, before anything is built or published.
       - name: The publishing token is present
         run: |
@@ -27,8 +31,11 @@ jobs:
       # The same gates CI runs, on the exact commit being published.
       - name: Formatting
         run: cargo fmt --all --check
-      - name: Contract drift
-        run: python3 scripts/codegen.py --check
+      - name: Generated code drift
+        run: ./scripts/check_generated.sh --require
+        env:
+          OBLODAI_BACKEND: ${{ github.workspace }}/oblodai-backend
+          GOTOOLCHAIN: local
       - name: Lints
         run: cargo clippy --all-targets --all-features -- -D warnings
       - name: Tests
