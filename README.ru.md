@@ -412,8 +412,11 @@ match &delivery.event {
 }
 ```
 
-- **Дубли и порядок.** `delivery.id` (`X-Webhook-Id`) не меняется между повторами — дедуплицируйте
-  по нему. `event.sequence()` упорядочивает события; `is_stale_event` отбрасывает опоздавшее.
+- **Дубли и порядок.** Дедуплицируйте по `delivery.event_id` (`X-Webhook-Event-Id`): он называет
+  состояние и одинаков у всех повторов и переотправок. `delivery.id` (`X-Webhook-Id`) называет одну
+  доставку и меняется при переотправке (`webhooks().resend_payment()`, повтор в песочнице) — с ним
+  ключом переотправленный `invoice.paid` обработается дважды. `event.sequence()` упорядочивает
+  события; `is_stale_event` отбрасывает опоздавшее.
 - **Ротация.** После `webhooks().rotate_secret()` передавайте `.previous_secret(old)`, пока не
   пройдёт `previous_secret_valid_until`.
 - **Незнакомые типы событий** приходят как `WebhookEvent::Other(Value)` (enum `#[non_exhaustive]`);
