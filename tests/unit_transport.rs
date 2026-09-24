@@ -9,9 +9,7 @@ mod support;
 use std::sync::Arc;
 use std::time::Duration;
 
-use oblodai::contract::requests::{
-    PaymentAccuracySetRequest, PaymentRequest, PayoutRequest, WalletRequest,
-};
+use oblodai::models::{CreateWalletRequest, PaymentRequest, PayoutRequest, SetAccuracyRequest};
 use oblodai::{Client, ErrorKind, HttpBackend, RetryOptions};
 use serde_json::json;
 use support::{api_error, network_error, no_envelope, ok, MockBackend, Scripted};
@@ -81,7 +79,7 @@ async fn signs_path_and_query_on_get_and_sends_no_body() {
     )]);
     let _ = client
         .sandbox()
-        .webhooks(oblodai::resources::PageParams::default())
+        .list_webhooks(oblodai::generated::resources::SandboxListWebhooksQuery::default())
         .limit(10)
         .offset(0)
         .await
@@ -111,7 +109,7 @@ async fn generates_one_idempotency_key_per_call_and_reuses_it_across_retries() {
     let _ = client
         .payments()
         .create(invoice())
-        .send_raw()
+        .send_json()
         .await
         .unwrap();
     let calls = mock.calls();
@@ -130,10 +128,18 @@ async fn honours_a_caller_key_and_adds_none_to_read_routes() {
         .payouts()
         .create(payout())
         .idempotency_key("my-key-1")
-        .send_raw()
+        .send_json()
         .await
         .unwrap();
-    let _ = client.payments().info("u").send_raw().await.unwrap();
+    let _ = client
+        .payments()
+        .get_info(oblodai::models::LookupRequest {
+            uuid: Some("u".into()),
+            ..Default::default()
+        })
+        .send_json()
+        .await
+        .unwrap();
     let calls = mock.calls();
     assert_eq!(calls[0].header("idempotency-key"), Some("my-key-1"));
     assert_eq!(calls[1].header("idempotency-key"), None);
@@ -144,9 +150,9 @@ async fn rejects_a_caller_key_on_a_route_the_core_does_not_deduplicate() {
     let (client, mock) = harness(vec![]);
     let err = client
         .payouts()
-        .approve("p1")
+        .approve(oblodai::models::ApproveRequest::new("p1"))
         .idempotency_key("k1")
-        .send_raw()
+        .send_json()
         .await
         .unwrap_err();
     assert_eq!(err.code(), "sdk.idempotency_unsupported");
@@ -161,7 +167,7 @@ async fn rejects_an_unusable_caller_key_before_signing() {
         .payments()
         .create(invoice())
         .idempotency_key("has space")
-        .send_raw()
+        .send_json()
         .await
         .unwrap_err();
     assert_eq!(err.code(), "sdk.bad_idempotency_key");
@@ -174,7 +180,7 @@ async fn does_not_retry_a_non_retryable_error_even_on_a_5xx() {
         500,
         json!({ "code": "internal", "retryable": false }),
     )]);
-    let err = client.account().balance().await.unwrap_err();
+    let err = client.account().get_balance().await.unwrap_err();
     assert_eq!(err.code(), "internal");
     assert_eq!(err.http_status(), 500);
     assert!(!err.retryable());
@@ -190,7 +196,7 @@ async fn retries_a_retryable_error_and_surfaces_it_after_the_budget() {
         )
     };
     let (client, mock) = harness(vec![rate_limited(), rate_limited(), rate_limited()]);
-    let err = client.account().balance().await.unwrap_err();
+    let err = client.account().get_balance().await.unwrap_err();
     assert_eq!(err.kind(), ErrorKind::RateLimit);
     assert_eq!(err.retry_after(), Some(0));
     assert_eq!(mock.call_count(), 3, "1 attempt + max_retries(2)");
@@ -200,18 +206,18 @@ async fn retries_a_retryable_error_and_surfaces_it_after_the_budget() {
 async fn retries_a_transport_failure_only_when_the_request_is_safe_to_repeat() {
     // A read route: retried.
     let (client, mock) = harness(vec![network_error(), balance_ok()]);
-    client.account().balance().await.unwrap();
+    client.account().get_balance().await.unwrap();
     assert_eq!(mock.call_count(), 2);
 
     // A write the core does not deduplicate: never re-sent.
     let (client, mock) = harness(vec![network_error(), ok(json!({}))]);
     let err = client
         .settings()
-        .set_accuracy(PaymentAccuracySetRequest {
+        .set_accuracy(SetAccuracyRequest {
             enabled: true,
             ..Default::default()
         })
-        .send_raw()
+        .send_json()
         .await
         .unwrap_err();
     assert_eq!(err.kind(), ErrorKind::Transport);
@@ -223,7 +229,7 @@ async fn retries_a_transport_failure_only_when_the_request_is_safe_to_repeat() {
     let _ = client
         .payments()
         .create(invoice())
-        .send_raw()
+        .send_json()
         .await
         .unwrap();
     assert_eq!(mock.call_count(), 2);
@@ -232,7 +238,12 @@ async fn retries_a_transport_failure_only_when_the_request_is_safe_to_repeat() {
 #[tokio::test]
 async fn never_re_sends_an_unsafe_write_after_a_proxy_answer_without_an_envelope() {
     let (client, mock) = harness(vec![no_envelope(503), ok(json!({}))]);
-    let err = client.payouts().approve("p1").send_raw().await.unwrap_err();
+    let err = client
+        .payouts()
+        .approve(oblodai::models::ApproveRequest::new("p1"))
+        .send_json()
+        .await
+        .unwrap_err();
     assert_eq!(err.http_status(), 503);
     assert!(
         err.synthetic(),
@@ -252,14 +263,14 @@ async fn retries_a_read_route_after_a_proxy_502_or_504() {
         no_envelope(504).header("retry-after", "0"),
         balance_ok(),
     ]);
-    client.account().balance().await.unwrap();
+    client.account().get_balance().await.unwrap();
     assert_eq!(mock.call_count(), 3);
 }
 
 #[tokio::test]
 async fn honours_the_retry_after_header_when_the_body_has_none() {
     let (client, _mock) = harness_no_retry(vec![no_envelope(429).header("retry-after", "120")]);
-    let err = client.account().balance().await.unwrap_err();
+    let err = client.account().get_balance().await.unwrap_err();
     assert_eq!(err.retry_after(), Some(120));
     assert_eq!(err.http_status(), 429);
 }
@@ -274,7 +285,12 @@ async fn retries_an_enveloped_retryable_error_on_an_unsafe_write() {
         ),
         ok(json!({ "uuid": "p" })),
     ]);
-    let _ = client.payouts().approve("p1").send_raw().await.unwrap();
+    let _ = client
+        .payouts()
+        .approve(oblodai::models::ApproveRequest::new("p1"))
+        .send_json()
+        .await
+        .unwrap();
     assert_eq!(mock.call_count(), 2);
 }
 
@@ -293,7 +309,7 @@ async fn classifies_the_envelope_and_keeps_request_id_and_field() {
     let err = client
         .payments()
         .create(invoice())
-        .send_raw()
+        .send_json()
         .await
         .unwrap_err();
     assert_eq!(err.kind(), ErrorKind::Validation);
@@ -308,7 +324,7 @@ async fn classifies_the_envelope_and_keeps_request_id_and_field() {
         json!({ "code": "merchant.bad_signature", "retryable": false }),
     )]);
     assert_eq!(
-        client.account().balance().await.unwrap_err().kind(),
+        client.account().get_balance().await.unwrap_err().kind(),
         ErrorKind::Authentication
     );
 
@@ -319,7 +335,7 @@ async fn classifies_the_envelope_and_keeps_request_id_and_field() {
     let err = client
         .payments()
         .create(invoice())
-        .send_raw()
+        .send_json()
         .await
         .unwrap_err();
     assert_eq!(err.kind(), ErrorKind::IdempotencyConflict);
@@ -334,7 +350,7 @@ async fn serializes_an_error_without_the_raw_body() {
     let err = client
         .payments()
         .create(invoice())
-        .send_raw()
+        .send_json()
         .await
         .unwrap_err();
     assert!(
@@ -365,7 +381,7 @@ async fn re_signs_once_with_the_server_clock_when_a_401_reveals_skew() {
         .header("date", date),
         balance_ok(),
     ]);
-    client.account().balance().await.unwrap();
+    client.account().get_balance().await.unwrap();
     let calls = mock.calls();
     assert_eq!(calls.len(), 2);
     let ts: i64 = calls[1].header("x-timestamp").unwrap().parse().unwrap();
@@ -386,7 +402,7 @@ async fn ignores_the_date_header_on_a_401_that_is_not_a_signature_failure() {
         json!({ "code": "auth.ip_not_allowed", "retryable": false }),
     )
     .header("date", date)]);
-    let err = client.account().balance().await.unwrap_err();
+    let err = client.account().get_balance().await.unwrap_err();
     assert_eq!(err.code(), "auth.ip_not_allowed");
     assert_eq!(mock.call_count(), 1);
 }
@@ -405,9 +421,9 @@ async fn reverts_the_correction_when_the_re_signed_attempt_is_still_rejected() {
         .header("date", date.clone())
     };
     let (client, mock) = harness(vec![bad(), bad(), balance_ok()]);
-    let err = client.account().balance().await.unwrap_err();
+    let err = client.account().get_balance().await.unwrap_err();
     assert_eq!(err.code(), "merchant.bad_signature");
-    client.account().balance().await.unwrap();
+    client.account().get_balance().await.unwrap();
     let calls = mock.calls();
     let ts: i64 = calls[2].header("x-timestamp").unwrap().parse().unwrap();
     assert!(
@@ -421,7 +437,7 @@ async fn times_out_and_reports_transport_timeout() {
     let (client, _) = harness_no_retry(vec![ok(json!({})).delay(Duration::from_millis(200))]);
     let err = client
         .account()
-        .balance()
+        .get_balance()
         .timeout(Duration::from_millis(20))
         .await
         .unwrap_err();
@@ -440,7 +456,7 @@ async fn stops_retrying_when_the_deadline_would_be_exceeded() {
     ]);
     let err = client
         .account()
-        .balance()
+        .get_balance()
         .deadline(Duration::from_millis(100))
         .await
         .unwrap_err();
@@ -456,7 +472,7 @@ async fn names_the_redirect_target_instead_of_a_bare_envelope_error() {
         headers: vec![("location".into(), "https://www.api.test/v1/balance".into())],
         ..Default::default()
     }]);
-    let err = client.account().balance().await.unwrap_err();
+    let err = client.account().get_balance().await.unwrap_err();
     assert_eq!(err.http_status(), 301);
     assert!(err.message().contains("redirect"), "{}", err.message());
     assert!(err.message().contains("www.api.test"));
@@ -474,11 +490,11 @@ async fn signs_every_route_with_the_one_api_key() {
         .http_backend(mock.clone() as Arc<dyn HttpBackend>)
         .build()
         .unwrap();
-    let _ = client.payouts().create(payout()).send_raw().await.unwrap();
+    let _ = client.payouts().create(payout()).send_json().await.unwrap();
     let _ = client
         .payments()
         .create(invoice())
-        .send_raw()
+        .send_json()
         .await
         .unwrap();
     let calls = mock.calls();
@@ -497,8 +513,8 @@ async fn refuses_a_signed_call_with_no_credentials_but_allows_public_routes() {
         .http_backend(mock.clone() as Arc<dyn HttpBackend>)
         .build()
         .unwrap();
-    client.catalog().currencies().await.unwrap();
-    let err = client.account().balance().await.unwrap_err();
+    client.checkout().list_currencies().await.unwrap();
+    let err = client.account().get_balance().await.unwrap_err();
     assert_eq!(err.code(), "sdk.missing_credentials");
     assert_eq!(mock.call_count(), 1);
 }
@@ -514,7 +530,7 @@ async fn keeps_a_path_prefix_on_the_base_url() {
         .http_backend(mock.clone() as Arc<dyn HttpBackend>)
         .build()
         .unwrap();
-    client.account().balance().await.unwrap();
+    client.account().get_balance().await.unwrap();
     assert_eq!(mock.first().url, "https://gw.corp/oblodai/v1/balance");
 }
 
@@ -531,7 +547,7 @@ async fn drops_caller_headers_that_collide_with_signed_headers() {
         .http_backend(mock.clone() as Arc<dyn HttpBackend>)
         .build()
         .unwrap();
-    client.account().balance().await.unwrap();
+    client.account().get_balance().await.unwrap();
     let call = mock.first();
     assert_eq!(call.header("x-signature").unwrap().len(), 64);
     assert_eq!(call.header("x-trace"), Some("t1"));
@@ -541,12 +557,7 @@ async fn drops_caller_headers_that_collide_with_signed_headers() {
 async fn refuses_path_parameters_that_would_rewrite_the_url() {
     let (client, mock) = harness(vec![]);
     for bad in ["..", ".", "a/b", ""] {
-        let err = client
-            .payments()
-            .public_view(bad)
-            .send_raw()
-            .await
-            .unwrap_err();
+        let err = client.checkout().get(bad).send_json().await.unwrap_err();
         assert_eq!(err.code(), "sdk.bad_path_param", "for {bad:?}");
     }
     assert_eq!(mock.call_count(), 0);
@@ -555,7 +566,7 @@ async fn refuses_path_parameters_that_would_rewrite_the_url() {
 #[tokio::test]
 async fn percent_encodes_a_path_parameter() {
     let (client, mock) = harness(vec![ok(json!({}))]);
-    let _ = client.payments().public_view("a b").send_raw().await;
+    let _ = client.checkout().get("a b").send_json().await;
     assert_eq!(mock.first().path(), "/v1/pay/a%20b");
 }
 
@@ -569,7 +580,9 @@ async fn sends_uuid_for_document_reports_keyed_by_batch_or_link_id() {
     }]);
     let file = client
         .documents()
-        .batch_report("b-1", oblodai::resources::FormatQuery::default())
+        .get_batch(oblodai::generated::resources::GetBatchDocumentQuery::new(
+            "b-1",
+        ))
         .await
         .unwrap();
     assert_eq!(mock.first().query("uuid").as_deref(), Some("b-1"));
@@ -593,7 +606,7 @@ async fn reads_the_filename_from_content_disposition() {
     }]);
     let file = client
         .documents()
-        .balance_certificate(oblodai::resources::DocumentQuery::default())
+        .get_balance(oblodai::generated::resources::GetBalanceDocumentQuery::default())
         .await
         .unwrap();
     assert_eq!(file.filename.as_deref(), Some("statement.pdf"));
@@ -607,7 +620,7 @@ async fn surfaces_an_idempotent_replay_the_core_could_not_cache() {
     let err = client
         .payments()
         .create(invoice())
-        .send_raw()
+        .send_json()
         .await
         .unwrap_err();
     assert_eq!(err.kind(), ErrorKind::Contract);
@@ -628,8 +641,8 @@ async fn a_success_body_that_is_not_the_envelope_is_a_contract_error() {
     }]);
     let err = client
         .wallets()
-        .create(WalletRequest::default())
-        .send_raw()
+        .create(CreateWalletRequest::default())
+        .send_json()
         .await
         .unwrap_err();
     assert_eq!(err.code(), "sdk.bad_envelope");
@@ -659,7 +672,7 @@ async fn batch_info_signs_with_the_api_key_and_does_not_retry_a_refusal() {
         .unwrap();
     let err = client
         .batches()
-        .info(oblodai::contract::requests::BatchInfoRequest {
+        .get_info(oblodai::models::BatchInfoRequest {
             batch_id: "b1".into(),
             ..Default::default()
         })

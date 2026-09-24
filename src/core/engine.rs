@@ -12,12 +12,15 @@ use serde_json::Value;
 
 use super::clock::{Clock, SkewCorrectingClock, SystemClock};
 use super::envelope::decode_envelope;
+use super::hooks::{Hooks, RequestInfo, ResponseInfo};
 use super::idempotency::{assert_idempotency_key, new_idempotency_key};
 use super::logger::{LogLevel, Logger, NoopLogger};
-use super::request::{build_request, serialize_body, BuildInput, BuiltRequest, Credentials};
+use super::request::{
+    build_request, serialize_body, BuildInput, BuiltRequest, Credentials, HEADER_REQUEST_ID,
+};
 use super::retry::{jitter, retry_delay_ms, should_retry, RetryContext, RetryOptions};
+use super::route::RouteSpec;
 use super::signing::SIGNATURE_SKEW_SECONDS;
-use crate::contract::types::RouteSpec;
 use crate::error::{Error, Result};
 
 /// A response as it came off the wire, before any envelope is read.
@@ -40,7 +43,15 @@ impl RawResponse {
     }
 }
 
-/// Per-call knobs every resource method accepts.
+/// A successful (2xx) answer and the `X-Request-ID` of the call that got it.
+#[derive(Clone, Debug, Default)]
+pub struct Answer {
+    pub response: RawResponse,
+    /// The response's `X-Request-ID`, else the one the SDK sent with the call.
+    pub request_id: String,
+}
+
+/// Everything one call is made of: the request itself and the caller's per-call options.
 #[derive(Clone, Debug, Default)]
 pub struct CallOptions {
     pub body: Option<Value>,
@@ -48,6 +59,8 @@ pub struct CallOptions {
     pub path_params: Vec<(&'static str, String)>,
     /// Supply your own key to make the call idempotent across process restarts.
     pub idempotency_key: Option<String>,
+    /// Ruling 10: the route takes the key as the body field `idempotency_key`, not as a header.
+    pub idempotency_key_in_body: bool,
     /// Extra headers for this call only. They are merged over the client-wide ones; names the SDK
     /// owns (signing, `Accept`, `Content-Type`, `User-Agent`, `X-Admin-Token`) still win.
     pub headers: Vec<(String, String)>,
@@ -55,6 +68,10 @@ pub struct CallOptions {
     pub timeout: Option<Duration>,
     /// Overall budget including retries.
     pub deadline: Option<Duration>,
+    /// Retries after the first attempt, overriding the client's retry policy for this call.
+    pub max_retries: Option<u32>,
+    /// `X-Request-ID` of this call (the same on every attempt); generated when absent.
+    pub request_id: Option<String>,
 }
 
 /// Live state of one logical call, carried across its attempts.
@@ -65,8 +82,10 @@ pub struct CallState {
     query: Vec<(String, String)>,
     path_params: Vec<(&'static str, String)>,
     idempotency_key: Option<String>,
+    request_id: String,
     headers: Vec<(String, String)>,
     safe_to_repeat: bool,
+    retry: RetryOptions,
     attempt: u32,
     skew_tried: bool,
     /// Offset that was applied when the current attempt was signed. Compared against a freshly
@@ -78,12 +97,20 @@ pub struct CallState {
     skew_installed: i64,
     deadline_at: Instant,
     pub attempt_timeout: Duration,
+    /// The attempt in flight, as the hooks see it (only kept when a hook is installed).
+    attempt_info: Option<RequestInfo>,
+    sent_at: Instant,
 }
 
 impl CallState {
     /// The key sent on every attempt of this call (generated once, never regenerated).
     pub fn idempotency_key(&self) -> Option<&str> {
         self.idempotency_key.as_deref()
+    }
+
+    /// The `X-Request-ID` sent on every attempt of this call.
+    pub fn request_id(&self) -> &str {
+        &self.request_id
     }
 
     /// How long is left of the overall budget.
@@ -96,6 +123,19 @@ impl CallState {
         self.attempt_timeout
             .min(self.remaining())
             .max(Duration::from_millis(1))
+    }
+
+    /// The successful answer of this call.
+    pub fn answer(&self, response: RawResponse) -> Answer {
+        let request_id = response
+            .header(HEADER_REQUEST_ID)
+            .filter(|v| !v.is_empty())
+            .unwrap_or(&self.request_id)
+            .to_string();
+        Answer {
+            response,
+            request_id,
+        }
     }
 }
 
@@ -113,7 +153,11 @@ pub enum Step {
 /// Error codes that mean the core rejected the signature because of the timestamp or MAC.
 const SIGNATURE_FAILURE_CODES: [&str; 2] = ["merchant.bad_signature", "auth.bad_timestamp"];
 
-/// Everything shared by every call: credentials, policy, clock, logger.
+/// Everything shared by every call: credentials, policy, clock, logger, hooks.
+///
+/// Cloning keeps the clock correction shared (it is an `Arc`), which is what
+/// [`Client::with_options`](crate::Client::with_options) relies on.
+#[derive(Clone)]
 pub struct Core {
     pub base_url: String,
     pub credentials: Option<Credentials>,
@@ -124,7 +168,8 @@ pub struct Core {
     pub headers: Vec<(String, String)>,
     pub admin_token: Option<String>,
     pub user_agent: String,
-    pub clock: SkewCorrectingClock,
+    pub clock: Arc<SkewCorrectingClock>,
+    pub hooks: Hooks,
 }
 
 impl std::fmt::Debug for Core {
@@ -152,14 +197,30 @@ impl Core {
             headers: Vec::new(),
             admin_token: None,
             user_agent,
-            clock: SkewCorrectingClock::new(Arc::new(SystemClock) as Arc<dyn Clock>),
+            clock: Arc::new(SkewCorrectingClock::new(
+                Arc::new(SystemClock) as Arc<dyn Clock>
+            )),
+            hooks: Hooks::default(),
         }
     }
 
-    /// Validate the call, choose the idempotency key and start the deadline.
+    /// Validate the call, choose the idempotency key and the request id, start the deadline.
     pub fn prepare(&self, route: &'static RouteSpec, opts: CallOptions) -> Result<CallState> {
-        let body = serialize_body(opts.body.as_ref(), route.method);
+        let mut body = opts.body;
         let mut key = opts.idempotency_key;
+        if opts.idempotency_key_in_body {
+            // Ruling 10: the key rides in the body field of the same name, and no header is sent.
+            if let Some(k) = key.take() {
+                assert_idempotency_key(&k)?;
+                match &mut body {
+                    Some(Value::Object(map)) => {
+                        map.insert("idempotency_key".into(), Value::String(k));
+                    }
+                    _ => body = Some(serde_json::json!({ "idempotency_key": k })),
+                }
+            }
+        }
+        let body = serialize_body(body.as_ref(), route.method);
         if let Some(k) = &key {
             assert_idempotency_key(k)?;
             if !route.idempotent {
@@ -179,6 +240,22 @@ impl Core {
         } else if route.idempotent {
             key = Some(new_idempotency_key());
         }
+        // Client-wide headers first, this call's on top: `build_request` keeps the last value for
+        // a repeated name, so a per-call header overrides a client-wide one.
+        let mut headers = self.headers.clone();
+        headers.extend(opts.headers);
+        // One id for every attempt: it names the call, not the attempt.
+        let request_id = match opts.request_id {
+            Some(id) => id,
+            None => super::util::header_value(&headers, HEADER_REQUEST_ID)
+                .filter(|v| !v.is_empty())
+                .map(str::to_string)
+                .unwrap_or_else(new_idempotency_key),
+        };
+        let mut retry = self.retry;
+        if let Some(n) = opts.max_retries {
+            retry.max_retries = n;
+        }
         let safe_to_repeat = route.safe || (route.idempotent && key.is_some());
         Ok(CallState {
             route,
@@ -186,8 +263,10 @@ impl Core {
             query: opts.query,
             path_params: opts.path_params,
             idempotency_key: key,
-            headers: opts.headers,
+            request_id,
+            headers,
             safe_to_repeat,
+            retry,
             attempt: 0,
             skew_tried: false,
             signed_offset: 0,
@@ -195,19 +274,17 @@ impl Core {
             skew_installed: 0,
             deadline_at: Instant::now() + opts.deadline.unwrap_or(self.deadline),
             attempt_timeout: opts.timeout.unwrap_or(self.timeout),
+            attempt_info: None,
+            sent_at: Instant::now(),
         })
     }
 
-    /// Build and sign the next attempt.
+    /// Build and sign the next attempt, and tell the request hook about it.
     pub fn build(&self, st: &mut CallState) -> Result<BuiltRequest> {
         // Read the shared offset once and remember it: what this attempt was signed with is what a
         // measured offset has to be compared against, not whatever another call installed since.
         let signed_offset = self.clock.offset();
         st.signed_offset = signed_offset;
-        // Client-wide headers first, this call's on top: `build_request` keeps the last value for
-        // a repeated name, so a per-call header overrides a client-wide one.
-        let mut extra = self.headers.clone();
-        extra.extend(st.headers.iter().cloned());
         let req = build_request(BuildInput {
             base_url: &self.base_url,
             route: st.route,
@@ -219,34 +296,67 @@ impl Core {
             ts: self.clock.raw_now() + signed_offset,
             user_agent: &self.user_agent,
             admin_token: self.admin_token.as_deref(),
-            extra_headers: &extra,
+            extra_headers: &st.headers,
+            request_id: &st.request_id,
         })?;
         self.log(
             LogLevel::Debug,
             "request",
             &[
-                ("route", st.route.key.to_string()),
+                ("route", st.route.operation_id.to_string()),
                 ("attempt", st.attempt.to_string()),
+                ("request_id", st.request_id.clone()),
                 (
                     "idempotency_key",
                     st.idempotency_key.clone().unwrap_or_default(),
                 ),
             ],
         );
+        if self.hooks.is_set() {
+            let info = RequestInfo::new(&req, st.attempt + 1, &st.request_id, st.route);
+            if let Some(hook) = &self.hooks.on_request {
+                hook(&info);
+            }
+            st.attempt_info = Some(info);
+        }
+        st.sent_at = Instant::now();
         Ok(req)
+    }
+
+    fn emit_response(
+        &self,
+        st: &CallState,
+        status: u16,
+        headers: &[(String, String)],
+        error: Option<&Error>,
+    ) {
+        let (Some(hook), Some(request)) = (&self.hooks.on_response, &st.attempt_info) else {
+            return;
+        };
+        hook(&ResponseInfo {
+            request: request.clone(),
+            status,
+            headers: headers.to_vec(),
+            elapsed: st.sent_at.elapsed(),
+            error: error.cloned(),
+        });
     }
 
     /// Decide what to do with an answer.
     pub fn on_response(&self, st: &mut CallState, raw: RawResponse) -> Result<Step> {
         if (200..300).contains(&raw.status) {
+            self.emit_response(st, raw.status, &raw.headers, None);
             return Ok(Step::Return(raw));
         }
-        let failure = self.classify(st.route, &raw);
+        let failure = self
+            .classify(st.route, &raw)
+            .with_request_id(raw.header(HEADER_REQUEST_ID).unwrap_or(&st.request_id));
+        self.emit_response(st, raw.status, &raw.headers, Some(&failure));
         self.log(
             LogLevel::Debug,
             "response",
             &[
-                ("route", st.route.key.to_string()),
+                ("route", st.route.operation_id.to_string()),
                 ("status", raw.status.to_string()),
                 ("code", failure.code().to_string()),
                 (
@@ -268,7 +378,7 @@ impl Core {
                             LogLevel::Warn,
                             "clock skew detected; re-signing with server time",
                             &[
-                                ("route", st.route.key.to_string()),
+                                ("route", st.route.operation_id.to_string()),
                                 ("offset_sec", offset.to_string()),
                             ],
                         );
@@ -290,6 +400,8 @@ impl Core {
 
     /// Decide what to do when no answer arrived at all.
     pub fn on_transport_error(&self, st: &mut CallState, err: Error) -> Result<Step> {
+        let err = err.with_request_id(&st.request_id);
+        self.emit_response(st, 0, &[], Some(&err));
         self.decide_retry(st, err)
     }
 
@@ -298,15 +410,16 @@ impl Core {
             attempt: st.attempt,
             safe_to_repeat: st.safe_to_repeat,
         };
-        if !should_retry(&err, ctx, &self.retry) {
+        if !should_retry(&err, ctx, &st.retry) {
             return Err(err);
         }
-        let delay = Duration::from_millis(retry_delay_ms(&err, ctx, &self.retry, jitter()));
+        let delay = Duration::from_millis(retry_delay_ms(&err, ctx, &st.retry, jitter()));
         if delay > st.remaining() {
             return Err(Error::transport(
                 "transport.deadline",
                 format!("retry would exceed the call deadline; last error: {err}"),
-            ));
+            )
+            .with_request_id(&st.request_id));
         }
         st.attempt += 1;
         Ok(Step::Retry(delay))

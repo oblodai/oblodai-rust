@@ -1,30 +1,24 @@
 //! The synchronous client, behind the `blocking` feature.
 //!
-//! It is the same method tree as [`crate::Client`] — the resource types are generic over their
-//! transport — driving the same pure core (signing, envelopes, retry decisions) over a blocking
-//! HTTP backend. Methods return the value instead of a future: `client.payments().create(p).send()?`.
+//! It is the same method tree as [`crate::Client`] — the generated namespaces are generic over
+//! their transport — driving the same pure core (signing, envelopes, retry decisions) over a
+//! blocking HTTP backend. Builders are sent with `.send()`: `client.payments().create(p).send()?`.
 
 use std::sync::Arc;
 
-use crate::config::ClientBuilder;
+use crate::config::{ClientBuilder, ClientOptions};
 use crate::core::http::{BlockingHttpBackend, ReqwestBlockingBackend};
 use crate::core::transport::BlockingTransport;
 use crate::error::Result;
-use crate::resources::{
-    Account, Batches, Catalog, Documents, Merchants, PaymentLinks, Payments, PayoutLinks, Payouts,
-    Refunds, Sandbox, Settings, Splits, Transfers, Wallets, Webhooks,
-};
 
 /// The synchronous Oblodai API client.
 ///
 /// ```no_run
-/// # use oblodai::{blocking::Client, contract::requests::PaymentRequest};
+/// # use oblodai::{blocking::Client, models::PaymentRequest};
 /// # fn demo() -> oblodai::Result<()> {
 /// let client = Client::new("oblodai_…", "oblodai_live_…")?;
-/// let invoice = client
-///     .payments()
-///     .create(PaymentRequest { amount: "25".into(), currency: "USDT".into(), ..Default::default() })
-///     .send()?;
+/// let invoice = client.payments().create(PaymentRequest::new("25", "USDT")).send()?;
+/// # let _ = invoice;
 /// # Ok(()) }
 /// ```
 #[derive(Clone, Debug)]
@@ -53,89 +47,19 @@ impl Client {
     }
 
     /// The transport, for advanced use.
-    pub fn transport(&self) -> &BlockingTransport {
-        &self.transport
+    pub fn transport(&self) -> BlockingTransport {
+        self.transport.clone()
     }
 
-    /// Invoices, the payer-facing checkout endpoints included.
-    pub fn payments(&self) -> Payments<BlockingTransport> {
-        Payments::new(self.transport.clone())
+    /// A copy of this client with some settings changed; see
+    /// [`crate::Client::with_options`].
+    pub fn with_options(&self, options: ClientOptions) -> Self {
+        Self {
+            transport: self.transport.with_core(|core| options.apply(core)),
+        }
     }
 
-    /// Refunds and underpayment resolution.
-    pub fn refunds(&self) -> Refunds<BlockingTransport> {
-        Refunds::new(self.transport.clone())
-    }
-
-    /// Payouts to external addresses.
-    pub fn payouts(&self) -> Payouts<BlockingTransport> {
-        Payouts::new(self.transport.clone())
-    }
-
-    /// Payout links (cheques).
-    pub fn payout_links(&self) -> PayoutLinks<BlockingTransport> {
-        PayoutLinks::new(self.transport.clone())
-    }
-
-    /// Reusable payment links.
-    pub fn payment_links(&self) -> PaymentLinks<BlockingTransport> {
-        PaymentLinks::new(self.transport.clone())
-    }
-
-    /// Progress of asynchronous batches.
-    pub fn batches(&self) -> Batches<BlockingTransport> {
-        Batches::new(self.transport.clone())
-    }
-
-    /// Internal transfers between platform balances.
-    pub fn transfers(&self) -> Transfers<BlockingTransport> {
-        Transfers::new(self.transport.clone())
-    }
-
-    /// Static deposit wallets.
-    pub fn wallets(&self) -> Wallets<BlockingTransport> {
-        Wallets::new(self.transport.clone())
-    }
-
-    /// Webhook endpoints and deliveries.
-    pub fn webhooks(&self) -> Webhooks<BlockingTransport> {
-        Webhooks::new(self.transport.clone())
-    }
-
-    /// Generated PDF/CSV documents.
-    pub fn documents(&self) -> Documents<BlockingTransport> {
-        Documents::new(self.transport.clone())
-    }
-
-    /// Revenue splits.
-    pub fn splits(&self) -> Splits<BlockingTransport> {
-        Splits::new(self.transport.clone())
-    }
-
-    /// Merchant-level configuration.
-    pub fn settings(&self) -> Settings<BlockingTransport> {
-        Settings::new(self.transport.clone())
-    }
-
-    /// Balances and account-level facts.
-    pub fn account(&self) -> Account<BlockingTransport> {
-        Account::new(self.transport.clone())
-    }
-
-    /// Public reference data — no credentials needed.
-    pub fn catalog(&self) -> Catalog<BlockingTransport> {
-        Catalog::new(self.transport.clone())
-    }
-
-    /// The developer sandbox (`test_` keys only).
-    pub fn sandbox(&self) -> Sandbox<BlockingTransport> {
-        Sandbox::new(self.transport.clone())
-    }
-
-    /// Merchant provisioning, for platforms that onboard merchants themselves.
-    pub fn merchants(&self) -> Merchants<BlockingTransport> {
-        Merchants::new(self.transport.clone())
-    }
+    crate::generated::resource_accessors!(BlockingTransport);
 }
 
 impl ClientBuilder {

@@ -78,19 +78,26 @@ impl Logger for StderrLogger {
     }
 }
 
-const SENSITIVE: [&str; 6] = [
+const SENSITIVE: [&str; 7] = [
     "secret",
     "signature",
     "passcode",
     "token",
     "authorization",
     "password",
+    "claim_url",
 ];
+
+/// Whether a field or header of this name carries a secret (never logged, never printed by
+/// `Debug`). A payout link's `claim_url` embeds its claim token.
+pub fn is_sensitive(key: &str) -> bool {
+    let lower = key.to_ascii_lowercase();
+    SENSITIVE.iter().any(|s| lower.contains(s))
+}
 
 /// Replace the value of a sensitive-looking key.
 pub fn redact<'a>(key: &str, value: &'a str) -> &'a str {
-    let lower = key.to_ascii_lowercase();
-    if SENSITIVE.iter().any(|s| lower.contains(s)) {
+    if is_sensitive(key) {
         "[redacted]"
     } else {
         value

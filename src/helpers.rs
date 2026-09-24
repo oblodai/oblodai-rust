@@ -1,7 +1,7 @@
 //! Helpers for the two vocabularies every integration touches: decimal amounts and statuses.
 
-use crate::contract::enums::{PaymentStatus, PayoutStatus};
-use crate::contract::models::Money;
+use crate::core::money::Money;
+use crate::generated::enums::{PaymentStatus, PayoutStatus};
 
 /// Amounts are decimal strings; never parse them as `f64` (USDT has 6 decimals, BTC 8, ETH 18).
 /// These compare and add at arbitrary precision using `i128` over a common scale.
@@ -162,7 +162,7 @@ pub fn is_payment_paid(status: &PaymentStatus) -> bool {
     matches!(status, PaymentStatus::Paid | PaymentStatus::PaidOver)
 }
 
-/// The invoice is waiting for a merchant decision (underpaid): call `refunds().resolve()`.
+/// The invoice is waiting for a merchant decision (underpaid): call `payments().resolve()`.
 pub fn is_payment_underpaid(status: &PaymentStatus) -> bool {
     matches!(status, PaymentStatus::WrongAmount)
 }

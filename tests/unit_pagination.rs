@@ -8,7 +8,7 @@ mod support;
 use std::sync::Arc;
 
 use futures_util::StreamExt;
-use oblodai::contract::requests::{PaymentHistoryRequest, PayoutHistoryRequest};
+use oblodai::models::HistoryRequest;
 use oblodai::{Client, HttpBackend};
 use serde_json::{json, Value};
 use support::{api_error, ok, MockBackend, Scripted};
@@ -28,14 +28,14 @@ fn page(items: Vec<Value>, offset: i64, total: i64, per_page: i64) -> Scripted {
 
 /// A real recorded invoice with a fresh uuid — the models are strict, and so is this test.
 fn invoice(uuid: &str) -> Value {
-    let mut item = support::result_of("POST /v1/payment/history")["items"][0].clone();
+    let mut item = support::sample("payment");
     item["uuid"] = json!(uuid);
     item
 }
 
 /// A real recorded payout with a fresh uuid.
 fn payout(uuid: &str) -> Value {
-    let mut item = support::result_of("POST /v1/payout/history")["items"][0].clone();
+    let mut item = support::sample("payout");
     item["uuid"] = json!(uuid);
     item
 }
@@ -58,7 +58,7 @@ async fn awaiting_a_pager_fetches_exactly_one_page() {
     let (client, mock) = harness(vec![page(vec![invoice("a"), invoice("b")], 0, 5, 2)]);
     let first = client
         .payments()
-        .history(PaymentHistoryRequest::default())
+        .list_history(HistoryRequest::default())
         .limit(2)
         .await
         .unwrap();
@@ -72,7 +72,7 @@ async fn awaiting_a_pager_fetches_exactly_one_page() {
 #[tokio::test]
 async fn nothing_is_requested_until_the_pager_is_consumed() {
     let (client, mock) = harness(vec![page(vec![], 0, 0, 50)]);
-    let pager = client.payments().history(PaymentHistoryRequest::default());
+    let pager = client.payments().list_history(HistoryRequest::default());
     assert_eq!(
         mock.call_count(),
         0,
@@ -92,7 +92,7 @@ async fn streaming_walks_every_page_lazily() {
     let mut seen = Vec::new();
     let mut stream = client
         .payments()
-        .history(PaymentHistoryRequest::default())
+        .list_history(HistoryRequest::default())
         .limit(2)
         .stream();
     while let Some(item) = stream.next().await {
@@ -122,7 +122,7 @@ async fn a_failed_page_ends_the_stream_with_that_error() {
     ]);
     let mut stream = client
         .payments()
-        .history(PaymentHistoryRequest::default())
+        .list_history(HistoryRequest::default())
         .limit(1)
         .stream();
     assert_eq!(stream.next().await.unwrap().unwrap().uuid, "1");
@@ -138,7 +138,7 @@ async fn a_failed_page_ends_the_stream_with_that_error() {
 async fn a_pager_that_is_never_consumed_cannot_fail_anything() {
     let (client, mock) = harness(vec![]);
     // Dropping an unconsumed pager must not panic and must not have sent anything.
-    drop(client.payouts().history(PayoutHistoryRequest::default()));
+    drop(client.payouts().list_history(HistoryRequest::default()));
     assert_eq!(mock.call_count(), 0);
 }
 
@@ -150,7 +150,7 @@ async fn all_collects_across_pages_with_a_cap() {
     ]);
     let items = client
         .payouts()
-        .history(PayoutHistoryRequest::default())
+        .list_history(HistoryRequest::default())
         .limit(2)
         .all(None)
         .await
@@ -161,7 +161,7 @@ async fn all_collects_across_pages_with_a_cap() {
     let (client, mock) = harness(vec![page(vec![invoice("1"), invoice("2")], 0, 9, 2)]);
     let capped = client
         .payments()
-        .history(PaymentHistoryRequest::default())
+        .list_history(HistoryRequest::default())
         .limit(2)
         .all(Some(2))
         .await
@@ -182,7 +182,7 @@ async fn a_short_page_ends_the_walk_even_when_has_pages_lies() {
     }))]);
     let items = client
         .payments()
-        .history(PaymentHistoryRequest::default())
+        .list_history(HistoryRequest::default())
         .all(None)
         .await
         .unwrap();
@@ -198,8 +198,8 @@ async fn caller_filters_travel_with_every_page() {
     ]);
     let _ = client
         .payouts()
-        .history(PayoutHistoryRequest {
-            kind: Some(oblodai::PayoutKind::Refund),
+        .list_history(HistoryRequest {
+            kind: Some(oblodai::enums::PayoutKind::Refund),
             ..Default::default()
         })
         .limit(1)
@@ -216,7 +216,7 @@ async fn a_get_list_route_pages_over_the_query_string() {
     let (client, mock) = harness(vec![page(vec![], 0, 0, 5)]);
     let _ = client
         .sandbox()
-        .webhooks(oblodai::resources::PageParams::default())
+        .list_webhooks(oblodai::generated::resources::SandboxListWebhooksQuery::default())
         .limit(5)
         .await
         .unwrap();
@@ -231,8 +231,56 @@ async fn list_pages_never_carry_an_idempotency_key() {
     let (client, mock) = harness(vec![page(vec![], 0, 0, 50)]);
     let _ = client
         .payouts()
-        .history(PayoutHistoryRequest::default())
+        .list_history(HistoryRequest::default())
         .await
         .unwrap();
     assert_eq!(mock.first().header("idempotency-key"), None);
+}
+
+#[tokio::test]
+async fn by_page_yields_one_page_per_request() {
+    let (client, mock) = harness(vec![
+        page(vec![invoice("a"), invoice("b")], 0, 3, 2),
+        page(vec![invoice("c")], 2, 3, 2),
+    ]);
+    let mut pages = client
+        .payments()
+        .list_history(HistoryRequest::default())
+        .limit(2)
+        .by_page();
+    assert_eq!(mock.call_count(), 0, "nothing before the first poll");
+    let first = pages.next().await.unwrap().unwrap();
+    assert_eq!(first.items.len(), 2);
+    assert_eq!(first.paginate.total, 3);
+    assert_eq!(mock.call_count(), 1);
+    let second = pages.next().await.unwrap().unwrap();
+    assert_eq!(second.items[0].uuid, "c");
+    assert!(
+        pages.next().await.is_none(),
+        "has_pages=false ends the walk"
+    );
+    assert_eq!(mock.call_count(), 2);
+    let offsets: Vec<_> = mock
+        .calls()
+        .iter()
+        .map(|c| c.json_body()["offset"].clone())
+        .collect();
+    assert_eq!(offsets, [json!(0), json!(2)]);
+}
+
+#[tokio::test]
+async fn limit_and_offset_in_the_params_start_the_walk() {
+    let (client, mock) = harness(vec![page(vec![], 40, 40, 20)]);
+    let _ = client
+        .payments()
+        .list_history(HistoryRequest {
+            limit: Some(20),
+            offset: Some(40),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let body = mock.first().json_body();
+    assert_eq!(body["limit"], 20);
+    assert_eq!(body["offset"], 40);
 }

@@ -9,7 +9,7 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use oblodai::contract::requests::{PayoutCalculateRequest, PayoutRequest, PayoutValidateRequest};
+use oblodai::models::{PayoutCalculateRequest, PayoutRequest, PayoutValidateRequest};
 use oblodai::{Client, ErrorKind};
 
 const ADDRESS: &str = "TQrY8bkbpXKPt2LZbU8jqfnpFbUSF15sbx";
@@ -17,8 +17,13 @@ const ADDRESS: &str = "TQrY8bkbpXKPt2LZbU8jqfnpFbUSF15sbx";
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = Client::from_env()?;
+    run(&client).await?;
+    Ok(())
+}
 
-    let balance = client.account().balance().await?;
+/// The whole flow on a client you built (tests run it against a fake gateway).
+pub async fn run(client: &Client) -> oblodai::Result<()> {
+    let balance = client.account().get_balance().await?;
     for entry in &balance.balance.merchant {
         println!("balance   {} {}", entry.balance, entry.currency);
     }
@@ -27,10 +32,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let quote = client
         .payouts()
         .calculate(PayoutCalculateRequest {
-            amount: "10".into(),
-            currency: "USDT".into(),
             network: Some("tron".into()),
-            ..Default::default()
+            ..PayoutCalculateRequest::new("10", "USDT")
         })
         .await?;
     println!(
@@ -44,11 +47,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let dry_run = client
         .payouts()
         .validate(PayoutValidateRequest {
-            amount: "10".into(),
-            currency: "USDT".into(),
             network: Some("tron".into()),
-            address: ADDRESS.into(),
-            ..Default::default()
+            ..PayoutValidateRequest::new(ADDRESS, "10", "USDT")
         })
         .await?;
     if !dry_run.valid {
@@ -69,12 +69,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let result = client
         .payouts()
         .create(PayoutRequest {
-            amount: "10".into(),
-            currency: "USDT".into(),
             network: Some("tron".into()),
-            address: ADDRESS.into(),
-            order_id: order_id.clone(),
-            ..Default::default()
+            ..PayoutRequest::new(ADDRESS, "10", "USDT", order_id.clone())
         })
         .idempotency_key(&order_id)
         .await;
@@ -96,7 +92,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(err) if err.kind() == ErrorKind::Validation => {
             println!("rejected: {} (field {:?})", err.message(), err.field());
         }
-        Err(err) => return Err(err.into()),
+        Err(err) => return Err(err),
     }
 
     Ok(())
