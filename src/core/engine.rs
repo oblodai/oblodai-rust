@@ -218,7 +218,7 @@ impl Core {
                             // Both the field and the option: ambiguous, refused rather than
                             // silently picking one — in every Oblodai SDK.
                             return Err(Error::config(
-                                "sdk.bad_idempotency_key",
+                                "sdk.bad_config",
                                 "idempotency_key is given twice: in the request and as the \
                                  idempotency_key option; pass one",
                                 Some("idempotency_key"),

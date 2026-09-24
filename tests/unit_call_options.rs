@@ -318,7 +318,7 @@ async fn the_faucet_key_given_twice_is_an_error_before_the_network() {
         .send_json()
         .await
         .unwrap_err();
-    assert_eq!(err.code(), "sdk.bad_idempotency_key");
+    assert_eq!(err.code(), "sdk.bad_config");
     assert!(err.to_string().contains("idempotency_key"), "{err}");
     assert_eq!(mock.call_count(), 0);
 }
