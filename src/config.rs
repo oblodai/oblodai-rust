@@ -9,6 +9,7 @@ use url::Url;
 
 use crate::core::clock::{Clock, SkewCorrectingClock, SystemClock};
 use crate::core::engine::Core;
+use crate::core::hooks::Hooks;
 use crate::core::http::HttpBackend;
 use crate::core::logger::{LogLevel, Logger, NoopLogger, StderrLogger};
 use crate::core::request::Credentials;
@@ -30,6 +31,8 @@ pub struct ClientBuilder {
     timeout: Option<Duration>,
     deadline: Option<Duration>,
     retry: Option<RetryOptions>,
+    max_retries: Option<u32>,
+    hooks: Hooks,
     logger: Option<Arc<dyn Logger>>,
     headers: Vec<(String, String)>,
     admin_token: Option<String>,
@@ -90,6 +93,19 @@ impl ClientBuilder {
     /// Retry policy. `RetryOptions { max_retries: 0, .. }` disables retries.
     pub fn retry(mut self, value: RetryOptions) -> Self {
         self.retry = Some(value);
+        self
+    }
+
+    /// Retries after the first attempt (default 2); `0` disables retries. Overrides
+    /// `RetryOptions::max_retries`; a call can override it again with `.max_retries(..)`.
+    pub fn max_retries(mut self, value: u32) -> Self {
+        self.max_retries = Some(value);
+        self
+    }
+
+    /// Request and response hooks, called once per attempt (metrics, tracing, logs).
+    pub fn hooks(mut self, value: Hooks) -> Self {
+        self.hooks = value;
         self
     }
 
@@ -193,10 +209,7 @@ impl ClientBuilder {
             },
         };
 
-        let user_agent = format!(
-            "oblodai-rust/{SDK_VERSION} (contract {})",
-            &crate::contract::version::CONTRACT_HASH[..12]
-        );
+        let user_agent = format!("oblodai-rust/{SDK_VERSION}");
         let mut core = Core::new(base_url, user_agent);
         core.credentials = credentials;
         core.logger = logger;
@@ -214,12 +227,80 @@ impl ClientBuilder {
         if let Some(r) = self.retry {
             core.retry = r;
         }
-        core.clock = SkewCorrectingClock::new(
+        if let Some(n) = self.max_retries {
+            core.retry.max_retries = n;
+        }
+        core.hooks = self.hooks.clone();
+        core.clock = Arc::new(SkewCorrectingClock::new(
             self.clock
                 .clone()
                 .unwrap_or_else(|| Arc::new(SystemClock) as Arc<dyn Clock>),
-        );
+        ));
         Ok(core)
+    }
+}
+
+/// Settings a copy of a client can change: [`Client::with_options`](crate::Client::with_options).
+///
+/// Unset fields keep the original client's value.
+#[derive(Clone, Debug, Default)]
+pub struct ClientOptions {
+    timeout: Option<Duration>,
+    deadline: Option<Duration>,
+    max_retries: Option<u32>,
+    headers: Vec<(String, String)>,
+    hooks: Option<Hooks>,
+}
+
+impl ClientOptions {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Per-attempt timeout.
+    pub fn timeout(mut self, value: Duration) -> Self {
+        self.timeout = Some(value);
+        self
+    }
+
+    /// Overall budget per call, retries included.
+    pub fn deadline(mut self, value: Duration) -> Self {
+        self.deadline = Some(value);
+        self
+    }
+
+    /// Retries after the first attempt; `0` disables retries.
+    pub fn max_retries(mut self, value: u32) -> Self {
+        self.max_retries = Some(value);
+        self
+    }
+
+    /// An extra header on every request of the copy, on top of the original's.
+    pub fn extra_header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.headers.push((name.into(), value.into()));
+        self
+    }
+
+    /// Replace the hooks.
+    pub fn hooks(mut self, value: Hooks) -> Self {
+        self.hooks = Some(value);
+        self
+    }
+
+    pub(crate) fn apply(&self, core: &mut Core) {
+        if let Some(t) = self.timeout {
+            core.timeout = t;
+        }
+        if let Some(d) = self.deadline {
+            core.deadline = d;
+        }
+        if let Some(n) = self.max_retries {
+            core.retry.max_retries = n;
+        }
+        core.headers.extend(self.headers.iter().cloned());
+        if let Some(h) = &self.hooks {
+            core.hooks = h.clone();
+        }
     }
 }
 

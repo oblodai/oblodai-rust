@@ -7,10 +7,10 @@ use std::sync::Arc;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use super::engine::{CallOptions, Core, RawResponse, Step};
+use super::engine::{Answer, CallOptions, Core, RawResponse, Step};
 use super::envelope::{decode_envelope, decode_result};
 use super::http::{HttpBackend, HttpRequest, MAX_FILE_BODY_BYTES, MAX_JSON_BODY_BYTES};
-use crate::contract::types::RouteSpec;
+use super::route::RouteSpec;
 use crate::error::{Error, Result};
 
 /// The async transport. Cheap to clone; share one per key pair.
@@ -37,12 +37,19 @@ impl Transport {
         &self.core
     }
 
-    /// Run the whole lifecycle and return the raw 2xx answer.
-    pub async fn execute(
-        &self,
-        route: &'static RouteSpec,
-        opts: CallOptions,
-    ) -> Result<RawResponse> {
+    /// A transport over a copy of this one's settings, changed by `change` (same HTTP backend,
+    /// same clock correction).
+    pub fn with_core(&self, change: impl FnOnce(&mut Core)) -> Self {
+        let mut core = (*self.core).clone();
+        change(&mut core);
+        Self {
+            core: Arc::new(core),
+            backend: self.backend.clone(),
+        }
+    }
+
+    /// Run the whole lifecycle and return the 2xx answer with the call's request id.
+    pub async fn execute(&self, route: &'static RouteSpec, opts: CallOptions) -> Result<Answer> {
         let mut st = self.core.prepare(route, opts)?;
         loop {
             let req = self.core.build(&mut st)?;
@@ -62,7 +69,7 @@ impl Transport {
                 Err(err) => self.core.on_transport_error(&mut st, err)?,
             };
             match step {
-                Step::Return(raw) => return Ok(raw),
+                Step::Return(raw) => return Ok(st.answer(raw)),
                 Step::Resign => continue,
                 Step::Retry(delay) => {
                     tokio::time::sleep(delay).await;
@@ -74,8 +81,8 @@ impl Transport {
 
     /// Call an envelope route and return its `result` as raw JSON.
     pub async fn call_value(&self, route: &'static RouteSpec, opts: CallOptions) -> Result<Value> {
-        let raw = self.execute(route, opts).await?;
-        finish(route, raw)
+        let answer = self.execute(route, opts).await?;
+        finish(route, answer.response)
     }
 
     /// Call an envelope route and decode its `result` into a model.
@@ -84,7 +91,7 @@ impl Transport {
         route: &'static RouteSpec,
         opts: CallOptions,
     ) -> Result<T> {
-        decode_result(self.call_value(route, opts).await?, route.key)
+        decode_result(self.call_value(route, opts).await?, route.operation_id)
     }
 }
 
@@ -112,7 +119,7 @@ pub(crate) fn finish(route: &'static RouteSpec, raw: RawResponse) -> Result<Valu
             format!(
                 "{}: the request was already processed but its response was too large to replay \
                  — fetch the result by order_id/reference ({detail})",
-                route.key
+                route.operation_id
             ),
             raw.status,
             Some(result.to_string()),
@@ -148,7 +155,18 @@ impl BlockingTransport {
         &self.core
     }
 
-    pub fn execute(&self, route: &'static RouteSpec, opts: CallOptions) -> Result<RawResponse> {
+    /// A transport over a copy of this one's settings, changed by `change`.
+    pub fn with_core(&self, change: impl FnOnce(&mut Core)) -> Self {
+        let mut core = (*self.core).clone();
+        change(&mut core);
+        Self {
+            core: Arc::new(core),
+            backend: self.backend.clone(),
+        }
+    }
+
+    /// Run the whole lifecycle and return the 2xx answer with the call's request id.
+    pub fn execute(&self, route: &'static RouteSpec, opts: CallOptions) -> Result<Answer> {
         let mut st = self.core.prepare(route, opts)?;
         loop {
             let req = self.core.build(&mut st)?;
@@ -165,7 +183,7 @@ impl BlockingTransport {
                 Err(err) => self.core.on_transport_error(&mut st, err)?,
             };
             match step {
-                Step::Return(raw) => return Ok(raw),
+                Step::Return(raw) => return Ok(st.answer(raw)),
                 Step::Resign => continue,
                 Step::Retry(delay) => {
                     std::thread::sleep(delay);
@@ -176,7 +194,7 @@ impl BlockingTransport {
     }
 
     pub fn call_value(&self, route: &'static RouteSpec, opts: CallOptions) -> Result<Value> {
-        finish(route, self.execute(route, opts)?)
+        finish(route, self.execute(route, opts)?.response)
     }
 
     pub fn call<T: DeserializeOwned>(
@@ -184,6 +202,6 @@ impl BlockingTransport {
         route: &'static RouteSpec,
         opts: CallOptions,
     ) -> Result<T> {
-        decode_result(self.call_value(route, opts)?, route.key)
+        decode_result(self.call_value(route, opts)?, route.operation_id)
     }
 }

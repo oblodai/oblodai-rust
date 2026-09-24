@@ -1,4 +1,4 @@
-//! Test scaffolding: a recording HTTP backend and loaders for the contract snapshot.
+//! Test scaffolding: a recording HTTP backend and recorded webhook deliveries.
 
 #![allow(dead_code)]
 // The SDK's error carries the whole API envelope by value; boxing it here would only make the
@@ -6,7 +6,7 @@
 #![allow(clippy::result_large_err)]
 
 use std::collections::VecDeque;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -226,90 +226,7 @@ impl oblodai::BlockingHttpBackend for MockBackend {
     }
 }
 
-// --- the contract snapshot -------------------------------------------------------------------
-
-pub fn contract_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("contract")
-}
-
-pub fn load_contract() -> Value {
-    let text = std::fs::read_to_string(contract_dir().join("contract.json")).unwrap();
-    serde_json::from_str(&text).unwrap()
-}
-
-/// One recorded exchange with a live gateway.
-#[derive(Clone, Debug, serde::Deserialize)]
-pub struct Fixture {
-    pub route: String,
-    pub status: u16,
-    #[serde(default)]
-    pub request: Value,
-    #[serde(default)]
-    pub response: Value,
-    #[serde(default)]
-    pub headers: std::collections::BTreeMap<String, String>,
-}
-
-impl Fixture {
-    pub fn is_success(&self) -> bool {
-        (200..300).contains(&self.status)
-    }
-
-    /// The `result` payload of a successful recording.
-    pub fn result(&self) -> Value {
-        self.response.get("result").cloned().unwrap_or(Value::Null)
-    }
-
-    pub fn is_json(&self) -> bool {
-        self.headers
-            .iter()
-            .any(|(k, v)| k.eq_ignore_ascii_case("content-type") && v.contains("json"))
-    }
-}
-
-pub fn load_fixtures() -> Vec<Fixture> {
-    let mut out = Vec::new();
-    for entry in std::fs::read_dir(contract_dir().join("fixtures")).unwrap() {
-        let path = entry.unwrap().path();
-        let text = std::fs::read_to_string(&path).unwrap();
-        out.push(
-            serde_json::from_str::<Fixture>(&text)
-                .unwrap_or_else(|e| panic!("{}: {e}", path.display())),
-        );
-    }
-    out.sort_by(|a, b| a.route.cmp(&b.route));
-    out
-}
-
-pub fn fixture(route: &str) -> Fixture {
-    load_fixtures()
-        .into_iter()
-        .find(|f| f.route == route)
-        .unwrap_or_else(|| panic!("no fixture for {route}"))
-}
-
-/// The recorded `result` of a route, panicking when the recording was a refusal.
-pub fn result_of(route: &str) -> Value {
-    let fx = fixture(route);
-    assert!(
-        fx.is_success(),
-        "fixture for {route} is a refusal ({})",
-        fx.status
-    );
-    fx.result()
-}
-
-pub fn load_error_samples() -> Vec<(String, Fixture)> {
-    let mut out = Vec::new();
-    for entry in std::fs::read_dir(contract_dir().join("errors")).unwrap() {
-        let path = entry.unwrap().path();
-        let code = path.file_stem().unwrap().to_string_lossy().into_owned();
-        let text = std::fs::read_to_string(&path).unwrap();
-        out.push((code, serde_json::from_str::<Fixture>(&text).unwrap()));
-    }
-    out.sort_by(|a, b| a.0.cmp(&b.0));
-    out
-}
+// --- recorded webhook deliveries -----------------------------------------------------------
 
 /// A real signed delivery: headers, the parsed body and the exact bytes that were signed.
 #[derive(Clone, Debug, serde::Deserialize)]
@@ -337,7 +254,8 @@ impl WebhookSample {
 }
 
 pub fn load_webhook_samples() -> Vec<WebhookSample> {
-    let text = std::fs::read_to_string(contract_dir().join("webhook-samples.json")).unwrap();
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/webhook-samples.json");
+    let text = std::fs::read_to_string(path).unwrap();
     serde_json::from_str(&text).unwrap()
 }
 
@@ -351,4 +269,11 @@ pub fn pick<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
         };
     }
     Some(current)
+}
+
+/// A real recorded answer (`tests/fixtures/<name>.json`): `payment` is an invoice as
+/// `payments().list_history` returns it, `payout` a payout as `payouts().list_history` does.
+pub fn sample(name: &str) -> Value {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("tests/fixtures/{name}.json"));
+    serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
 }

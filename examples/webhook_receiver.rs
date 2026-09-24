@@ -24,65 +24,84 @@ fn main() -> std::io::Result<()> {
     // Rotating? Keep the outgoing secret here for ~26 h: deliveries queued before the rotation stay
     // signed with it for their whole retry life.
     let previous = std::env::var("OBLODAI_WEBHOOK_SECRET_PREV").ok();
+    let mut receiver = Receiver::new(secret, previous);
 
     let listener = TcpListener::bind("0.0.0.0:8099")?;
     println!("listening on http://0.0.0.0:8099/oblodai/webhook");
-
-    let mut seen: HashSet<String> = HashSet::new();
-    let mut last_sequence: HashMap<String, i64> = HashMap::new();
-
     for stream in listener.incoming() {
         let mut stream = stream?;
         let Some((headers, body)) = read_request(&mut stream) else {
             respond(&mut stream, 400, "bad request");
             continue;
         };
+        let (status, text) = receiver.handle(&headers, &body);
+        respond(&mut stream, status, text);
+    }
+    Ok(())
+}
 
-        let mut options = VerifyOptions::new(&secret);
-        if let Some(prev) = &previous {
+/// What the endpoint remembers between deliveries: the ids it handled and the last sequence per
+/// object. Keep both in your database in production.
+pub struct Receiver {
+    secret: String,
+    previous: Option<String>,
+    seen: HashSet<String>,
+    last_sequence: HashMap<String, i64>,
+}
+
+impl Receiver {
+    pub fn new(secret: String, previous: Option<String>) -> Self {
+        Self {
+            secret,
+            previous,
+            seen: HashSet::new(),
+            last_sequence: HashMap::new(),
+        }
+    }
+
+    /// Handle one delivery; returns the HTTP status and body to answer with.
+    pub fn handle(&mut self, headers: &Headers, body: &[u8]) -> (u16, &'static str) {
+        let mut options = VerifyOptions::new(&self.secret);
+        if let Some(prev) = &self.previous {
             options = options.previous_secret(prev);
         }
 
-        let delivery = match verify_webhook_delivery(&body, &headers, &options) {
+        let delivery = match verify_webhook_delivery(body, headers, &options) {
             Ok(delivery) => delivery,
             Err(err) => {
                 // Never act on an unverified body. 400 tells the gateway not to keep retrying a
                 // delivery this endpoint will never accept.
                 eprintln!("rejected: {} ({})", err.message(), err.code());
-                respond(&mut stream, 400, "bad signature");
-                continue;
+                return (400, "bad signature");
             }
         };
 
-        // Answer fast: the gateway retries on a timeout, and a duplicate is cheaper than a stall.
-        respond(&mut stream, 200, "ok");
-
-        // A rehearsal from `webhooks().test()` or the sandbox: the signature is genuine, the money
-        // is not. Log it, prove the endpoint works, and stop before anything is credited.
+        // A rehearsal from `webhooks().send_test_*()` or the sandbox: the signature is genuine,
+        // the money is not. Log it, prove the endpoint works, and stop before anything is credited.
         if delivery.is_test {
             println!(
                 "rehearsal {} {} — endpoint verified, nothing credited",
                 delivery.event.event_kind(),
                 delivery.event.uuid()
             );
-            continue;
+            return (200, "ok");
         }
 
         if let Some(id) = &delivery.id {
-            if !seen.insert(id.clone()) {
+            if !self.seen.insert(id.clone()) {
                 println!("duplicate delivery {id} — already handled");
-                continue;
+                return (200, "ok");
             }
         }
 
         let event = &delivery.event;
         let key = format!("{}:{}", event.event_kind(), event.uuid());
-        if is_stale_event(event, last_sequence.get(&key).copied()) {
+        if is_stale_event(event, self.last_sequence.get(&key).copied()) {
             println!("stale {key} (sequence {:?}) — dropped", event.sequence());
-            continue;
+            return (200, "ok");
         }
         if let Some(sequence) = event.sequence() {
-            last_sequence.insert(key, sequence);
+            self.last_sequence.insert(key, sequence);
         }
 
         match event {
@@ -91,7 +110,7 @@ fn main() -> std::io::Result<()> {
                     "invoice {} is {} ({} {} received)",
                     payment.uuid, payment.status, payment.payment_amount, payment.payer_currency
                 );
-                // mark_order_paid(payment.order_id.as_deref()) …
+                // mark_order_paid(&payment.order_id) …
             }
             WebhookEvent::Payout(payout) => {
                 println!(
@@ -105,6 +124,16 @@ fn main() -> std::io::Result<()> {
                     wallet.address, wallet.payment_amount, wallet.payer_currency
                 );
             }
+            WebhookEvent::Conversion(conversion) => {
+                println!(
+                    "conversion {} is {} ({} {} → {})",
+                    conversion.id,
+                    conversion.status,
+                    conversion.sent,
+                    conversion.from,
+                    conversion.to
+                );
+            }
             // `WebhookEvent` is `#[non_exhaustive]`: an event type newer than this SDK arrives as
             // `Other` with its body intact instead of failing verification. Acknowledge it.
             other => {
@@ -115,8 +144,9 @@ fn main() -> std::io::Result<()> {
                 );
             }
         }
+        // Answer fast: the gateway retries on a timeout, and a duplicate is cheaper than a stall.
+        (200, "ok")
     }
-    Ok(())
 }
 
 /// Read one HTTP request and hand back its headers and its body bytes, unmodified.

@@ -9,14 +9,20 @@
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use oblodai::contract::requests::PaymentRequest;
+use oblodai::enums::PaymentStatus;
 use oblodai::helpers::{is_payment_final, is_payment_paid};
-use oblodai::{Client, PaymentStatus};
+use oblodai::models::{LookupRequest, PaymentRequest};
+use oblodai::Client;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = Client::from_env()?;
+    run(&client).await?;
+    Ok(())
+}
 
+/// The whole flow on a client you built (tests run it against a fake gateway).
+pub async fn run(client: &Client) -> oblodai::Result<()> {
     // `order_id` is your own reference. The gateway is idempotent per order_id, so re-running this
     // with the same one returns the same invoice instead of creating a second.
     let order_id = format!(
@@ -30,13 +36,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let invoice = client
         .payments()
         .create(PaymentRequest {
-            amount: "25".into(),          // decimal string, never a float
-            currency: "USDT".into(),      // what you price in; use "USD" + to_currency for fiat
             network: Some("tron".into()), // omit to let the payer pick on the pay page
             order_id: Some(order_id.clone()),
             payer_email: Some("buyer@example.com".into()),
             url_callback: Some("https://shop.example/oblodai/webhook".into()),
-            ..Default::default()
+            // amount: a decimal string, never a float; currency: what you price in
+            ..PaymentRequest::new("25", "USDT")
         })
         .await?;
 
@@ -55,7 +60,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // here so the example finishes on its own.
     for _ in 0..5 {
         tokio::time::sleep(Duration::from_secs(2)).await;
-        let current = client.payments().info(&invoice.uuid).await?;
+        let current = client
+            .payments()
+            .get_info(LookupRequest {
+                uuid: Some(invoice.uuid.clone()),
+                ..Default::default()
+            })
+            .await?;
         println!("status    {}", current.status);
         if is_payment_paid(&current.status) {
             println!(
@@ -65,7 +76,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Ok(());
         }
         if current.status == PaymentStatus::WrongAmount {
-            println!("underpaid — settle it with refunds().resolve()");
+            println!("underpaid — settle it with payments().resolve()");
             return Ok(());
         }
         if is_payment_final(&current.status) {

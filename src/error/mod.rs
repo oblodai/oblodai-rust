@@ -26,11 +26,12 @@ pub use kind::ErrorKind;
 /// rendering therefore adds nothing beyond the message. Everything worth acting on is already a
 /// method here.
 ///
-/// `Display` (and only `Display`) may quote up to 120 characters of an unparsable answer, because
-/// that is what tells you a proxy answered instead of the gateway. [`Debug`] and the `Serialize`
-/// impl never carry the body — use those in structured logs.
-#[derive(Clone, thiserror::Error)]
-#[error("{message}")]
+/// `Display` is `[code] message (request_id=…)` — the suffix only when there is an id — so a log
+/// line alone is enough to find the call on the gateway's side. It (and only it) may quote up to
+/// 120 characters of an unparsable answer, because that is what tells you a proxy answered instead
+/// of the gateway. [`Debug`] and the `Serialize` impl never carry the body — use those in
+/// structured logs.
+#[derive(Clone)]
 pub struct Error {
     kind: ErrorKind,
     code: String,
@@ -102,6 +103,31 @@ impl Error {
     /// The raw body that produced this error, when one was read.
     pub fn raw_body(&self) -> Option<&str> {
         self.raw.as_deref()
+    }
+
+    /// The request id of the call, when the answer did not carry one of its own.
+    pub(crate) fn with_request_id(mut self, request_id: &str) -> Self {
+        if self.request_id.is_none() && !request_id.is_empty() {
+            self.request_id = Some(request_id.to_string());
+        }
+        self
+    }
+
+    /// A long-running operation did not finish within the time [`wait`](crate::Job::wait) was
+    /// given. Not retryable as such: the job keeps running, wait on it again.
+    pub fn job_timeout(message: impl Into<String>) -> Self {
+        Self {
+            kind: ErrorKind::Transport,
+            code: "sdk.job_timeout".to_string(),
+            message: message.into(),
+            http_status: 0,
+            retryable: false,
+            retry_after: None,
+            request_id: None,
+            field: None,
+            synthetic: false,
+            raw: None,
+        }
     }
 
     /// Raised before any request is sent.
@@ -271,6 +297,19 @@ impl Error {
         }
     }
 }
+
+/// `[code] message (request_id=…)`; the suffix only when there is an id.
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "[{}] {}", self.code, self.message)?;
+        if let Some(id) = &self.request_id {
+            write!(f, " (request_id={id})")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for Error {}
 
 /// Statuses a response without an envelope may carry transiently (LB/proxy/timeouts).
 const TRANSIENT_STATUSES: [u16; 7] = [408, 425, 429, 500, 502, 503, 504];

@@ -11,8 +11,10 @@ mod support;
 
 use std::sync::{Arc, Mutex};
 
-use oblodai::contract::models::{ApiKeyPair, PayoutLink, WebhookEndpoint, WebhookSecretRotated};
 use oblodai::core::engine::RawResponse;
+use oblodai::models::{
+    OnboardKey, PayoutLinkCreated, RegisterWebhookResult, RotateWebhookSecretResult,
+};
 use oblodai::{
     BackendFuture, Client, ErrorKind, HttpBackend, HttpRequest, LogLevel, Logger, Result,
     RetryOptions,
@@ -57,7 +59,7 @@ async fn caller_headers_never_duplicate_the_ones_the_sdk_owns() {
             .header("Idempotency-Key", "forged")
             .header("Content-Type", "text/plain")
     });
-    client.account().balance().await.unwrap();
+    client.account().get_balance().await.unwrap();
 
     let sent = mock.first();
     let count = |name: &str| sent.headers.iter().filter(|(k, _)| k == name).count();
@@ -80,7 +82,7 @@ async fn caller_headers_never_duplicate_the_ones_the_sdk_owns() {
 async fn the_admin_token_goes_only_to_onboard_routes() {
     let mock = MockBackend::new(vec![balance_ok()]);
     let client = client_with(mock.clone(), |b| b.admin_token("adm"));
-    client.account().balance().await.unwrap();
+    client.account().get_balance().await.unwrap();
     assert_eq!(mock.first().header("x-admin-token"), None);
 
     let mock = MockBackend::new(vec![ok(json!({
@@ -88,7 +90,7 @@ async fn the_admin_token_goes_only_to_onboard_routes() {
         "api_key": {"public_id":"a","secret":"b"}
     }))]);
     let client = client_with(mock.clone(), |b| b.admin_token("adm"));
-    let _ = client.merchants().create(Default::default()).await;
+    let _ = client.sandbox().onboard_store("m").await;
     assert_eq!(mock.first().header("x-admin-token"), Some("adm"));
 }
 
@@ -98,7 +100,7 @@ async fn a_caller_header_given_twice_collapses_to_the_last_value() {
     let client = client_with(mock.clone(), |b| {
         b.header("X-Trace", "first").header("x-trace", "second")
     });
-    client.account().balance().await.unwrap();
+    client.account().get_balance().await.unwrap();
     let sent = mock.first();
     assert_eq!(
         sent.headers.iter().filter(|(k, _)| k == "x-trace").count(),
@@ -117,7 +119,7 @@ async fn a_header_value_with_crlf_or_non_ascii_is_refused_before_sending() {
     ] {
         let mock = MockBackend::new(vec![balance_ok()]);
         let client = client_with(mock.clone(), |b| b.header(name, value));
-        let err = client.account().balance().await.unwrap_err();
+        let err = client.account().get_balance().await.unwrap_err();
         assert_eq!(err.kind(), ErrorKind::Config, "{name}: {value:?}");
         assert_eq!(err.code(), "sdk.bad_header", "{name}: {value:?}");
         assert_eq!(mock.call_count(), 0, "nothing left the process");
@@ -128,10 +130,11 @@ async fn a_header_value_with_crlf_or_non_ascii_is_refused_before_sending() {
 
 #[test]
 fn one_time_secrets_are_never_printed_by_debug() {
-    let endpoint = WebhookEndpoint {
+    let endpoint = RegisterWebhookResult {
         endpoint_id: "ep".into(),
         url: "https://shop.example/hook".into(),
         secret: Some("whsec_LIVE_SECRET".into()),
+        ..Default::default()
     };
     let shown = format!("{endpoint:?}");
     assert!(!shown.contains("whsec_LIVE_SECRET"), "{shown}");
@@ -141,17 +144,20 @@ fn one_time_secrets_are_never_printed_by_debug() {
         .unwrap()
         .contains("whsec_LIVE_SECRET"));
 
-    let rotated = WebhookSecretRotated {
+    let rotated = RotateWebhookSecretResult {
         endpoint_id: "ep".into(),
         url: "u".into(),
         secret: "whsec_NEW".into(),
         previous_secret_valid_until: "2026-01-01T00:00:00Z".into(),
+        ..Default::default()
     };
-    assert!(!format!("{rotated:?}").contains("whsec_NEW"));
+    let shown = format!("{rotated:?}");
+    assert!(!shown.contains("whsec_NEW"), "{shown}");
 
-    let keys = ApiKeyPair {
+    let keys = OnboardKey {
         public_id: "pk_live_1".into(),
         secret: "SIGNING_KEY".into(),
+        ..Default::default()
     };
     let shown = format!("{keys:?}");
     assert!(!shown.contains("SIGNING_KEY"), "{shown}");
@@ -160,19 +166,26 @@ fn one_time_secrets_are_never_printed_by_debug() {
         "the public half is still useful"
     );
 
-    let link = PayoutLink {
+    let link = PayoutLinkCreated {
         link_id: "lnk".into(),
-        claim_token: Some("CLAIM_TOKEN".into()),
-        claim_url: Some("https://pay.example/claim/CLAIM_TOKEN".into()),
-        passcode: Some("4821".into()),
+        claim_token: "CLAIM_TOKEN".into(),
+        claim_url: "https://pay.example/claim/CLAIM_TOKEN".into(),
         ..Default::default()
     };
     let shown = format!("{link:?}");
     assert!(!shown.contains("CLAIM_TOKEN"), "{shown}");
-    assert!(!shown.contains("4821"), "{shown}");
     assert!(shown.contains("lnk"), "the id is still there");
-    // A link with no secrets says so, rather than pretending it had them.
-    assert!(format!("{:?}", PayoutLink::default()).contains("claim_token: None"));
+
+    // A secret that is absent says so, rather than pretending it was there.
+    let shown = format!("{:?}", RegisterWebhookResult::default());
+    assert!(shown.contains("secret: None"), "{shown}");
+
+    // A field this SDK version does not model is redacted by the same rule, at any depth.
+    let mut link = PayoutLinkCreated::default();
+    link.extra
+        .insert("backup".into(), serde_json::json!({"passcode": "4821"}));
+    let shown = format!("{link:?}");
+    assert!(!shown.contains("4821"), "{shown}");
 }
 
 #[derive(Default)]
@@ -212,7 +225,7 @@ async fn a_caller_supplied_logger_only_ever_sees_redacted_values() {
                 ..Default::default()
             })
     });
-    let _ = client.account().balance().await;
+    let _ = client.account().get_balance().await;
     let lines = spy.lines.lock().unwrap().clone();
     assert!(!lines.is_empty(), "the logger was used at all");
     for line in &lines {
@@ -286,7 +299,7 @@ async fn concurrent_calls_share_one_clock_correction() {
     let calls: Vec<_> = (0..16)
         .map(|_| {
             let client = client.clone();
-            tokio::spawn(async move { client.account().balance().await })
+            tokio::spawn(async move { client.account().get_balance().await })
         })
         .collect();
     for call in calls {
@@ -309,7 +322,7 @@ async fn concurrent_calls_share_one_clock_correction() {
     let calls: Vec<_> = (0..8)
         .map(|_| {
             let client = client.clone();
-            tokio::spawn(async move { client.account().balance().await })
+            tokio::spawn(async move { client.account().get_balance().await })
         })
         .collect();
     for call in calls {
@@ -324,40 +337,19 @@ async fn concurrent_calls_share_one_clock_correction() {
     );
 }
 
-// --- alias parity -----------------------------------------------------------------------------
-
-#[tokio::test]
-async fn payment_link_get_is_info_with_the_same_signature_and_paging() {
-    use oblodai::resources::PageParams;
-    let link = json!({
-        "link_id": "l1", "url": "u", "active": true, "title": "", "description": "",
-        "amount_mode": "open", "currency": "USDT", "document_url": "", "created_at": ""
-    });
-    for which in ["info", "get"] {
-        let mock = MockBackend::new(vec![ok(link.clone())]);
-        let client = client_with(mock.clone(), |b| b);
-        let page = PageParams::default().limit(10).offset(20);
-        let _ = match which {
-            "info" => client.payment_links().info("l1", page).await,
-            _ => client.payment_links().get("l1", page).await,
-        };
-        let body = mock.first().json_body();
-        assert_eq!(body["link_id"], "l1", "{which}");
-        assert_eq!(body["limit"], 10, "{which}");
-        assert_eq!(body["offset"], 20, "{which}");
-    }
-}
-
 #[tokio::test]
 async fn the_sandbox_webhook_inspector_pages_like_every_other_list() {
-    use oblodai::resources::PageParams;
+    use oblodai::generated::resources::SandboxListWebhooksQuery;
     let mock = MockBackend::new(vec![ok(json!({
         "items": [], "paginate": {"total":0,"per_page":5,"offset":0,"has_pages":false}
     }))]);
     let client = client_with(mock.clone(), |b| b);
     let _ = client
         .sandbox()
-        .webhooks(PageParams::default().limit(5).offset(15))
+        .list_webhooks(SandboxListWebhooksQuery {
+            limit: Some(5),
+            offset: Some(15),
+        })
         .await;
     let sent = mock.first();
     assert_eq!(sent.query("limit").as_deref(), Some("5"));
@@ -374,8 +366,8 @@ async fn a_file_builder_takes_the_same_per_call_options_as_a_request_builder() -
     }]);
     let client = client_with(mock.clone(), |b| b);
     let file = client
-        .payout_links()
-        .cheque(Default::default())
+        .documents()
+        .get_payout_link_cheque(Default::default())
         .timeout(std::time::Duration::from_secs(5))
         .deadline(std::time::Duration::from_secs(10))
         .await?;

@@ -5,11 +5,11 @@
 use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
 use url::Url;
 
+use super::route::{Method, RouteAuth, RouteSpec};
 use super::signing::{
     sign_request, SignInput, HEADER_ADMIN_TOKEN, HEADER_IDEMPOTENCY_KEY, HEADER_PUBLIC_ID,
     HEADER_SIGNATURE, HEADER_TIMESTAMP,
 };
-use crate::contract::types::{Method, RouteAuth, RouteSpec};
 use crate::error::{Error, Result};
 
 /// One API key pair.
@@ -45,6 +45,8 @@ pub struct BuildInput<'a> {
     /// the caller configured.
     pub admin_token: Option<&'a str>,
     pub extra_headers: &'a [(String, String)],
+    /// `X-Request-ID` of the call, sent on every attempt.
+    pub request_id: &'a str,
 }
 
 /// The request as it will go on the wire.
@@ -62,7 +64,11 @@ pub struct BuiltRequest {
 /// case-insensitively. `Accept`, `User-Agent` and `X-Admin-Token` are here too: `reqwest` (like
 /// most clients) *appends* headers, so leaving them out put two `Accept` lines on the wire and let
 /// a caller header shadow the configured admin token.
-const RESERVED_HEADERS: [&str; 10] = [
+/// The header naming one call (the same on every attempt), for matching the merchant's logs with
+/// the gateway's.
+pub const HEADER_REQUEST_ID: &str = "X-Request-ID";
+
+const RESERVED_HEADERS: [&str; 11] = [
     "x-public-id",
     "x-signature",
     "x-timestamp",
@@ -73,6 +79,7 @@ const RESERVED_HEADERS: [&str; 10] = [
     "host",
     "accept",
     "user-agent",
+    "x-request-id",
 ];
 
 /// Reject a caller-supplied header before it reaches the socket.
@@ -149,7 +156,11 @@ pub fn build_request(input: BuildInput<'_>) -> Result<BuiltRequest> {
     }
     headers.push(("Accept".into(), "application/json".into()));
     headers.push(("User-Agent".into(), input.user_agent.into()));
-    let has_body = route.method != Method::Get;
+    if !input.request_id.is_empty() {
+        assert_header(HEADER_REQUEST_ID, input.request_id)?;
+        headers.push((HEADER_REQUEST_ID.into(), input.request_id.into()));
+    }
+    let has_body = route.method.has_body();
     if has_body {
         headers.push(("Content-Type".into(), "application/json".into()));
     }
@@ -257,7 +268,7 @@ pub fn fill_path(template: &str, params: &[(&'static str, String)]) -> Result<St
 
 /// Serialize a request body once; a missing POST body becomes `{}`, a GET body is empty.
 pub fn serialize_body(body: Option<&serde_json::Value>, method: Method) -> String {
-    if method == Method::Get {
+    if !method.has_body() {
         return String::new();
     }
     match body {

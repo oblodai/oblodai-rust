@@ -8,11 +8,12 @@ mod support;
 use std::cmp::Ordering;
 use std::sync::Arc;
 
+use oblodai::enums::{PaymentStatus, PayoutStatus};
 use oblodai::helpers::{
     add_amounts, amounts_equal, compare_amounts, is_payment_final, is_payment_paid,
     is_payment_underpaid, is_payout_final, is_payout_succeeded, is_zero_amount, subtract_amounts,
 };
-use oblodai::{Client, ClientBuilder, HttpBackend, PaymentStatus, PayoutStatus};
+use oblodai::{Client, ClientBuilder, HttpBackend};
 use support::MockBackend;
 
 fn empty_env() -> Vec<(String, String)> {
@@ -34,7 +35,7 @@ fn reads_credentials_and_base_url_from_the_environment() {
         ])
         .build()
         .unwrap();
-    let core = client.transport().core();
+    let core = client.transport().core().clone();
     assert_eq!(
         core.base_url, "https://x.test",
         "the trailing slash is trimmed"
@@ -127,10 +128,10 @@ fn refuses_half_a_key_pair() {
 fn defaults_to_the_production_api() {
     let client = builder().env(empty_env()).build().unwrap();
     assert_eq!(
-        client.transport().core().base_url,
+        client.transport().core().clone().base_url,
         oblodai::DEFAULT_BASE_URL
     );
-    assert!(client.transport().core().credentials.is_none());
+    assert!(client.transport().core().clone().credentials.is_none());
 }
 
 #[test]
@@ -141,7 +142,7 @@ fn a_debug_dump_of_the_config_never_shows_a_secret() {
         .env(empty_env())
         .build()
         .unwrap();
-    let dump = format!("{:?}", client.transport().core());
+    let dump = format!("{:?}", client.transport().core().clone());
     assert!(dump.contains("pk"));
     assert!(!dump.contains("super-secret"), "{dump}");
 }

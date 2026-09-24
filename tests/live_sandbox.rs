@@ -12,17 +12,18 @@
 // A `Client` only exists with an HTTP backend feature on.
 #![cfg(feature = "reqwest-client")]
 
-mod support;
-
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use oblodai::contract::requests::{
-    PaymentRequest, PayoutCalculateRequest, PayoutRequest, PayoutValidateRequest,
-    SandboxDepositRequest, SandboxFaucetRequest,
-};
+use oblodai::enums::PaymentStatus;
+use oblodai::generated::resources::SandboxListWebhooksQuery;
 use oblodai::helpers::is_payment_paid;
-use oblodai::resources::PageParams;
-use oblodai::{Client, ErrorKind, Lookup};
+use oblodai::models::{
+    FaucetRequest, HistoryRequest, LookupRequest, PaymentRequest, PayoutCalculateRequest,
+    PayoutRequest, PayoutValidateRequest, RegisterWebhookRequest, SimulateDepositRequest,
+    TestWebhookKindRequest,
+};
+use oblodai::{Client, ErrorKind};
+use serde_json::{json, Value};
 
 const ADDRESS: &str = "TQrY8bkbpXKPt2LZbU8jqfnpFbUSF15sbx";
 
@@ -46,20 +47,28 @@ fn anonymous() -> Client {
         .unwrap()
 }
 
-/// Onboard a merchant and take its sandbox key — the same two unsigned calls a platform makes.
+/// Onboard a merchant (`POST /v1/merchants` — open on a dev stand, not part of the SDK) and take
+/// its sandbox key through the SDK's own `sandbox().onboard_store`.
 async fn onboard_sandbox() -> Client {
-    let public = anonymous();
-    let merchant = public
-        .merchants()
-        .create(oblodai::contract::requests::MerchantsRequest {
-            email: format!("sdk-live-{}@example.com", stamp()),
-            name: Some("SDK live".into()),
-        })
+    let body = json!({"email": format!("sdk-live-{}@example.com", stamp()), "name": "SDK live"});
+    let answer = reqwest::Client::new()
+        .post(format!("{}/v1/merchants", base_url()))
+        .header("content-type", "application/json")
+        .body(body.to_string())
+        .send()
         .await
-        .expect("onboarding is open on a local core");
-    let sandbox = public
-        .merchants()
-        .create_sandbox(&merchant.merchant_id)
+        .expect("onboarding is open on a local core")
+        .text()
+        .await
+        .unwrap();
+    let merchant: Value = serde_json::from_str(&answer).unwrap();
+    let merchant_id = merchant["result"]["merchant_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let sandbox = anonymous()
+        .sandbox()
+        .onboard_store(merchant_id)
         .await
         .unwrap();
     Client::builder()
@@ -78,7 +87,7 @@ async fn live_sandbox_journey() {
     let client = onboard_sandbox().await;
 
     // --- public catalogue, no credentials ---
-    let currencies = anonymous().catalog().currencies().await.unwrap();
+    let currencies = anonymous().checkout().list_currencies().await.unwrap();
     assert!(
         !currencies.currencies.is_empty(),
         "the catalogue is never empty"
@@ -97,21 +106,31 @@ async fn live_sandbox_journey() {
         })
         .await
         .unwrap();
-    assert_eq!(invoice.status, oblodai::PaymentStatus::Created);
+    assert_eq!(invoice.status, PaymentStatus::Created);
     assert_eq!(invoice.order_id, order_id);
 
     let by_order = client
         .payments()
-        .info(Lookup::order_id(&order_id))
+        .get_info(LookupRequest {
+            order_id: Some(order_id.clone()),
+            ..Default::default()
+        })
         .await
         .unwrap();
     assert_eq!(by_order.uuid, invoice.uuid);
-    let by_uuid = client.payments().get(&invoice.uuid).await.unwrap();
+    let by_uuid = client
+        .payments()
+        .get_info(LookupRequest {
+            uuid: Some(invoice.uuid.clone()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
     assert_eq!(by_uuid.order_id, order_id);
 
     let page = client
         .payments()
-        .history(Default::default())
+        .list_history(HistoryRequest::default())
         .limit(5)
         .await
         .unwrap();
@@ -123,7 +142,7 @@ async fn live_sandbox_journey() {
     // A signed GET with a query string — the signature covers path + query.
     let hooks = client
         .sandbox()
-        .webhooks(PageParams::default())
+        .list_webhooks(SandboxListWebhooksQuery::default())
         .limit(5)
         .offset(0)
         .await
@@ -180,15 +199,22 @@ async fn live_sandbox_journey() {
     // --- simulate a deposit, watch the invoice settle ---
     client
         .sandbox()
-        .deposit(SandboxDepositRequest {
-            invoice_id: invoice.uuid.clone(),
+        .simulate_deposit(SimulateDepositRequest {
             amount: Some("25".into()),
             confirmations: Some(20),
             txid: Some(format!("sdk-tx-{}", stamp())),
+            ..SimulateDepositRequest::new(invoice.uuid.clone())
         })
         .await
         .unwrap();
-    let paid = client.payments().info(&invoice.uuid).await.unwrap();
+    let paid = client
+        .payments()
+        .get_info(LookupRequest {
+            uuid: Some(invoice.uuid.clone()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
     assert!(
         is_payment_paid(&paid.status),
         "status after the deposit: {}",
@@ -198,14 +224,10 @@ async fn live_sandbox_journey() {
     // --- fund the balance and move money out ---
     client
         .sandbox()
-        .faucet(SandboxFaucetRequest {
-            asset: "USDT".into(),
-            amount: "100".into(),
-            ..Default::default()
-        })
+        .faucet(FaucetRequest::new("100", "USDT"))
         .await
         .unwrap();
-    let balance = client.account().balance().await.unwrap();
+    let balance = client.account().get_balance().await.unwrap();
     assert!(
         balance
             .balance
@@ -254,7 +276,14 @@ async fn live_sandbox_journey() {
         .await
         .unwrap();
     assert!(!payout.uuid.is_empty());
-    let fetched = client.payouts().info(&payout.uuid).await.unwrap();
+    let fetched = client
+        .payouts()
+        .get_info(LookupRequest {
+            uuid: Some(payout.uuid.clone()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
     assert_eq!(fetched.order_id.as_deref(), Some(payout_order.as_str()));
 
     // --- a domain refusal keeps the core's own classification ---
@@ -332,7 +361,11 @@ async fn live_webhook_delivery_verifies_against_the_endpoint_secret() {
         listener.local_addr().unwrap().port()
     );
 
-    let endpoint = client.webhooks().register(&receiver).await.unwrap();
+    let endpoint = client
+        .webhooks()
+        .register(RegisterWebhookRequest::new(receiver.clone()))
+        .await
+        .unwrap();
     let secret = endpoint
         .secret
         .expect("the secret is shown once, at registration");
@@ -340,16 +373,12 @@ async fn live_webhook_delivery_verifies_against_the_endpoint_secret() {
     let waiting = tokio::spawn(catch_one_delivery(listener));
     let result = client
         .webhooks()
-        .test(
-            oblodai::WebhookKind::Payment,
-            oblodai::contract::requests::TestWebhookPaymentRequest {
-                url_callback: receiver,
-                currency: Some("USDT".into()),
-                network: Some("tron".into()),
-                status: Some(oblodai::PaymentStatus::Paid),
-                ..Default::default()
-            },
-        )
+        .send_test_payment(TestWebhookKindRequest {
+            currency: Some("USDT".into()),
+            network: Some("tron".into()),
+            status: Some("paid".into()),
+            ..TestWebhookKindRequest::new(receiver.clone())
+        })
         .await
         .unwrap();
     assert!(result.signed, "the core signs even a rehearsal delivery");
@@ -388,23 +417,23 @@ async fn live_webhook_is_signed_the_way_the_verifier_expects() {
         return;
     };
     let client = onboard_sandbox().await;
-    let endpoint = client.webhooks().register(&receiver).await.unwrap();
+    let endpoint = client
+        .webhooks()
+        .register(RegisterWebhookRequest::new(receiver.clone()))
+        .await
+        .unwrap();
     assert!(
         endpoint.secret.is_some(),
         "the secret is shown once, at registration"
     );
     let result = client
         .webhooks()
-        .test(
-            oblodai::WebhookKind::Payment,
-            oblodai::contract::requests::TestWebhookPaymentRequest {
-                url_callback: receiver,
-                currency: Some("USDT".into()),
-                network: Some("tron".into()),
-                status: Some(oblodai::PaymentStatus::Paid),
-                ..Default::default()
-            },
-        )
+        .send_test_payment(TestWebhookKindRequest {
+            currency: Some("USDT".into()),
+            network: Some("tron".into()),
+            status: Some("paid".into()),
+            ..TestWebhookKindRequest::new(receiver.clone())
+        })
         .await
         .unwrap();
     assert!(result.signed, "the core signs even a rehearsal delivery");

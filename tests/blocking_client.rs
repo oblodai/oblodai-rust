@@ -7,7 +7,7 @@ mod support;
 use std::sync::Arc;
 
 use oblodai::blocking::Client;
-use oblodai::contract::requests::{PaymentHistoryRequest, PaymentRequest};
+use oblodai::models::{HistoryRequest, PaymentRequest};
 use oblodai::{BlockingHttpBackend, ErrorKind, RetryOptions};
 use serde_json::json;
 use support::{api_error, ok, MockBackend, Scripted};
@@ -31,7 +31,7 @@ fn harness(script: Vec<Scripted>) -> (Client, Arc<MockBackend>) {
 }
 
 fn recorded_payment() -> serde_json::Value {
-    support::result_of("POST /v1/payment")
+    support::sample("payment")
 }
 
 #[test]
@@ -60,12 +60,16 @@ fn retries_and_classification_are_the_same_decisions() {
         support::network_error(),
         ok(json!({ "balance": { "merchant": [] } })),
     ]);
-    client.account().balance().send().unwrap();
+    client.account().get_balance().send().unwrap();
     assert_eq!(mock.call_count(), 2);
 
     // An unsafe write after a proxy answer with no envelope is never re-sent.
     let (client, mock) = harness(vec![support::no_envelope(503), ok(json!({}))]);
-    let err = client.payouts().approve("p1").send_raw().unwrap_err();
+    let err = client
+        .payouts()
+        .approve(oblodai::models::ApproveRequest::new("p1"))
+        .send_json()
+        .unwrap_err();
     assert!(err.synthetic());
     assert_eq!(mock.call_count(), 1);
 
@@ -73,9 +77,9 @@ fn retries_and_classification_are_the_same_decisions() {
     let (client, mock) = harness(vec![]);
     let err = client
         .payouts()
-        .approve("p1")
+        .approve(oblodai::models::ApproveRequest::new("p1"))
         .idempotency_key("k")
-        .send_raw()
+        .send_json()
         .unwrap_err();
     assert_eq!(err.code(), "sdk.idempotency_unsupported");
     assert_eq!(err.kind(), ErrorKind::Config);
@@ -84,7 +88,7 @@ fn retries_and_classification_are_the_same_decisions() {
 
 #[test]
 fn pages_walk_with_a_plain_iterator() {
-    let item = || support::result_of("POST /v1/payment/history")["items"][0].clone();
+    let item = || support::sample("payment");
     let page = |items: Vec<serde_json::Value>, offset: i64, total: i64| {
         let count = items.len() as i64;
         ok(json!({
@@ -98,7 +102,7 @@ fn pages_walk_with_a_plain_iterator() {
     let (client, mock) = harness(vec![page(vec![item()], 0, 2), page(vec![item()], 1, 2)]);
     let pager = client
         .payments()
-        .history(PaymentHistoryRequest::default())
+        .list_history(HistoryRequest::default())
         .limit(1);
     let collected: Vec<_> = pager.iter().collect::<Result<Vec<_>, _>>().unwrap();
     assert_eq!(collected.len(), 2);
@@ -107,7 +111,7 @@ fn pages_walk_with_a_plain_iterator() {
     let (client, mock) = harness(vec![page(vec![], 0, 0)]);
     assert!(client
         .payments()
-        .history(PaymentHistoryRequest::default())
+        .list_history(HistoryRequest::default())
         .page()
         .unwrap()
         .items
@@ -128,8 +132,30 @@ fn an_error_envelope_is_classified_identically() {
             currency: "USDT".into(),
             ..Default::default()
         })
-        .send_raw()
+        .send_json()
         .unwrap_err();
     assert_eq!(err.kind(), ErrorKind::IdempotencyConflict);
     assert_eq!(err.code(), "idempotency.key_reused");
+}
+
+#[test]
+fn blocking_by_page_walks_page_by_page() {
+    let item = || support::sample("payment");
+    let (client, mock) = harness(vec![
+        ok(
+            json!({"items": [item(), item()], "paginate": {"total": 3, "per_page": 2, "offset": 0, "has_pages": true}}),
+        ),
+        ok(
+            json!({"items": [item()], "paginate": {"total": 3, "per_page": 2, "offset": 2, "has_pages": false}}),
+        ),
+    ]);
+    let sizes: Vec<usize> = client
+        .payments()
+        .list_history(HistoryRequest::default())
+        .limit(2)
+        .by_page()
+        .map(|p| p.unwrap().items.len())
+        .collect();
+    assert_eq!(sizes, [2, 1]);
+    assert_eq!(mock.call_count(), 2);
 }

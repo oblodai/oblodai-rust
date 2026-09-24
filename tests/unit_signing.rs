@@ -1,40 +1,7 @@
-//! Request and webhook signing against the vectors the core's own test suite exports.
+//! Request and webhook signing: the recipe's edges. The gateway's own vectors (the spec's
+//! `x-oblodai-signing`) run in `tests/conformance.rs`.
 
-mod support;
-
-use oblodai::{canonical_string, sign_request, sign_webhook, SignInput};
-use support::load_contract;
-
-#[test]
-fn matches_every_request_signing_vector() {
-    let contract = load_contract();
-    let vectors = contract["signing_vectors"]
-        .as_array()
-        .expect("signing_vectors");
-    assert!(!vectors.is_empty());
-    for v in vectors {
-        let name = v["name"].as_str().unwrap();
-        let key = v["idempotency_key"].as_str().unwrap_or("");
-        let body = v["body"].as_str().unwrap_or("");
-        let input = SignInput {
-            ts: v["ts"].as_i64().unwrap(),
-            method: v["method"].as_str().unwrap(),
-            request_uri: v["request_uri"].as_str().unwrap(),
-            idempotency_key: if key.is_empty() { None } else { Some(key) },
-            body: body.as_bytes(),
-        };
-        assert_eq!(
-            canonical_string(&input),
-            v["canonical"].as_str().unwrap(),
-            "canonical: {name}"
-        );
-        assert_eq!(
-            sign_request(v["secret"].as_str().unwrap(), &input),
-            v["signature"].as_str().unwrap(),
-            "signature: {name}"
-        );
-    }
-}
+use oblodai::{canonical_string, sign_request, SignInput};
 
 #[test]
 fn the_idempotency_slot_is_empty_not_absent() {
@@ -93,23 +60,4 @@ fn the_method_is_upper_cased_before_signing() {
         ..upper.clone()
     };
     assert_eq!(sign_request("s", &upper), sign_request("s", &lower));
-}
-
-#[test]
-fn matches_every_webhook_signing_vector() {
-    let contract = load_contract();
-    let vectors = contract["webhook_vectors"]
-        .as_array()
-        .expect("webhook_vectors");
-    assert!(!vectors.is_empty());
-    for v in vectors {
-        assert_eq!(
-            sign_webhook(
-                v["secret"].as_str().unwrap(),
-                v["ts"].as_i64().unwrap(),
-                v["payload"].as_str().unwrap().as_bytes(),
-            ),
-            v["signature"].as_str().unwrap()
-        );
-    }
 }
