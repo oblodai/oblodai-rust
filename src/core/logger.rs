@@ -89,8 +89,22 @@ const SENSITIVE: [&str; 7] = [
 ];
 
 /// Whether a field or header of this name carries a secret (never logged, never printed by
-/// `Debug`). A payout link's `claim_url` embeds its claim token.
+/// `Debug`). A payout link's `claim_url` embeds its claim token. The signature headers count by the
+/// contract's names for them, whatever words those names hold.
 pub fn is_sensitive(key: &str) -> bool {
+    use crate::generated::signing::{
+        HEADER_SIGNATURE, HEADER_WEBHOOK_SIGNATURE, HEADER_WEBHOOK_SIGNATURE_PREV,
+    };
+    if [
+        HEADER_SIGNATURE,
+        HEADER_WEBHOOK_SIGNATURE,
+        HEADER_WEBHOOK_SIGNATURE_PREV,
+    ]
+    .iter()
+    .any(|h| key.eq_ignore_ascii_case(h))
+    {
+        return true;
+    }
     let lower = key.to_ascii_lowercase();
     SENSITIVE.iter().any(|s| lower.contains(s))
 }
