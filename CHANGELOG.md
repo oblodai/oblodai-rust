@@ -28,8 +28,10 @@ Generated from the gateway's OpenAPI contract. See MIGRATION-2.0.md for every re
   (`id`, `X-Webhook-Id`, changes on a resend).
 - `oblodai::generated::signing`: the signing protocol of the contract (`x-oblodai-signing`) —
   the header names of a signed request and of a webhook delivery, the order and separators of both
-  canonical strings, `SKEW_SECONDS`, `MAX_BODY`, `MAX_IDEMPOTENCY_KEY_LENGTH`. Signing, webhook
-  verification and the idempotency-key check use only these; the 1.x names
+  canonical strings (`REQUEST_CANONICAL_ORDER`, `WEBHOOK_CANONICAL_ORDER` and their separators),
+  `SIGNATURE_ALGORITHM`, `SKEW_SECONDS`, `MAX_BODY`, `MAX_IDEMPOTENCY_KEY_LENGTH`, and the rehearsal
+  header `HEADER_WEBHOOK_TEST` (`webhook.test_header`). Signing, webhook verification and the
+  idempotency-key check use only these; the 1.x names
   (`core::signing::HEADER_*`, `webhooks::HEADER_WEBHOOK_*`, `SIGNATURE_SKEW_SECONDS`,
   `DEFAULT_TOLERANCE_SECONDS`, `MAX_IDEMPOTENCY_KEY_LENGTH`) stay, now equal to the generated values.
   A header renamed in the gateway reaches the SDK with `make sdk`.

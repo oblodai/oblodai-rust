@@ -2,7 +2,7 @@
 //! `x-oblodai-signing` states it ([`crate::generated::signing`]):
 //!
 //! ```text
-//! canonical = the parts of REQUEST_CANONICAL joined by REQUEST_CANONICAL_SEPARATOR
+//! canonical = the parts of REQUEST_CANONICAL_ORDER joined by REQUEST_CANONICAL_SEPARATOR
 //!           = ts "\n" METHOD "\n" requestURI "\n" idempotencyKey "\n" body   (today)
 //! signature = hex(HMAC-SHA256(secret, canonical))
 //! ```
@@ -21,8 +21,8 @@ use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
 use crate::generated::signing::{
-    RequestPart, WebhookPart, REQUEST_CANONICAL, REQUEST_CANONICAL_SEPARATOR, WEBHOOK_CANONICAL,
-    WEBHOOK_CANONICAL_SEPARATOR,
+    RequestPart, WebhookPart, REQUEST_CANONICAL_ORDER, REQUEST_CANONICAL_SEPARATOR,
+    WEBHOOK_CANONICAL_ORDER, WEBHOOK_CANONICAL_SEPARATOR,
 };
 pub use crate::generated::signing::{
     HEADER_IDEMPOTENCY_KEY, HEADER_PUBLIC_ID, HEADER_SIGNATURE, HEADER_TIMESTAMP, MAX_BODY,
@@ -56,12 +56,12 @@ fn request_part(input: &SignInput<'_>, part: RequestPart, method: &str) -> Vec<u
     }
 }
 
-/// The canonical bytes of a request: [`REQUEST_CANONICAL`] joined by
+/// The canonical bytes of a request: [`REQUEST_CANONICAL_ORDER`] joined by
 /// [`REQUEST_CANONICAL_SEPARATOR`].
 fn request_canonical(input: &SignInput<'_>) -> Vec<u8> {
     let method = input.method.to_uppercase();
     let mut out = Vec::with_capacity(input.body.len() + input.request_uri.len() + 64);
-    for (i, part) in REQUEST_CANONICAL.iter().enumerate() {
+    for (i, part) in REQUEST_CANONICAL_ORDER.iter().enumerate() {
         if i > 0 {
             out.extend_from_slice(REQUEST_CANONICAL_SEPARATOR.as_bytes());
         }
@@ -83,14 +83,14 @@ pub fn sign_request(secret: &str, input: &SignInput<'_>) -> String {
 }
 
 /// Webhook signature — `webhook.Sign` on the core side: lower-case hex HMAC-SHA256 of
-/// [`WEBHOOK_CANONICAL`] joined by [`WEBHOOK_CANONICAL_SEPARATOR`] (today
+/// [`WEBHOOK_CANONICAL_ORDER`] joined by [`WEBHOOK_CANONICAL_SEPARATOR`] (today
 /// `"<unix ts>." + payload`).
 ///
 /// The payload is signed verbatim, so verifiers must use the raw request bytes, never a
 /// re-serialized parse of them.
 pub fn sign_webhook(secret: &str, ts: i64, payload: &[u8]) -> String {
     let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC accepts any key size");
-    for (i, part) in WEBHOOK_CANONICAL.iter().enumerate() {
+    for (i, part) in WEBHOOK_CANONICAL_ORDER.iter().enumerate() {
         if i > 0 {
             mac.update(WEBHOOK_CANONICAL_SEPARATOR.as_bytes());
         }
