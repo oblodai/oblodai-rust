@@ -179,7 +179,7 @@ impl WebhookEvent {
     }
 
     /// The object id under its 1.x name: [`WebhookEvent::object_id`], which it now calls.
-    #[deprecated(since = "2.0.0", note = "use `object_id()`")]
+    #[deprecated(note = "use `object_id()`")]
     pub fn uuid(&self) -> &str {
         self.object_id()
     }
