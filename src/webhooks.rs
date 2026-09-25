@@ -45,11 +45,9 @@ pub use crate::generated::webhooks::{WebhookEvent, KNOWN_EVENT_KINDS, WEBHOOK_EV
 
 pub use crate::generated::signing::{
     HEADER_WEBHOOK_EVENT, HEADER_WEBHOOK_EVENT_ID, HEADER_WEBHOOK_EVENT_TIME, HEADER_WEBHOOK_ID,
-    HEADER_WEBHOOK_SIGNATURE, HEADER_WEBHOOK_SIGNATURE_PREV, HEADER_WEBHOOK_TIMESTAMP,
+    HEADER_WEBHOOK_SIGNATURE, HEADER_WEBHOOK_SIGNATURE_PREV, HEADER_WEBHOOK_TEST,
+    HEADER_WEBHOOK_TIMESTAMP,
 };
-/// A rehearsal delivery (`"true"`). Not part of the signing protocol of the contract, so it is
-/// named here.
-pub const HEADER_WEBHOOK_TEST: &str = "X-Webhook-Test";
 
 /// Default freshness window, seconds: the contract's `skew_seconds`.
 pub const DEFAULT_TOLERANCE_SECONDS: i64 = crate::generated::signing::SKEW_SECONDS;

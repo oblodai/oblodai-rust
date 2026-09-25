@@ -5,7 +5,7 @@
 //! constants only, so a renamed header reaches the SDK with `make sdk`.
 
 /// The signature algorithm: `HMAC-SHA256, lowercase hex`.
-pub const ALGORITHM: &str = "HMAC-SHA256, lowercase hex";
+pub const SIGNATURE_ALGORITHM: &str = "HMAC-SHA256, lowercase hex";
 
 /// The merchant's public key id.
 pub const HEADER_PUBLIC_ID: &str = "X-Public-Id";
@@ -40,6 +40,9 @@ pub const HEADER_WEBHOOK_EVENT_ID: &str = "X-Webhook-Event-Id";
 /// Unix seconds the state change committed at; order events by it.
 pub const HEADER_WEBHOOK_EVENT_TIME: &str = "X-Webhook-Event-Time";
 
+/// `"true"` on a rehearsal (test) delivery, absent from a live one.
+pub const HEADER_WEBHOOK_TEST: &str = "X-Webhook-Test";
+
 /// One part of the canonical string of a request.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum RequestPart {
@@ -56,7 +59,7 @@ pub enum RequestPart {
 }
 
 /// The parts of a request's canonical string, in order.
-pub const REQUEST_CANONICAL: &[RequestPart] = &[
+pub const REQUEST_CANONICAL_ORDER: &[RequestPart] = &[
     RequestPart::Ts,
     RequestPart::Method,
     RequestPart::RequestUri,
@@ -77,7 +80,7 @@ pub enum WebhookPart {
 }
 
 /// The parts of a webhook delivery's signed string, in order.
-pub const WEBHOOK_CANONICAL: &[WebhookPart] = &[WebhookPart::Ts, WebhookPart::Payload];
+pub const WEBHOOK_CANONICAL_ORDER: &[WebhookPart] = &[WebhookPart::Ts, WebhookPart::Payload];
 
 /// What joins the parts of a webhook delivery's signed string.
 pub const WEBHOOK_CANONICAL_SEPARATOR: &str = ".";
