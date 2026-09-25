@@ -12,6 +12,8 @@
 
 use serde::ser::{Serialize, SerializeStruct, Serializer};
 
+use crate::generated::enums::ErrorCode;
+
 mod detail;
 mod kind;
 
@@ -268,7 +270,7 @@ impl Error {
                 .retryable
                 .unwrap_or(http_status == 429 || http_status == 503)
         };
-        let kind = if code == "idempotency.key_reused" {
+        let kind = if code == ErrorCode::IdempotencyKeyReused.as_str() {
             ErrorKind::IdempotencyConflict
         } else {
             match http_status {
