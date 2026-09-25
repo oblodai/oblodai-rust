@@ -96,14 +96,16 @@ impl<'de> serde::Deserialize<'de> for WebhookEvent {
 }
 
 impl WebhookEvent {
-    /// The object the event is about: its `uuid` (or `id`) field.
-    pub fn uuid(&self) -> &str {
+    /// The id of the object the event is about: the id field the contract declares for its kind.
+    /// Empty for an event type this SDK version does not model — its id field is not guessed; read
+    /// `raw()` instead.
+    pub fn object_id(&self) -> &str {
         match self {
             WebhookEvent::Conversion(e) => &e.id,
             WebhookEvent::Payment(e) => &e.uuid,
             WebhookEvent::Payout(e) => &e.uuid,
             WebhookEvent::Wallet(e) => &e.uuid,
-            WebhookEvent::Other(v) => raw_str(v, &["uuid", "id"]).unwrap_or_default(),
+            WebhookEvent::Other(_) => "",
         }
     }
 
@@ -174,6 +176,12 @@ impl WebhookEvent {
             WebhookEvent::Wallet(e) => e.test == Some(true),
             WebhookEvent::Other(v) => raw_bool(v, "test"),
         }
+    }
+
+    /// The object id under its 1.x name: [`WebhookEvent::object_id`], which it now calls.
+    #[deprecated(since = "2.0.0", note = "use `object_id()`")]
+    pub fn uuid(&self) -> &str {
+        self.object_id()
     }
 
     /// The discriminator as the wire spells it: one of [`KNOWN_EVENT_KINDS`], or whatever an

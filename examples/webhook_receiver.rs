@@ -83,7 +83,7 @@ impl Receiver {
             println!(
                 "rehearsal {} {} — endpoint verified, nothing credited",
                 delivery.event.event_kind(),
-                delivery.event.uuid()
+                delivery.event.object_id()
             );
             return (200, "ok");
         }
@@ -97,7 +97,7 @@ impl Receiver {
         }
 
         let event = &delivery.event;
-        let key = format!("{}:{}", event.event_kind(), event.uuid());
+        let key = format!("{}:{}", event.event_kind(), event.object_id());
         if is_stale_event(event, self.last_sequence.get(&key).copied()) {
             println!("stale {key} (sequence {:?}) — dropped", event.sequence());
             return (200, "ok");
@@ -142,7 +142,7 @@ impl Receiver {
                 println!(
                     "unknown event type {:?} for {} — acknowledged, not acted on",
                     other.event_kind(),
-                    other.uuid()
+                    other.object_id()
                 );
             }
         }

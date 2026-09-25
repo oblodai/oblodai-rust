@@ -32,7 +32,7 @@
 //!     &headers,
 //!     &VerifyOptions::new(std::env::var("OBLODAI_WEBHOOK_SECRET").unwrap()),
 //! )?;
-//! println!("{} {}", delivery.event.event_kind(), delivery.event.uuid());
+//! println!("{} {}", delivery.event.event_kind(), delivery.event.object_id());
 //! # Ok(()) }
 //! ```
 

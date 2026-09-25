@@ -16,6 +16,8 @@ table below is built from it. The wire does not change — only the Rust surface
   `SandboxDepositRequest` → `SimulateDepositRequest`, `SandboxFaucetRequest` → `FaucetRequest`,
   `WalletRequest` → `CreateWalletRequest`, `PaymentEvent`/`PayoutEvent`/`WalletEvent` →
   `PaymentWebhook`/`PayoutWebhook`/`WalletWebhook` (plus the new `ConversionWebhook`).
+- **`WebhookEvent::uuid()` → `object_id()`.** The old name still compiles, deprecated. On an event
+  type this version does not model it is empty now instead of a guess; read `raw()` there.
 - **Bodies are models with a constructor.** `Model::new(required…)` sets the required fields; the
   optional ones are `Option`s: `PaymentRequest { network: Some("tron".into()), ..PaymentRequest::new("25", "USDT") }`.
   `Default::default()` still works for the rest. Fields a newer gateway adds land in `extra`.
