@@ -114,8 +114,26 @@ fn no_signing_header_is_spelled_outside_generated() {
             .to_string(),
     );
     let wanted: Vec<String> = wanted.iter().map(|n| n.to_lowercase()).collect();
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut offenders = Vec::new();
+    for (path, text) in hand_written_sources() {
+        let text = text.to_lowercase();
+        for name in &wanted {
+            if text.contains(name.as_str()) {
+                offenders.push(format!("{path}: {name}"));
+            }
+        }
+    }
+    offenders.sort();
+    assert!(
+        offenders.is_empty(),
+        "signing header names outside src/generated: {offenders:?}"
+    );
+}
+
+/// Every hand-written file under `src/` (not `src/generated`), with its path relative to `src/`.
+fn hand_written_sources() -> Vec<(String, String)> {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut out = Vec::new();
     let mut stack = vec![src.clone()];
     while let Some(dir) = stack.pop() {
         for entry in std::fs::read_dir(&dir).expect("read src") {
@@ -126,22 +144,63 @@ fn no_signing_header_is_spelled_outside_generated() {
                 }
                 continue;
             }
-            let text = std::fs::read_to_string(&path)
-                .expect("read source")
-                .to_lowercase();
-            for name in &wanted {
-                if text.contains(name.as_str()) {
-                    offenders.push(format!(
-                        "{}: {name}",
-                        path.strip_prefix(&src).unwrap().display()
-                    ));
-                }
+            let text = std::fs::read_to_string(&path).expect("read source");
+            out.push((path.strip_prefix(&src).unwrap().display().to_string(), text));
+        }
+    }
+    out
+}
+
+/// `needle` in `text` as a whole token: no word character or `.` on either side.
+fn has_token(text: &str, needle: &str) -> bool {
+    let word = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '.');
+    text.match_indices(needle).any(|(i, _)| {
+        !word(text[..i].chars().next_back()) && !word(text[i + needle.len()..].chars().next())
+    })
+}
+
+/// No hand-written source spells a literal of the body or idempotency-key limit — decimal, or
+/// `1 << n` for a power of two; digit separators (`1_048_576`) do not hide one. Both are read from
+/// `src/generated`, so a changed limit reaches the SDK by regeneration alone. The skew is not
+/// scanned for: its value is also an HTTP status class (`< 300`); the alias assertions hold it.
+#[test]
+fn no_signing_limit_is_spelled_outside_generated() {
+    let mut needles = vec![
+        gen::MAX_BODY.to_string(),
+        gen::MAX_IDEMPOTENCY_KEY_LENGTH.to_string(),
+    ];
+    if gen::MAX_BODY.is_power_of_two() {
+        needles.push(format!("1<<{}", gen::MAX_BODY.trailing_zeros()));
+    }
+    let mut offenders = Vec::new();
+    for (path, text) in hand_written_sources() {
+        // Digit separators out, `<<` without spaces: `1_048_576` reads as `1048576`, `1 << 20` as `1<<20`.
+        let chars: Vec<char> = text.chars().collect();
+        let text: String = chars
+            .iter()
+            .enumerate()
+            .filter(|&(i, &c)| {
+                c != '_'
+                    || i == 0
+                    || i + 1 == chars.len()
+                    || !chars[i - 1].is_ascii_digit()
+                    || !chars[i + 1].is_ascii_digit()
+            })
+            .map(|(_, &c)| c)
+            .collect();
+        let text = text
+            .replace(" << ", "<<")
+            .replace("<< ", "<<")
+            .replace(" <<", "<<");
+        for needle in &needles {
+            if has_token(&text, needle) {
+                offenders.push(format!("{path}: {needle}"));
             }
         }
     }
     offenders.sort();
     assert!(
         offenders.is_empty(),
-        "signing header names outside src/generated: {offenders:?}"
+        "signing limits spelled outside src/generated: {offenders:?}"
     );
 }
