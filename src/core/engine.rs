@@ -22,6 +22,7 @@ use super::retry::{jitter, retry_delay_ms, should_retry, RetryContext, RetryOpti
 use super::route::RouteSpec;
 use super::signing::SIGNATURE_SKEW_SECONDS;
 use crate::error::{Error, Result};
+use crate::generated::enums::ErrorCode;
 
 /// A response as it came off the wire, before any envelope is read.
 #[derive(Clone, Debug, Default)]
@@ -150,8 +151,10 @@ pub enum Step {
     Resign,
 }
 
-/// Error codes that mean the core rejected the signature because of the timestamp or MAC.
-const SIGNATURE_FAILURE_CODES: [&str; 2] = ["merchant.bad_signature", "auth.bad_timestamp"];
+/// Error codes that mean the core rejected the signature because of the timestamp or MAC. They are
+/// the generated [`ErrorCode`] variants, so a code renamed in the contract fails to compile.
+const SIGNATURE_FAILURE_CODES: [ErrorCode; 2] =
+    [ErrorCode::MerchantBadSignature, ErrorCode::AuthBadTimestamp];
 
 /// Everything shared by every call: credentials, policy, clock, logger, hooks.
 ///
@@ -381,7 +384,11 @@ impl Core {
 
         // Clock skew: the core rejected the timestamp/MAC. Learn its time from the `Date` header,
         // re-sign once, and keep the offset only if that attempt got past authentication.
-        if raw.status == 401 && SIGNATURE_FAILURE_CODES.contains(&failure.code()) {
+        if raw.status == 401
+            && SIGNATURE_FAILURE_CODES
+                .iter()
+                .any(|c| c.as_str() == failure.code())
+        {
             if !st.skew_tried {
                 if let Some(offset) = self.clock.observe_server_date(raw.header("date")) {
                     // Against the offset THIS attempt was signed with: another call may already
