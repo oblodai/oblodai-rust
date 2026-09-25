@@ -1,17 +1,18 @@
 //! Webhook verification — usable on its own, no client and no API key required.
 //!
-//! Deliveries are signed as:
+//! A delivery carries these headers; their names come from the contract's `x-oblodai-signing`
+//! (generated into [`crate::generated::signing`]), so a rename in the core reaches this SDK with
+//! `make sdk`:
 //!
-//! ```text
-//! X-Webhook-Timestamp:      <unix seconds>
-//! X-Webhook-Signature:      hex(HMAC-SHA256(secret, "<ts>." + rawBody))
-//! X-Webhook-Signature-Prev: same, with the previous secret — only during a rotation overlap
-//! X-Webhook-Event:          the event name, one of WEBHOOK_EVENTS (invoice.paid, payout.failed, …)
-//! X-Webhook-Id:             the delivery — identical across its retries; a resend gets a new one
-//! X-Webhook-Event-Id:       the state — identical across retries AND resends; your dedup key
-//! X-Webhook-Event-Time:     unix seconds when the state change committed (order events by it)
-//! X-Webhook-Test:           "true" on a rehearsal delivery — the body also carries `test: true`
-//! ```
+//! - [`HEADER_WEBHOOK_TIMESTAMP`] — unix seconds this attempt was sent at.
+//! - [`HEADER_WEBHOOK_SIGNATURE`] — hex(HMAC-SHA256(secret, `"<ts>." + rawBody`)).
+//! - [`HEADER_WEBHOOK_SIGNATURE_PREV`] — the same with the previous secret, only during a rotation
+//!   overlap.
+//! - [`HEADER_WEBHOOK_EVENT`] — the event name, one of [`WEBHOOK_EVENTS`] (invoice.paid, …).
+//! - [`HEADER_WEBHOOK_ID`] — the delivery: identical across its retries; a resend gets a new one.
+//! - [`HEADER_WEBHOOK_EVENT_ID`] — the state: identical across retries AND resends; your dedup key.
+//! - [`HEADER_WEBHOOK_EVENT_TIME`] — unix seconds the state change committed at (order by it).
+//! - [`HEADER_WEBHOOK_TEST`] — `"true"` on a rehearsal delivery; the body carries `test: true`.
 //!
 //! The event names, their kinds (the body's `type`) and the models of the kinds come from the
 //! contract: [`WebhookEvent`], [`KNOWN_EVENT_KINDS`] and [`WEBHOOK_EVENTS`] are generated
@@ -42,17 +43,16 @@ use crate::error::{Error, Result};
 
 pub use crate::generated::webhooks::{WebhookEvent, KNOWN_EVENT_KINDS, WEBHOOK_EVENTS};
 
-pub const HEADER_WEBHOOK_TIMESTAMP: &str = "X-Webhook-Timestamp";
-pub const HEADER_WEBHOOK_SIGNATURE: &str = "X-Webhook-Signature";
-pub const HEADER_WEBHOOK_SIGNATURE_PREV: &str = "X-Webhook-Signature-Prev";
-pub const HEADER_WEBHOOK_EVENT: &str = "X-Webhook-Event";
-pub const HEADER_WEBHOOK_ID: &str = "X-Webhook-Id";
-pub const HEADER_WEBHOOK_EVENT_ID: &str = "X-Webhook-Event-Id";
-pub const HEADER_WEBHOOK_EVENT_TIME: &str = "X-Webhook-Event-Time";
+pub use crate::generated::signing::{
+    HEADER_WEBHOOK_EVENT, HEADER_WEBHOOK_EVENT_ID, HEADER_WEBHOOK_EVENT_TIME, HEADER_WEBHOOK_ID,
+    HEADER_WEBHOOK_SIGNATURE, HEADER_WEBHOOK_SIGNATURE_PREV, HEADER_WEBHOOK_TIMESTAMP,
+};
+/// A rehearsal delivery (`"true"`). Not part of the signing protocol of the contract, so it is
+/// named here.
 pub const HEADER_WEBHOOK_TEST: &str = "X-Webhook-Test";
 
-/// Default freshness window, seconds.
-pub const DEFAULT_TOLERANCE_SECONDS: i64 = 300;
+/// Default freshness window, seconds: the contract's `skew_seconds`.
+pub const DEFAULT_TOLERANCE_SECONDS: i64 = crate::generated::signing::SKEW_SECONDS;
 
 /// The delivery headers, however your web framework spells them.
 ///
@@ -163,20 +163,21 @@ impl VerifyOptions {
 #[non_exhaustive]
 pub struct WebhookDeliveryInfo {
     pub event: WebhookEvent,
-    /// `X-Webhook-Id` — the delivery: identical across its retries, but a resend
+    /// [`HEADER_WEBHOOK_ID`] — the delivery: identical across its retries, but a resend
     /// (`webhooks().resend_payment()`, a sandbox replay) is a new delivery with a new id.
     pub id: Option<String>,
-    /// `X-Webhook-Event-Id` — the state the delivery carries: identical for the original, every
-    /// retry and every resend of the same state, different once the state changes. Deduplicate on it.
+    /// [`HEADER_WEBHOOK_EVENT_ID`] — the state the delivery carries: identical for the original,
+    /// every retry and every resend of the same state, different once the state changes.
+    /// Deduplicate on it.
     pub event_id: Option<String>,
-    /// `X-Webhook-Event` — the event name, one of [`WEBHOOK_EVENTS`].
+    /// [`HEADER_WEBHOOK_EVENT`] — the event name, one of [`WEBHOOK_EVENTS`].
     pub event_type: Option<String>,
-    /// `X-Webhook-Event-Time` — unix seconds when the state change committed.
+    /// [`HEADER_WEBHOOK_EVENT_TIME`] — unix seconds when the state change committed.
     pub event_time: Option<i64>,
-    /// `X-Webhook-Timestamp` — unix seconds when this attempt was sent.
+    /// [`HEADER_WEBHOOK_TIMESTAMP`] — unix seconds when this attempt was sent.
     pub sent_at: i64,
-    /// A rehearsal delivery (`X-Webhook-Test: true` / body `test: true`): signed like a live one,
-    /// but no money moved.
+    /// A rehearsal delivery ([`HEADER_WEBHOOK_TEST`] `true` / body `test: true`): signed like a
+    /// live one, but no money moved.
     pub is_test: bool,
 }
 

@@ -31,11 +31,12 @@
 //!
 //! # What the SDK does for you
 //!
-//! - **Signs** every request with the five-field recipe the gateway verifies
-//!   (`ts \n METHOD \n path+query \n Idempotency-Key \n body`).
+//! - **Signs** every request with the recipe the gateway verifies — the contract's
+//!   `x-oblodai-signing`, generated into [`generated::signing`]: header names, canonical string,
+//!   clock skew and limits.
 //! - **Retries** only what the API itself marks `retryable`, and only when re-sending cannot
-//!   duplicate a side effect — a retry-safe route, or a write the gateway deduplicates by
-//!   `Idempotency-Key`.
+//!   duplicate a side effect — a retry-safe route, or a write the gateway deduplicates by its
+//!   idempotency key.
 //! - **Generates an idempotency key** per logical call on create routes and reuses it across
 //!   retries, so a timeout can never produce a second payout.
 //! - **Names every call** with an `X-Request-ID` (yours, or a fresh UUID), the same on every

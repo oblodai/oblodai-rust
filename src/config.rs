@@ -58,7 +58,8 @@ impl ClientBuilder {
         Self::default()
     }
 
-    /// Public id of the merchant's one API key (`X-Public-Id`). Falls back to
+    /// Public id of the merchant's one API key, sent in
+    /// [`HEADER_PUBLIC_ID`](crate::core::signing::HEADER_PUBLIC_ID). Falls back to
     /// `OBLODAI_PUBLIC_ID`.
     pub fn public_id(mut self, value: impl Into<String>) -> Self {
         self.public_id = Some(value.into());

@@ -64,7 +64,7 @@ pub async fn run(client: &Client) -> oblodai::Result<()> {
             .as_secs()
     );
 
-    // The SDK attaches an Idempotency-Key automatically and reuses it on every retry, so a timeout
+    // The SDK attaches an idempotency key automatically and reuses it on every retry, so a timeout
     // can never turn into a second payout. Pass your own to make that hold across restarts too.
     let result = client
         .payouts()

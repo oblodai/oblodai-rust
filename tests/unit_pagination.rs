@@ -8,6 +8,7 @@ mod support;
 use std::sync::Arc;
 
 use futures_util::StreamExt;
+use oblodai::core::signing::HEADER_IDEMPOTENCY_KEY;
 use oblodai::models::HistoryRequest;
 use oblodai::{Client, HttpBackend};
 use serde_json::{json, Value};
@@ -234,7 +235,7 @@ async fn list_pages_never_carry_an_idempotency_key() {
         .list_history(HistoryRequest::default())
         .await
         .unwrap();
-    assert_eq!(mock.first().header("idempotency-key"), None);
+    assert_eq!(mock.first().header(HEADER_IDEMPOTENCY_KEY), None);
 }
 
 #[tokio::test]

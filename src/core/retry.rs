@@ -3,9 +3,9 @@
 //! 1. **Can it succeed?** — the core's `retryable` flag (authoritative when the core wrote the
 //!    envelope), or a transient status for answers that carry no envelope.
 //! 2. **Is repeating safe?** — only for read-only routes and for writes the core deduplicates by
-//!    `Idempotency-Key`. A write the core does not deduplicate is never re-sent once it MAY have
-//!    reached the core: a transport error or a proxy 503 after the request left the socket could
-//!    mean the payout already happened.
+//!    [`HEADER_IDEMPOTENCY_KEY`](super::signing::HEADER_IDEMPOTENCY_KEY). A write the core does
+//!    not deduplicate is never re-sent once it MAY have reached the core: a transport error or a
+//!    proxy 503 after the request left the socket could mean the payout already happened.
 //!
 //! An envelope error on an unsafe write is still retried when `retryable` — the core answered, so
 //! it did not perform the operation (429/503/frozen/maturing all fail before any effect).

@@ -3,9 +3,12 @@
 mod support;
 
 use oblodai::core::envelope::{decode_envelope, parse_retry_after};
-use oblodai::core::idempotency::{assert_idempotency_key, new_idempotency_key};
+use oblodai::core::idempotency::{
+    assert_idempotency_key, new_idempotency_key, MAX_IDEMPOTENCY_KEY_LENGTH,
+};
 use oblodai::core::request::{fill_path, join_url, serialize_body};
 use oblodai::core::retry::{retry_delay_ms, should_retry, RetryContext, RetryOptions};
+use oblodai::core::signing::HEADER_SIGNATURE;
 use oblodai::core::util::{constant_time_eq, header_value, parse_http_date};
 use oblodai::{Error, ErrorDetail, ErrorKind, Method};
 use serde_json::json;
@@ -375,8 +378,8 @@ fn refuses_a_key_that_would_not_survive_a_header() {
     assert!(assert_idempotency_key("").is_err());
     assert!(assert_idempotency_key("has space").is_err());
     assert!(assert_idempotency_key("tab\there").is_err());
-    assert!(assert_idempotency_key(&"x".repeat(256)).is_err());
-    assert!(assert_idempotency_key(&"x".repeat(255)).is_ok());
+    assert!(assert_idempotency_key(&"x".repeat(MAX_IDEMPOTENCY_KEY_LENGTH + 1)).is_err());
+    assert!(assert_idempotency_key(&"x".repeat(MAX_IDEMPOTENCY_KEY_LENGTH)).is_ok());
     assert!(assert_idempotency_key("order-1001:retry#2").is_ok());
 }
 
@@ -407,7 +410,7 @@ fn header_lookup_ignores_case() {
 fn a_logger_redacts_what_looks_like_a_secret() {
     use oblodai::core::logger::redact;
     assert_eq!(redact("secret", "abc"), "[redacted]");
-    assert_eq!(redact("X-Signature", "abc"), "[redacted]");
+    assert_eq!(redact(HEADER_SIGNATURE, "abc"), "[redacted]");
     assert_eq!(redact("claim_passcode", "1234"), "[redacted]");
     assert_eq!(redact("order_id", "o-1"), "o-1");
 }

@@ -38,6 +38,7 @@ use crate::core::engine::{Answer, CallOptions};
 use crate::core::envelope::{decode_result, Page};
 use crate::core::money::FLOAT_AMOUNT;
 use crate::core::route::{Method, RouteSpec};
+use crate::core::signing::HEADER_IDEMPOTENCY_KEY;
 use crate::core::transport::{finish, Transport};
 use crate::error::{Error, Result};
 
@@ -568,8 +569,8 @@ impl<Tr, T> Pager<Tr, T> {
             return Err(Error::config(
                 "sdk.idempotency_unsupported",
                 format!(
-                    "{} {} does not deduplicate by Idempotency-Key; drop the idempotency key \
-                     from this call",
+                    "{} {} does not deduplicate by {HEADER_IDEMPOTENCY_KEY}; drop the \
+                     idempotency key from this call",
                     route.method, route.path
                 ),
                 Some("idempotency_key"),

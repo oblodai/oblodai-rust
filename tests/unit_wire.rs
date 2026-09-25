@@ -12,6 +12,10 @@ mod support;
 use std::sync::{Arc, Mutex};
 
 use oblodai::core::engine::RawResponse;
+use oblodai::core::signing::{
+    HEADER_IDEMPOTENCY_KEY, HEADER_PUBLIC_ID, HEADER_SIGNATURE, HEADER_TIMESTAMP,
+    SIGNATURE_SKEW_SECONDS,
+};
 use oblodai::models::{
     OnboardKey, PayoutLinkCreated, RegisterWebhookResult, RotateWebhookSecretResult,
 };
@@ -55,14 +59,19 @@ async fn caller_headers_never_duplicate_the_ones_the_sdk_owns() {
             .header("accept", "application/xml")
             .header("User-Agent", "evil/1")
             .header("X-Admin-Token", "stolen")
-            .header("X-Signature", "forged")
-            .header("Idempotency-Key", "forged")
+            .header(HEADER_SIGNATURE, "forged")
+            .header(HEADER_IDEMPOTENCY_KEY, "forged")
             .header("Content-Type", "text/plain")
     });
     client.account().get_balance().await.unwrap();
 
     let sent = mock.first();
-    let count = |name: &str| sent.headers.iter().filter(|(k, _)| k == name).count();
+    let count = |name: &str| {
+        sent.headers
+            .iter()
+            .filter(|(k, _)| k.eq_ignore_ascii_case(name))
+            .count()
+    };
     assert_eq!(count("accept"), 1);
     assert_eq!(sent.header("accept"), Some("application/json"));
     assert_eq!(count("user-agent"), 1);
@@ -72,9 +81,13 @@ async fn caller_headers_never_duplicate_the_ones_the_sdk_owns() {
         .starts_with("oblodai-rust/"));
     assert_eq!(count("content-type"), 1);
     assert_eq!(sent.header("content-type"), Some("application/json"));
-    assert_eq!(count("x-signature"), 1);
-    assert_eq!(sent.header("x-signature").unwrap().len(), 64);
-    assert_eq!(count("idempotency-key"), 0, "balance is not deduplicated");
+    assert_eq!(count(HEADER_SIGNATURE), 1);
+    assert_eq!(sent.header(HEADER_SIGNATURE).unwrap().len(), 64);
+    assert_eq!(
+        count(HEADER_IDEMPOTENCY_KEY),
+        0,
+        "balance is not deduplicated"
+    );
     assert_eq!(count("x-admin-token"), 0, "not an onboard route");
 }
 
@@ -238,7 +251,7 @@ async fn a_caller_supplied_logger_only_ever_sees_redacted_values() {
 // --- the shared clock under concurrency -------------------------------------------------------
 
 /// A backend that behaves like a core whose clock is an hour ahead: it refuses any timestamp
-/// outside ±300 s and reveals its own time in `Date`, exactly once per wrong-timestamp attempt.
+/// outside ±`SIGNATURE_SKEW_SECONDS` and reveals its own time in `Date`, exactly once per wrong-timestamp attempt.
 struct SkewedCore {
     server_now: i64,
     refusals: Mutex<usize>,
@@ -249,10 +262,10 @@ impl HttpBackend for SkewedCore {
         let ts: i64 = request
             .headers
             .iter()
-            .find(|(k, _)| k.eq_ignore_ascii_case("x-timestamp"))
+            .find(|(k, _)| k.eq_ignore_ascii_case(HEADER_TIMESTAMP))
             .map(|(_, v)| v.parse().unwrap())
             .expect("a signed request");
-        let in_window = (ts - self.server_now).abs() <= 300;
+        let in_window = (ts - self.server_now).abs() <= SIGNATURE_SKEW_SECONDS;
         if !in_window {
             *self.refusals.lock().unwrap() += 1;
         }
@@ -372,7 +385,7 @@ async fn a_file_builder_takes_the_same_per_call_options_as_a_request_builder() -
         .deadline(std::time::Duration::from_secs(10))
         .await?;
     assert_eq!(file.content_type, "application/pdf");
-    assert_eq!(mock.first().header("x-public-id"), Some("pk"));
+    assert_eq!(mock.first().header(HEADER_PUBLIC_ID), Some("pk"));
     Ok(())
 }
 

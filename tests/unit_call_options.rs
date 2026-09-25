@@ -9,6 +9,7 @@ mod support;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use oblodai::core::signing::{HEADER_IDEMPOTENCY_KEY, HEADER_SIGNATURE};
 use oblodai::models::{FaucetRequest, HistoryRequest, PaymentRequest};
 use oblodai::{Client, ClientOptions, Hooks, HttpBackend, RetryOptions};
 use serde_json::json;
@@ -55,7 +56,7 @@ async fn every_call_option_reaches_the_wire() {
         .unwrap();
     assert_eq!(invoice.uuid, "x");
     let sent = mock.first();
-    assert_eq!(sent.header("idempotency-key"), Some("order-1001"));
+    assert_eq!(sent.header(HEADER_IDEMPOTENCY_KEY), Some("order-1001"));
     assert_eq!(sent.timeout, Duration::from_millis(3500));
     assert_eq!(sent.header("x-tenant"), Some("eu"));
     assert_eq!(sent.header("x-request-id"), Some("req-1"));
@@ -244,7 +245,7 @@ async fn hooks_see_every_attempt_without_the_signature() {
             let signature = r
                 .headers
                 .iter()
-                .find(|(k, _)| k.eq_ignore_ascii_case("x-signature"))
+                .find(|(k, _)| k.eq_ignore_ascii_case(HEADER_SIGNATURE))
                 .map(|(_, v)| v.clone());
             assert_eq!(signature.as_deref(), Some("[redacted]"));
             req_log.lock().unwrap().push(format!(
@@ -296,7 +297,7 @@ async fn the_faucet_takes_the_idempotency_key_in_its_body() {
         .await
         .unwrap();
     let sent = mock.first();
-    assert_eq!(sent.header("idempotency-key"), None);
+    assert_eq!(sent.header(HEADER_IDEMPOTENCY_KEY), None);
     assert_eq!(
         sent.json_body(),
         json!({"amount": "10", "asset": "USDT", "idempotency_key": "tap-1"})

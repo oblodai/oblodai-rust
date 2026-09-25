@@ -38,7 +38,7 @@ pub struct BuildInput<'a> {
     pub body: &'a str,
     pub credentials: Option<&'a Credentials>,
     pub idempotency_key: Option<&'a str>,
-    /// Unix seconds; signed into `X-Timestamp`.
+    /// Unix seconds; signed into [`HEADER_TIMESTAMP`].
     pub ts: i64,
     pub user_agent: &'a str,
     /// Admin token of a self-hosted gateway. Sent on `onboard` routes and nowhere else, whatever
@@ -69,11 +69,11 @@ pub struct BuiltRequest {
 pub const HEADER_REQUEST_ID: &str = "X-Request-ID";
 
 const RESERVED_HEADERS: [&str; 11] = [
-    "x-public-id",
-    "x-signature",
-    "x-timestamp",
-    "x-admin-token",
-    "idempotency-key",
+    HEADER_PUBLIC_ID,
+    HEADER_SIGNATURE,
+    HEADER_TIMESTAMP,
+    HEADER_ADMIN_TOKEN,
+    HEADER_IDEMPOTENCY_KEY,
     "content-type",
     "content-length",
     "host",
@@ -140,8 +140,7 @@ pub fn build_request(input: BuildInput<'_>) -> Result<BuiltRequest> {
     let mut headers: Vec<(String, String)> = Vec::new();
     for (k, v) in input.extra_headers {
         assert_header(k, v)?;
-        let lower = k.to_ascii_lowercase();
-        if RESERVED_HEADERS.contains(&lower.as_str()) {
+        if RESERVED_HEADERS.iter().any(|r| r.eq_ignore_ascii_case(k)) {
             continue;
         }
         // Deduplicate the caller's own headers too: the backend appends, so two entries with the

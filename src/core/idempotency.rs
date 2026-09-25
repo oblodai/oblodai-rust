@@ -7,7 +7,8 @@
 
 use crate::error::{Error, Result};
 
-pub const MAX_IDEMPOTENCY_KEY_LENGTH: usize = 255;
+/// The longest key the core accepts (`max_idempotency_key_length` of the contract).
+pub const MAX_IDEMPOTENCY_KEY_LENGTH: usize = crate::generated::signing::MAX_IDEMPOTENCY_KEY_LENGTH;
 
 /// A fresh v4 UUID from the platform CSPRNG.
 pub fn new_idempotency_key() -> String {

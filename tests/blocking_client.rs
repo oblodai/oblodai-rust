@@ -7,6 +7,7 @@ mod support;
 use std::sync::Arc;
 
 use oblodai::blocking::Client;
+use oblodai::core::signing::{HEADER_IDEMPOTENCY_KEY, HEADER_PUBLIC_ID, HEADER_SIGNATURE};
 use oblodai::models::{HistoryRequest, PaymentRequest};
 use oblodai::{BlockingHttpBackend, ErrorKind, RetryOptions};
 use serde_json::json;
@@ -48,9 +49,9 @@ fn signs_generates_a_key_and_decodes_the_same_way_the_async_client_does() {
         .unwrap();
     assert!(!invoice.uuid.is_empty());
     let call = mock.first();
-    assert_eq!(call.header("x-public-id"), Some("pk"));
-    assert_eq!(call.header("x-signature").unwrap().len(), 64);
-    assert_eq!(call.header("idempotency-key").unwrap().len(), 36);
+    assert_eq!(call.header(HEADER_PUBLIC_ID), Some("pk"));
+    assert_eq!(call.header(HEADER_SIGNATURE).unwrap().len(), 64);
+    assert_eq!(call.header(HEADER_IDEMPOTENCY_KEY).unwrap().len(), 36);
 }
 
 #[test]

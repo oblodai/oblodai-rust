@@ -9,6 +9,9 @@ mod support;
 use std::sync::Arc;
 use std::time::Duration;
 
+use oblodai::core::signing::{
+    HEADER_IDEMPOTENCY_KEY, HEADER_PUBLIC_ID, HEADER_SIGNATURE, HEADER_TIMESTAMP,
+};
 use oblodai::models::{CreateWalletRequest, PaymentRequest, PayoutRequest, SetAccuracyRequest};
 use oblodai::{Client, ErrorKind, HttpBackend, RetryOptions};
 use serde_json::json;
@@ -91,8 +94,8 @@ async fn signs_path_and_query_on_get_and_sends_no_body() {
     );
     assert_eq!(call.method, "GET");
     assert!(call.body.is_none());
-    assert_eq!(call.header("x-public-id"), Some("pk_test_1"));
-    let signature = call.header("x-signature").unwrap();
+    assert_eq!(call.header(HEADER_PUBLIC_ID), Some("pk_test_1"));
+    let signature = call.header(HEADER_SIGNATURE).unwrap();
     assert_eq!(signature.len(), 64);
     assert!(signature.bytes().all(|b| b.is_ascii_hexdigit()));
 }
@@ -114,11 +117,11 @@ async fn generates_one_idempotency_key_per_call_and_reuses_it_across_retries() {
         .unwrap();
     let calls = mock.calls();
     assert_eq!(calls.len(), 2);
-    let key = calls[0].header("idempotency-key").unwrap();
+    let key = calls[0].header(HEADER_IDEMPOTENCY_KEY).unwrap();
     assert_eq!(key.len(), 36, "a v4 uuid");
-    assert_eq!(calls[1].header("idempotency-key"), Some(key));
+    assert_eq!(calls[1].header(HEADER_IDEMPOTENCY_KEY), Some(key));
     // Re-signed per attempt: same key, the timestamp may differ but a signature is always present.
-    assert_eq!(calls[1].header("x-signature").unwrap().len(), 64);
+    assert_eq!(calls[1].header(HEADER_SIGNATURE).unwrap().len(), 64);
 }
 
 #[tokio::test]
@@ -141,8 +144,8 @@ async fn honours_a_caller_key_and_adds_none_to_read_routes() {
         .await
         .unwrap();
     let calls = mock.calls();
-    assert_eq!(calls[0].header("idempotency-key"), Some("my-key-1"));
-    assert_eq!(calls[1].header("idempotency-key"), None);
+    assert_eq!(calls[0].header(HEADER_IDEMPOTENCY_KEY), Some("my-key-1"));
+    assert_eq!(calls[1].header(HEADER_IDEMPOTENCY_KEY), None);
 }
 
 #[tokio::test]
@@ -384,7 +387,7 @@ async fn re_signs_once_with_the_server_clock_when_a_401_reveals_skew() {
     client.account().get_balance().await.unwrap();
     let calls = mock.calls();
     assert_eq!(calls.len(), 2);
-    let ts: i64 = calls[1].header("x-timestamp").unwrap().parse().unwrap();
+    let ts: i64 = calls[1].header(HEADER_TIMESTAMP).unwrap().parse().unwrap();
     assert!(
         (ts - server_now).abs() < 5,
         "the second attempt is signed with the server's time"
@@ -425,7 +428,7 @@ async fn reverts_the_correction_when_the_re_signed_attempt_is_still_rejected() {
     assert_eq!(err.code(), "merchant.bad_signature");
     client.account().get_balance().await.unwrap();
     let calls = mock.calls();
-    let ts: i64 = calls[2].header("x-timestamp").unwrap().parse().unwrap();
+    let ts: i64 = calls[2].header(HEADER_TIMESTAMP).unwrap().parse().unwrap();
     assert!(
         (ts - oblodai::core::util::unix_now()).abs() < 5,
         "one bad Date must not wedge the client"
@@ -498,8 +501,8 @@ async fn signs_every_route_with_the_one_api_key() {
         .await
         .unwrap();
     let calls = mock.calls();
-    assert_eq!(calls[0].header("x-public-id"), Some("oblodai_test_1"));
-    assert_eq!(calls[1].header("x-public-id"), Some("oblodai_test_1"));
+    assert_eq!(calls[0].header(HEADER_PUBLIC_ID), Some("oblodai_test_1"));
+    assert_eq!(calls[1].header(HEADER_PUBLIC_ID), Some("oblodai_test_1"));
 }
 
 #[tokio::test]
@@ -541,7 +544,7 @@ async fn drops_caller_headers_that_collide_with_signed_headers() {
         .public_id("pk")
         .secret("s")
         .base_url("https://api.test")
-        .header("x-signature", "zz")
+        .header(HEADER_SIGNATURE, "zz")
         .header("X-Trace", "t1")
         .env(Vec::<(String, String)>::new())
         .http_backend(mock.clone() as Arc<dyn HttpBackend>)
@@ -549,7 +552,7 @@ async fn drops_caller_headers_that_collide_with_signed_headers() {
         .unwrap();
     client.account().get_balance().await.unwrap();
     let call = mock.first();
-    assert_eq!(call.header("x-signature").unwrap().len(), 64);
+    assert_eq!(call.header(HEADER_SIGNATURE).unwrap().len(), 64);
     assert_eq!(call.header("x-trace"), Some("t1"));
 }
 
@@ -685,5 +688,5 @@ async fn batch_info_signs_with_the_api_key_and_does_not_retry_a_refusal() {
         1,
         "a refusal is surfaced, not retried with another key"
     );
-    assert_eq!(calls[0].header("x-public-id"), Some("pk"));
+    assert_eq!(calls[0].header(HEADER_PUBLIC_ID), Some("pk"));
 }
