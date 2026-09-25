@@ -99,6 +99,22 @@ fn header_names(dir: &Path, suite: &Value) -> HashMap<String, String> {
         .collect()
 }
 
+/// The rehearsal header name the spec gives (`header_names.test_pointer`): again the spec's name,
+/// not the SDK's constant.
+fn test_header(dir: &Path, suite: &Value) -> String {
+    let spec = read_json(&dir.join(suite["source"]["spec"].as_str().unwrap()));
+    let name = spec
+        .pointer(
+            suite["header_names"]["test_pointer"]
+                .as_str()
+                .expect("header_names.test_pointer"),
+        )
+        .and_then(Value::as_str)
+        .expect("rehearsal header name at header_names.test_pointer");
+    assert!(!name.is_empty(), "empty rehearsal header name");
+    name.to_string()
+}
+
 // --- signing ----------------------------------------------------------------------------------
 
 #[test]
@@ -356,6 +372,7 @@ fn webhook_deliveries_parse_and_expose_every_header() {
     let suite = suite(&dir, "webhook_delivery");
     let (_, deliveries) = source(&dir, &suite);
     let names = header_names(&dir, &suite);
+    let test_header = test_header(&dir, &suite);
     let mut events: Vec<&str> = deliveries
         .iter()
         .map(|d| d["event"].as_str().unwrap())
@@ -376,6 +393,7 @@ fn webhook_deliveries_parse_and_expose_every_header() {
             "previous" => "previous_secret",
             other => panic!("unknown key {other:?}"),
         };
+        let rehearsal = check["test"].as_bool().unwrap_or(false);
         for d in &deliveries {
             let name = format!("{} — {}", check["name"].as_str().unwrap(), d["event"]);
             let headers = Headers::from_pairs(
@@ -383,7 +401,8 @@ fn webhook_deliveries_parse_and_expose_every_header() {
                     .as_object()
                     .unwrap()
                     .iter()
-                    .map(|(k, v)| (k.clone(), v.as_str().unwrap().to_string())),
+                    .map(|(k, v)| (k.clone(), v.as_str().unwrap().to_string()))
+                    .chain(rehearsal.then(|| (test_header.clone(), "true".to_string()))),
             );
             let options =
                 VerifyOptions::new(d[key].as_str().unwrap()).now(d["ts"].as_i64().unwrap());
@@ -405,6 +424,10 @@ fn webhook_deliveries_parse_and_expose_every_header() {
             assert!(
                 !delivery.event.object_id().is_empty(),
                 "{name}: no object id"
+            );
+            assert_eq!(
+                delivery.is_test, rehearsal,
+                "{name}: is_test (rehearsal header {test_header})"
             );
             let fields = suite["fields"].as_object().expect("fields by role");
             assert_eq!(fields.len(), names.len(), "a field for every header role");
