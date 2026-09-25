@@ -7,7 +7,8 @@ use super::models;
 /// Every event kind this SDK version models (the `type` of a delivery body), sorted.
 pub const KNOWN_EVENT_KINDS: &[&str] = &["conversion", "payment", "payout", "wallet"];
 
-/// Every event name the gateway delivers (`X-Webhook-Event`) and its kind.
+/// Every event name the gateway delivers (the value of
+/// [`HEADER_WEBHOOK_EVENT`](super::signing::HEADER_WEBHOOK_EVENT)) and its kind.
 pub const WEBHOOK_EVENTS: &[(&str, &str)] = &[
     ("conversion.completed", "conversion"),
     ("conversion.refunded", "conversion"),
