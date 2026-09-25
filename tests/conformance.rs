@@ -20,7 +20,8 @@ use std::time::Duration;
 use oblodai::core::engine::RawResponse;
 use oblodai::models::{LookupRequest, PaymentRequest};
 use oblodai::webhooks::{
-    verify_webhook, verify_webhook_delivery, Headers, VerifyOptions, WEBHOOK_EVENTS,
+    is_known_event, parse_webhook, verify_webhook, verify_webhook_delivery, Headers, VerifyOptions,
+    WEBHOOK_EVENTS,
 };
 use oblodai::WebhookEvent;
 use oblodai::{
@@ -177,6 +178,35 @@ fn webhooks_verify_like_the_core() {
                 }
             }
         }
+    }
+}
+
+/// forward_compat webhooks: the body parses, keeps its raw type, and is known exactly as said.
+#[test]
+fn webhook_bodies_parse_with_their_raw_kind() {
+    let Some(dir) = conformance_dir() else { return };
+    let bodies = suite(&dir, "forward_compat")["webhooks"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        !bodies.is_empty(),
+        "forward_compat.json has no webhook bodies"
+    );
+    for case in bodies {
+        let name = case["name"].as_str().unwrap();
+        let raw = serde_json::to_vec(&case["body"]).unwrap();
+        let event = parse_webhook(&raw).unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert_eq!(
+            event.event_kind(),
+            case["expect"]["type"].as_str().unwrap(),
+            "{name}"
+        );
+        assert_eq!(
+            is_known_event(&event),
+            case["expect"]["known"].as_bool().unwrap(),
+            "{name}"
+        );
     }
 }
 
