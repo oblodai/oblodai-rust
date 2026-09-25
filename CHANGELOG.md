@@ -26,6 +26,13 @@ Generated from the gateway's OpenAPI contract. See MIGRATION-2.0.md for every re
 - `WebhookDeliveryInfo::event_id` (`X-Webhook-Event-Id`, `HEADER_WEBHOOK_EVENT_ID`): the id of the
   state a delivery carries, the same across retries and resends — the key to deduplicate on
   (`id`, `X-Webhook-Id`, changes on a resend).
+- `oblodai::generated::signing`: the signing protocol of the contract (`x-oblodai-signing`) —
+  the header names of a signed request and of a webhook delivery, the order and separators of both
+  canonical strings, `SKEW_SECONDS`, `MAX_BODY`, `MAX_IDEMPOTENCY_KEY_LENGTH`. Signing, webhook
+  verification and the idempotency-key check use only these; the 1.x names
+  (`core::signing::HEADER_*`, `webhooks::HEADER_WEBHOOK_*`, `SIGNATURE_SKEW_SECONDS`,
+  `DEFAULT_TOLERANCE_SECONDS`, `MAX_IDEMPOTENCY_KEY_LENGTH`) stay, now equal to the generated values.
+  A header renamed in the gateway reaches the SDK with `make sdk`.
 - Tests: the backend's shared conformance suite (`tests/conformance.rs`, signing and webhook vectors
   from the spec's `x-oblodai-signing`), the examples and every README block run against a fake
   gateway; `make ci` runs every gate, the drift check of `src/generated` included.

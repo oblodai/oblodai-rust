@@ -14,11 +14,13 @@ mod support;
 
 use std::time::Duration;
 
+use oblodai::core::signing::HEADER_SIGNATURE;
 use oblodai::models::{
     BalanceResult, BatchInfoResponse, BatchSubmitResponse, DocumentJobAccepted, DocumentJobView,
     FaucetResult, PaymentWebhook, PayoutItem, ResetResult, SimulateDepositResult,
     TestWebhookKindResult,
 };
+use oblodai::webhooks::{HEADER_WEBHOOK_SIGNATURE, HEADER_WEBHOOK_TIMESTAMP};
 use oblodai::{Client, WebhookEvent};
 use serde_json::{json, Value};
 use support::{envelope, model, FakeGateway, Received};
@@ -411,7 +413,7 @@ async fn the_snippets_run() {
     let signed = gateway
         .received()
         .iter()
-        .all(|r| r.header("x-signature").is_some());
+        .all(|r| r.header(HEADER_SIGNATURE).is_some());
     assert!(
         signed,
         "every README call is signed with the key from the environment"
@@ -431,8 +433,8 @@ fn the_webhook_snippet_accepts_a_signed_delivery_and_refuses_a_forged_one() {
         .as_secs() as i64;
     let headers = |sig: String| {
         vec![
-            ("X-Webhook-Timestamp".to_string(), ts.to_string()),
-            ("X-Webhook-Signature".to_string(), sig),
+            (HEADER_WEBHOOK_TIMESTAMP.to_string(), ts.to_string()),
+            (HEADER_WEBHOOK_SIGNATURE.to_string(), sig),
         ]
     };
     readme_webhooks(

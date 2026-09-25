@@ -12,12 +12,12 @@
 #![cfg(feature = "blocking")]
 #![allow(clippy::result_large_err)]
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use oblodai::core::engine::RawResponse;
+use oblodai::core::engine::{CallOptions, RawResponse};
 use oblodai::models::{LookupRequest, PaymentRequest};
 use oblodai::webhooks::{
     is_known_event, parse_webhook, verify_webhook, verify_webhook_delivery, Headers, VerifyOptions,
@@ -26,7 +26,7 @@ use oblodai::webhooks::{
 use oblodai::WebhookEvent;
 use oblodai::{
     canonical_string, from_json, sign_request, sign_webhook, BackendFuture, BlockingHttpBackend,
-    Error, HttpBackend, HttpRequest, RetryOptions, SignInput,
+    Clock, Error, HttpBackend, HttpRequest, Method, RetryOptions, SignInput,
 };
 use serde_json::Value;
 
@@ -81,6 +81,24 @@ fn source(dir: &Path, suite: &Value) -> (Value, Vec<Value>) {
     (spec["x-oblodai-signing"].clone(), vectors)
 }
 
+/// Role → header name, read from the spec where the suite's `header_names` points: the suite never
+/// names a header, so an SDK still sending a renamed one fails here.
+fn header_names(dir: &Path, suite: &Value) -> HashMap<String, String> {
+    let spec = read_json(&dir.join(suite["source"]["spec"].as_str().unwrap()));
+    let at = &suite["header_names"];
+    let names = spec
+        .pointer(at["pointer"].as_str().unwrap())
+        .and_then(Value::as_array)
+        .expect("header names at the suite's pointer");
+    let roles = at["roles"].as_array().unwrap();
+    assert_eq!(names.len(), roles.len(), "header_names: one name per role");
+    roles
+        .iter()
+        .zip(names)
+        .map(|(r, n)| (r.as_str().unwrap().into(), n.as_str().unwrap().into()))
+        .collect()
+}
+
 // --- signing ----------------------------------------------------------------------------------
 
 #[test]
@@ -88,6 +106,7 @@ fn request_signing_matches_the_core() {
     let Some(dir) = conformance_dir() else { return };
     let suite = suite(&dir, "signing");
     let (_, vectors) = source(&dir, &suite);
+    let names = header_names(&dir, &suite);
     let mut ran = 0;
     for check in suite["checks"].as_array().unwrap() {
         for (i, v) in vectors.iter().enumerate() {
@@ -109,6 +128,9 @@ fn request_signing_matches_the_core() {
                     v["signature"],
                     "{name}"
                 ),
+                "request_headers" => {
+                    request_carries_spec_headers(&name, check, v, &names);
+                }
                 other => panic!("unknown signing check kind {other:?}"),
             }
             ran += 1;
@@ -117,11 +139,129 @@ fn request_signing_matches_the_core() {
     assert!(ran > 0);
 }
 
+/// A fixed clock: the vector's `ts`.
+struct At(i64);
+
+impl Clock for At {
+    fn now(&self) -> i64 {
+        self.0
+    }
+}
+
+/// Records the one request it is sent and answers it with an empty success.
+#[derive(Default)]
+struct Capture(Mutex<Vec<HttpRequest>>);
+
+impl BlockingHttpBackend for Capture {
+    fn send(&self, request: HttpRequest) -> Result<RawResponse, Error> {
+        self.0.lock().unwrap().push(request);
+        Ok(RawResponse {
+            status: 200,
+            headers: vec![("content-type".into(), "application/json".into())],
+            body: br#"{"state":0,"result":{}}"#.to_vec(),
+        })
+    }
+}
+
+/// request_headers: the vector's request goes through the client's own signing transport (key of
+/// `public_id` + the vector's secret, clock at the vector's `ts`); the request that reaches the
+/// wire carries the spec's header names with the vector's values.
+fn request_carries_spec_headers(
+    name: &str,
+    check: &Value,
+    v: &Value,
+    names: &HashMap<String, String>,
+) {
+    let public_id = check["public_id"].as_str().expect("public_id");
+    let ts = v["ts"].as_i64().unwrap();
+    let key = v["idempotency_key"].as_str().unwrap_or("");
+    let body = v["body"].as_str().unwrap_or("");
+    let (path, query) = v["request_uri"]
+        .as_str()
+        .unwrap()
+        .split_once('?')
+        .unwrap_or((v["request_uri"].as_str().unwrap(), ""));
+    // A route of the vector's shape: a copy of a generated one with the vector's method and path.
+    let mut route = *oblodai::routes::ROUTES[0];
+    route.method = match v["method"].as_str().unwrap() {
+        "GET" => Method::Get,
+        "POST" => Method::Post,
+        other => panic!("{name}: method {other} is not wired"),
+    };
+    route.path = Box::leak(path.to_string().into_boxed_str());
+    route.auth = oblodai::RouteAuth::Key;
+    route.idempotent = !key.is_empty();
+    route.safe = false;
+    route.bare = false;
+    route.list_kind = None;
+    let route: &'static oblodai::RouteSpec = Box::leak(Box::new(route));
+
+    let capture = Arc::new(Capture::default());
+    let client = oblodai::Client::builder()
+        .public_id(public_id)
+        .secret(v["secret"].as_str().unwrap())
+        .base_url("https://api.test")
+        .clock(Arc::new(At(ts)))
+        .env(Vec::<(String, String)>::new())
+        .blocking_http_backend(capture.clone() as Arc<dyn BlockingHttpBackend>)
+        .build_blocking()
+        .unwrap();
+    let opts = CallOptions {
+        body: (!body.is_empty()).then(|| serde_json::from_str(body).unwrap()),
+        query: query
+            .split('&')
+            .filter(|p| !p.is_empty())
+            .map(|p| {
+                let (k, v) = p.split_once('=').unwrap_or((p, ""));
+                (k.to_string(), v.to_string())
+            })
+            .collect(),
+        idempotency_key: (!key.is_empty()).then(|| key.to_string()),
+        max_retries: Some(0),
+        ..CallOptions::default()
+    };
+    client
+        .transport()
+        .call_value(route, opts)
+        .unwrap_or_else(|e| panic!("{name}: {e}"));
+    let sent = capture.0.lock().unwrap();
+    assert_eq!(sent.len(), 1, "{name}");
+    let req = &sent[0];
+    // The request is the vector's, byte for byte — else the headers below prove nothing.
+    assert_eq!(
+        req.url,
+        format!("https://api.test{}", v["request_uri"].as_str().unwrap()),
+        "{name}"
+    );
+    assert_eq!(req.body.as_deref().unwrap_or(""), body, "{name}: body");
+    let want = [
+        ("public_id", Some(public_id.to_string())),
+        (
+            "signature",
+            Some(v["signature"].as_str().unwrap().to_string()),
+        ),
+        ("timestamp", Some(ts.to_string())),
+        (
+            "idempotency_key",
+            (!key.is_empty()).then(|| key.to_string()),
+        ),
+    ];
+    for (role, value) in want {
+        let header_name = &names[role];
+        assert_eq!(
+            header(req, header_name).map(str::to_string),
+            value,
+            "{name}: {header_name} (role {role})"
+        );
+    }
+}
+
 #[test]
 fn webhooks_verify_like_the_core() {
     let Some(dir) = conformance_dir() else { return };
     let suite = suite(&dir, "webhook");
     let (signing, vectors) = source(&dir, &suite);
+    let names = header_names(&dir, &suite);
     let skew = signing["skew_seconds"].as_i64().unwrap();
     for check in suite["checks"].as_array().unwrap() {
         for (i, v) in vectors.iter().enumerate() {
@@ -157,8 +297,8 @@ fn webhooks_verify_like_the_core() {
                 other => panic!("unknown mutation {other:?}"),
             }
             let headers = Headers::from_pairs([
-                ("X-Webhook-Timestamp", ts.to_string()),
-                ("X-Webhook-Signature", signature),
+                (names["timestamp"].clone(), ts.to_string()),
+                (names["signature"].clone(), signature),
             ]);
             let options = VerifyOptions::new(secret)
                 .tolerance_seconds(skew)
@@ -215,6 +355,7 @@ fn webhook_deliveries_parse_and_expose_every_header() {
     let Some(dir) = conformance_dir() else { return };
     let suite = suite(&dir, "webhook_delivery");
     let (_, deliveries) = source(&dir, &suite);
+    let names = header_names(&dir, &suite);
     let mut events: Vec<&str> = deliveries
         .iter()
         .map(|d| d["event"].as_str().unwrap())
@@ -265,7 +406,10 @@ fn webhook_deliveries_parse_and_expose_every_header() {
                 !delivery.event.object_id().is_empty(),
                 "{name}: no object id"
             );
-            for (header, field) in suite["headers"].as_object().unwrap() {
+            let fields = suite["fields"].as_object().expect("fields by role");
+            assert_eq!(fields.len(), names.len(), "a field for every header role");
+            for (role, field) in fields {
+                let header = &names[role];
                 let want = d["headers"][header].as_str().unwrap();
                 let got = match field.as_str().unwrap() {
                     "" => continue,
@@ -452,7 +596,13 @@ fn header<'a>(request: &'a HttpRequest, name: &str) -> Option<&'a str> {
         .map(|(_, v)| v.as_str())
 }
 
+/// The spec's name of the idempotency-key header (the signing suite's `header_names`).
+fn idempotency_header(dir: &Path) -> String {
+    header_names(dir, &suite(dir, "signing"))["idempotency_key"].clone()
+}
+
 fn check(
+    idempotency_header: &str,
     name: &str,
     scenario: &Value,
     script: &Script,
@@ -469,7 +619,7 @@ fn check(
     );
     let keys: Vec<Option<&str>> = requests
         .iter()
-        .map(|r| header(r, "idempotency-key"))
+        .map(|r| header(r, idempotency_header))
         .collect();
     match expect["idempotency_key"].as_str() {
         Some("absent") => assert!(keys.iter().all(Option::is_none), "{name}: {keys:?}"),
@@ -528,23 +678,25 @@ fn scenarios(dir: &Path) -> Vec<(String, Value)> {
 #[tokio::test(start_paused = true)]
 async fn call_scenarios_on_the_async_client() {
     let Some(dir) = conformance_dir() else { return };
+    let idem = idempotency_header(&dir);
     for (name, scenario) in scenarios(&dir) {
         let script = Script::new(&scenario["responses"]);
         let client = builder(&script).build().unwrap();
         let op = scenario["call"]["operation"].as_str().unwrap();
         let outcome = call_async(&client, op, scenario["call"]["args"].clone()).await;
-        check(&name, &scenario, &script, outcome, true);
+        check(&idem, &name, &scenario, &script, outcome, true);
     }
 }
 
 #[test]
 fn call_scenarios_on_the_blocking_client() {
     let Some(dir) = conformance_dir() else { return };
+    let idem = idempotency_header(&dir);
     for (name, scenario) in scenarios(&dir) {
         let script = Script::new(&scenario["responses"]);
         let client = builder(&script).build_blocking().unwrap();
         let op = scenario["call"]["operation"].as_str().unwrap();
         let outcome = call_blocking(&client, op, scenario["call"]["args"].clone());
-        check(&name, &scenario, &script, outcome, false);
+        check(&idem, &name, &scenario, &script, outcome, false);
     }
 }

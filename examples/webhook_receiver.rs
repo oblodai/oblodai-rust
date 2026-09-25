@@ -7,8 +7,8 @@
 //! ```
 //!
 //! 1. Verify over the **raw** request bytes. A re-serialized parse will not match the signature.
-//! 2. Deduplicate on `X-Webhook-Event-Id`: retries AND resends of one state carry the same id
-//!    (`X-Webhook-Id` changes on a resend).
+//! 2. Deduplicate on `delivery.event_id` (header `HEADER_WEBHOOK_EVENT_ID`): retries AND resends
+//!    of one state carry the same id (`delivery.id`, `HEADER_WEBHOOK_ID`, changes on a resend).
 //! 3. Drop out-of-order events with `is_stale_event` — a retried `paid` can arrive after a refund.
 //! 4. Never act on a rehearsal (`delivery.is_test`) as if money moved: it is signed like a live one.
 

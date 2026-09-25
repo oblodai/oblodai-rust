@@ -22,6 +22,7 @@ use oblodai::models::{
     PayoutRequest, PayoutValidateRequest, RegisterWebhookRequest, SimulateDepositRequest,
     TestWebhookKindRequest,
 };
+use oblodai::webhooks::HEADER_WEBHOOK_TIMESTAMP;
 use oblodai::{Client, ErrorKind};
 use serde_json::{json, Value};
 
@@ -388,7 +389,11 @@ async fn live_webhook_delivery_verifies_against_the_endpoint_secret() {
         .expect("the delivery arrived")
         .unwrap();
     let headers = Headers::from_pairs(headers);
-    let ts: i64 = headers.get("X-Webhook-Timestamp").unwrap().parse().unwrap();
+    let ts: i64 = headers
+        .get(HEADER_WEBHOOK_TIMESTAMP)
+        .unwrap()
+        .parse()
+        .unwrap();
     let delivery =
         verify_webhook_delivery(&body, &headers, &VerifyOptions::new(&secret).now(ts)).unwrap();
     assert_eq!(delivery.event.event_kind(), "payment");

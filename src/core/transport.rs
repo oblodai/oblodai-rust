@@ -107,7 +107,7 @@ fn body_cap(route: &RouteSpec) -> usize {
 /// Read the envelope of a completed 2xx answer.
 pub(crate) fn finish(route: &'static RouteSpec, raw: RawResponse) -> Result<Value> {
     let result = decode_envelope(raw.status, &raw.body, None, None)?;
-    // The core replays a cached response by Idempotency-Key; when the original was too large to
+    // The core replays a cached response by idempotency key; when the original was too large to
     // cache it answers {ok, idempotent_replay: true, detail} instead of the object — surface that
     // rather than handing back an object that is not the one the caller asked for.
     if result.get("idempotent_replay").and_then(Value::as_bool) == Some(true) {

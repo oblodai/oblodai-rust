@@ -10,6 +10,11 @@ use oblodai::webhooks::{
     is_stale_event, is_test_event, parse_webhook, verify_webhook, verify_webhook_delivery, Headers,
     VerifyOptions,
 };
+use oblodai::webhooks::{
+    DEFAULT_TOLERANCE_SECONDS, HEADER_WEBHOOK_EVENT, HEADER_WEBHOOK_EVENT_ID, HEADER_WEBHOOK_ID,
+    HEADER_WEBHOOK_SIGNATURE, HEADER_WEBHOOK_SIGNATURE_PREV, HEADER_WEBHOOK_TEST,
+    HEADER_WEBHOOK_TIMESTAMP,
+};
 use oblodai::{sign_webhook, ErrorKind, WebhookEvent};
 use support::load_webhook_samples;
 
@@ -27,12 +32,12 @@ fn verifies_every_recorded_delivery() {
     for sample in &samples {
         let raw = sample.raw_bytes();
         let ts: i64 = sample
-            .header("X-Webhook-Timestamp")
+            .header(HEADER_WEBHOOK_TIMESTAMP)
             .unwrap()
             .parse()
             .unwrap();
         let headers = Headers::from_pairs(sample.headers.clone());
-        let event_name = sample.header("X-Webhook-Event").unwrap();
+        let event_name = sample.header(HEADER_WEBHOOK_EVENT).unwrap();
 
         let delivery =
             verify_webhook_delivery(&raw, &headers, &VerifyOptions::new(&secret).now(ts))
@@ -41,10 +46,10 @@ fn verifies_every_recorded_delivery() {
             delivery.event.object_id(),
             sample.body["uuid"].as_str().unwrap()
         );
-        assert_eq!(delivery.id.as_deref(), sample.header("X-Webhook-Id"));
+        assert_eq!(delivery.id.as_deref(), sample.header(HEADER_WEBHOOK_ID));
         assert_eq!(
             delivery.event_id.as_deref(),
-            sample.header("X-Webhook-Event-Id")
+            sample.header(HEADER_WEBHOOK_EVENT_ID)
         );
         assert_eq!(delivery.event_type.as_deref(), Some(event_name));
         assert_eq!(delivery.sent_at, ts);
@@ -64,7 +69,7 @@ fn verifies_every_recorded_delivery() {
         assert_eq!(delivery.is_test, is_test, "{event_name}");
         assert_eq!(is_test_event(&delivery.event), is_test, "{event_name}");
         assert_eq!(
-            sample.header("X-Webhook-Test").is_some(),
+            sample.header(HEADER_WEBHOOK_TEST).is_some(),
             is_test,
             "{event_name}"
         );
@@ -102,7 +107,7 @@ fn a_recorded_delivery_re_serialized_still_carries_every_field() {
             round_tripped,
             body,
             "the event model lost or invented a field on {}",
-            sample.header("X-Webhook-Event").unwrap_or("?")
+            sample.header(HEADER_WEBHOOK_EVENT).unwrap_or("?")
         );
     }
 }
@@ -146,16 +151,16 @@ fn body() -> Vec<u8> {
 
 fn headers_for(secret: &str) -> Headers {
     let mut headers = Headers::new();
-    headers.insert("x-webhook-timestamp", TS.to_string());
-    headers.insert("x-webhook-signature", sign_webhook(secret, TS, &body()));
+    headers.insert(HEADER_WEBHOOK_TIMESTAMP, TS.to_string());
+    headers.insert(HEADER_WEBHOOK_SIGNATURE, sign_webhook(secret, TS, &body()));
     headers
 }
 
 #[test]
 fn reads_the_event_id_apart_from_the_delivery_id() {
     let mut headers = headers_for("whsec");
-    headers.insert("x-webhook-id", "d-1");
-    headers.insert("x-webhook-event-id", "e-1");
+    headers.insert(HEADER_WEBHOOK_ID, "d-1");
+    headers.insert(HEADER_WEBHOOK_EVENT_ID, "e-1");
     let options = VerifyOptions::new("whsec").now(TS);
     let delivery = verify_webhook_delivery(&body(), &headers, &options).unwrap();
     assert_eq!(delivery.id.as_deref(), Some("d-1"));
@@ -201,7 +206,7 @@ fn rejects_a_wrong_secret_a_tampered_body_and_a_missing_header() {
     assert_eq!(err.code(), "webhook.bad_signature");
 
     let mut only_signature = Headers::new();
-    only_signature.insert("x-webhook-signature", "aa");
+    only_signature.insert(HEADER_WEBHOOK_SIGNATURE, "aa");
     let err = verify_webhook(
         &body(),
         &only_signature,
@@ -216,7 +221,7 @@ fn rejects_a_stale_delivery_unless_the_tolerance_is_disabled() {
     let err = verify_webhook(
         &body(),
         &headers_for("whsec"),
-        &VerifyOptions::new("whsec").now(TS + 600),
+        &VerifyOptions::new("whsec").now(TS + 2 * DEFAULT_TOLERANCE_SECONDS),
     )
     .unwrap_err();
     assert_eq!(err.code(), "webhook.stale_timestamp");
@@ -231,11 +236,11 @@ fn rejects_a_stale_delivery_unless_the_tolerance_is_disabled() {
     .unwrap();
     assert_eq!(event.object_id(), "u1");
 
-    // Within the ±300 s window it passes.
+    // Within the ±skew window (the contract's `skew_seconds`) it passes.
     verify_webhook(
         &body(),
         &headers_for("whsec"),
-        &VerifyOptions::new("whsec").now(TS + 299),
+        &VerifyOptions::new("whsec").now(TS + DEFAULT_TOLERANCE_SECONDS - 1),
     )
     .unwrap();
 }
@@ -243,9 +248,12 @@ fn rejects_a_stale_delivery_unless_the_tolerance_is_disabled() {
 #[test]
 fn verifies_during_a_rotation_from_either_side() {
     let mut rotated = Headers::new();
-    rotated.insert("x-webhook-timestamp", TS.to_string());
-    rotated.insert("x-webhook-signature", sign_webhook("new", TS, &body()));
-    rotated.insert("x-webhook-signature-prev", sign_webhook("old", TS, &body()));
+    rotated.insert(HEADER_WEBHOOK_TIMESTAMP, TS.to_string());
+    rotated.insert(HEADER_WEBHOOK_SIGNATURE, sign_webhook("new", TS, &body()));
+    rotated.insert(
+        HEADER_WEBHOOK_SIGNATURE_PREV,
+        sign_webhook("old", TS, &body()),
+    );
 
     // The merchant has not swapped its stored secret yet: the Prev header carries it.
     assert_eq!(
@@ -290,7 +298,7 @@ fn a_rehearsal_is_recognised_from_either_the_header_or_the_body() {
 
     // The header alone — the body of an older rehearsal did not carry the flag.
     let mut with_header = headers_for("whsec");
-    with_header.insert("x-webhook-test", "true");
+    with_header.insert(HEADER_WEBHOOK_TEST, "true");
     let delivery =
         verify_webhook_delivery(&body(), &with_header, &VerifyOptions::new("whsec").now(TS))
             .unwrap();
@@ -303,8 +311,8 @@ fn a_rehearsal_is_recognised_from_either_the_header_or_the_body() {
         .replace("\"sequence\":7", "\"sequence\":7,\"test\":true")
         .into_bytes();
     let mut headers = Headers::new();
-    headers.insert("x-webhook-timestamp", TS.to_string());
-    headers.insert("x-webhook-signature", sign_webhook("whsec", TS, &raw));
+    headers.insert(HEADER_WEBHOOK_TIMESTAMP, TS.to_string());
+    headers.insert(HEADER_WEBHOOK_SIGNATURE, sign_webhook("whsec", TS, &raw));
     let delivery =
         verify_webhook_delivery(&raw, &headers, &VerifyOptions::new("whsec").now(TS)).unwrap();
     assert!(delivery.is_test);
@@ -371,8 +379,8 @@ fn an_event_without_a_sequence_is_never_stale() {
 #[test]
 fn a_non_integer_timestamp_header_is_refused() {
     let mut headers = Headers::new();
-    headers.insert("x-webhook-timestamp", "later");
-    headers.insert("x-webhook-signature", "aa");
+    headers.insert(HEADER_WEBHOOK_TIMESTAMP, "later");
+    headers.insert(HEADER_WEBHOOK_SIGNATURE, "aa");
     let err = verify_webhook(&body(), &headers, &VerifyOptions::new("whsec")).unwrap_err();
     assert_eq!(err.code(), "webhook.bad_signature");
 }
@@ -406,8 +414,8 @@ fn a_negative_tolerance_is_a_config_error_not_a_disabled_check() {
 #[test]
 fn the_signature_is_checked_before_the_freshness_window() {
     let mut headers = Headers::new();
-    headers.insert("x-webhook-timestamp", (TS - 100_000).to_string());
-    headers.insert("x-webhook-signature", "00".repeat(32));
+    headers.insert(HEADER_WEBHOOK_TIMESTAMP, (TS - 100_000).to_string());
+    headers.insert(HEADER_WEBHOOK_SIGNATURE, "00".repeat(32));
     let options = VerifyOptions::new("whsec").now(TS);
     let err = verify_webhook(&body(), &headers, &options).unwrap_err();
     assert_eq!(
@@ -418,9 +426,9 @@ fn the_signature_is_checked_before_the_freshness_window() {
 
     // The same stale timestamp WITH a valid signature is the one that reports staleness.
     let mut headers = Headers::new();
-    headers.insert("x-webhook-timestamp", (TS - 100_000).to_string());
+    headers.insert(HEADER_WEBHOOK_TIMESTAMP, (TS - 100_000).to_string());
     headers.insert(
-        "x-webhook-signature",
+        HEADER_WEBHOOK_SIGNATURE,
         sign_webhook("whsec", TS - 100_000, &body()),
     );
     let err = verify_webhook(&body(), &headers, &options).unwrap_err();
@@ -432,8 +440,8 @@ fn a_signature_header_is_trimmed_and_case_insensitive_but_never_prefixed() {
     let signature = sign_webhook("whsec", TS, &body());
     let with = |value: String| {
         let mut headers = Headers::new();
-        headers.insert("x-webhook-timestamp", TS.to_string());
-        headers.insert("x-webhook-signature", value);
+        headers.insert(HEADER_WEBHOOK_TIMESTAMP, TS.to_string());
+        headers.insert(HEADER_WEBHOOK_SIGNATURE, value);
         verify_webhook(&body(), &headers, &VerifyOptions::new("whsec").now(TS))
     };
     assert!(

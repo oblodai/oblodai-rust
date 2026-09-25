@@ -26,10 +26,12 @@ pub struct Recorded {
 }
 
 impl Recorded {
+    /// Case-insensitive, like HTTP: callers pass the generated constants as the contract spells
+    /// them.
     pub fn header(&self, name: &str) -> Option<&str> {
         self.headers
             .iter()
-            .find(|(k, _)| k == name)
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
             .map(|(_, v)| v.as_str())
     }
 
@@ -253,10 +255,40 @@ impl WebhookSample {
     }
 }
 
+/// The recorded deliveries, their headers under the names the contract gives them today: the
+/// recording keeps the names it was made with, and each is mapped to its role's generated
+/// constant, so a header renamed in the contract does not turn the recording into a failure.
 pub fn load_webhook_samples() -> Vec<WebhookSample> {
+    use oblodai::webhooks::{
+        HEADER_WEBHOOK_EVENT, HEADER_WEBHOOK_EVENT_ID, HEADER_WEBHOOK_EVENT_TIME,
+        HEADER_WEBHOOK_ID, HEADER_WEBHOOK_SIGNATURE, HEADER_WEBHOOK_SIGNATURE_PREV,
+        HEADER_WEBHOOK_TEST, HEADER_WEBHOOK_TIMESTAMP,
+    };
+    // Recorded name → the role's constant.
+    let roles = [
+        ("X-Webhook-Timestamp", HEADER_WEBHOOK_TIMESTAMP),
+        ("X-Webhook-Signature", HEADER_WEBHOOK_SIGNATURE),
+        ("X-Webhook-Signature-Prev", HEADER_WEBHOOK_SIGNATURE_PREV),
+        ("X-Webhook-Event", HEADER_WEBHOOK_EVENT),
+        ("X-Webhook-Id", HEADER_WEBHOOK_ID),
+        ("X-Webhook-Event-Id", HEADER_WEBHOOK_EVENT_ID),
+        ("X-Webhook-Event-Time", HEADER_WEBHOOK_EVENT_TIME),
+        ("X-Webhook-Test", HEADER_WEBHOOK_TEST),
+    ];
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/webhook-samples.json");
     let text = std::fs::read_to_string(path).unwrap();
-    serde_json::from_str(&text).unwrap()
+    let mut samples: Vec<WebhookSample> = serde_json::from_str(&text).unwrap();
+    for sample in &mut samples {
+        sample.headers = std::mem::take(&mut sample.headers)
+            .into_iter()
+            .map(|(name, value)| {
+                let role = roles.iter().find(|(r, _)| r.eq_ignore_ascii_case(&name));
+                let name = role.map_or(name, |(_, current)| current.to_string());
+                (name, value)
+            })
+            .collect();
+    }
+    samples
 }
 
 /// Walk into a JSON value along a dotted path (`items.0.result`).

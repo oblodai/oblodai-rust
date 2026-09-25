@@ -7,6 +7,7 @@ mod support;
 use std::sync::Arc;
 use std::time::Duration;
 
+use oblodai::core::signing::HEADER_IDEMPOTENCY_KEY;
 use oblodai::models::{DocumentJobRequest, PaymentBatchRequest, PaymentRequest};
 use oblodai::{Client, HttpBackend, JobStatus};
 use serde_json::{json, Value};
@@ -83,13 +84,17 @@ async fn a_batch_job_polls_until_a_terminal_status() {
     let calls = mock.calls();
     assert_eq!(calls.len(), 3);
     assert!(
-        calls[0].header("idempotency-key").is_some(),
+        calls[0].header(HEADER_IDEMPOTENCY_KEY).is_some(),
         "the create is keyed"
     );
     for poll in &calls[1..] {
         assert_eq!(poll.path(), "/v1/batch/info");
         assert_eq!(poll.json_body(), json!({"batch_id": "b-1"}));
-        assert_eq!(poll.header("idempotency-key"), None, "polls carry no key");
+        assert_eq!(
+            poll.header(HEADER_IDEMPOTENCY_KEY),
+            None,
+            "polls carry no key"
+        );
         assert_eq!(
             poll.header("x-tenant"),
             Some("eu"),

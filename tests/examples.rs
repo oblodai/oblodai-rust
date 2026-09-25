@@ -15,10 +15,12 @@ mod webhook_receiver;
 
 use std::sync::Arc;
 
+use oblodai::core::signing::HEADER_IDEMPOTENCY_KEY;
 use oblodai::models::{
     BalanceResult, PaymentInfoResult, PayoutCalculation, PayoutItem, PayoutValidateResult,
 };
 use oblodai::webhooks::Headers;
+use oblodai::webhooks::{HEADER_WEBHOOK_ID, HEADER_WEBHOOK_SIGNATURE, HEADER_WEBHOOK_TIMESTAMP};
 use oblodai::{sign_webhook, Client, HttpBackend};
 use serde_json::json;
 use support::{api_error, model, ok, sample, MockBackend};
@@ -74,7 +76,7 @@ async fn payout_quotes_dry_runs_and_sends() {
     let create = &calls[3];
     assert_eq!(create.path(), "/v1/payout");
     assert_eq!(
-        create.header("idempotency-key"),
+        create.header(HEADER_IDEMPOTENCY_KEY),
         create.json_body()["order_id"].as_str(),
         "the order id doubles as the idempotency key"
     );
@@ -119,9 +121,9 @@ fn the_webhook_receiver_accepts_a_signed_delivery_once() {
         .as_secs() as i64;
     let headers = |signature: String| {
         Headers::from_pairs([
-            ("X-Webhook-Timestamp".to_string(), ts.to_string()),
-            ("X-Webhook-Signature".to_string(), signature),
-            ("X-Webhook-Id".to_string(), "d-1".to_string()),
+            (HEADER_WEBHOOK_TIMESTAMP.to_string(), ts.to_string()),
+            (HEADER_WEBHOOK_SIGNATURE.to_string(), signature),
+            (HEADER_WEBHOOK_ID.to_string(), "d-1".to_string()),
         ])
     };
     let mut receiver = webhook_receiver::Receiver::new(secret.into(), None);

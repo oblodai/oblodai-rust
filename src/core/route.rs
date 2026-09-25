@@ -78,8 +78,9 @@ pub struct RouteSpec {
     /// Path template; `{name}` segments are filled from path parameters.
     pub path: &'static str,
     pub auth: RouteAuth,
-    /// The gateway deduplicates it by `Idempotency-Key` (`x-idempotent`): the SDK generates a key
-    /// when the caller supplies none and reuses it on every retry.
+    /// The gateway deduplicates it by its idempotency key header
+    /// ([`HEADER_IDEMPOTENCY_KEY`](super::signing::HEADER_IDEMPOTENCY_KEY), `x-idempotent`): the
+    /// SDK generates a key when the caller supplies none and reuses it on every retry.
     pub idempotent: bool,
     /// Retry-safe (`GET`, or `x-retry-safe`): re-sending cannot duplicate a side effect.
     pub safe: bool,

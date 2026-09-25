@@ -20,7 +20,7 @@ use super::request::{
 };
 use super::retry::{jitter, retry_delay_ms, should_retry, RetryContext, RetryOptions};
 use super::route::RouteSpec;
-use super::signing::SIGNATURE_SKEW_SECONDS;
+use super::signing::{HEADER_IDEMPOTENCY_KEY, SIGNATURE_SKEW_SECONDS};
 use crate::error::{Error, Result};
 use crate::generated::enums::ErrorCode;
 
@@ -246,8 +246,8 @@ impl Core {
                 return Err(Error::config(
                     "sdk.idempotency_unsupported",
                     format!(
-                        "{} {} does not deduplicate by Idempotency-Key; drop the idempotency key \
-                         from this call",
+                        "{} {} does not deduplicate by {HEADER_IDEMPOTENCY_KEY}; drop the \
+                         idempotency key from this call",
                         route.method, route.path
                     ),
                     Some("idempotency_key"),
