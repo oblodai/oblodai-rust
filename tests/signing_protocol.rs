@@ -101,7 +101,7 @@ fn the_public_names_are_the_generated_values() {
 }
 
 /// No header name of the signing protocol — request, webhook delivery or rehearsal — is spelled in
-/// a hand-written source file: every one comes from `src/generated`.
+/// a hand-written source file, library or example: every one comes from `src/generated`.
 #[test]
 fn no_signing_header_is_spelled_outside_generated() {
     let Some(s) = signing() else { return };
@@ -130,13 +130,15 @@ fn no_signing_header_is_spelled_outside_generated() {
     );
 }
 
-/// Every hand-written file under `src/` (not `src/generated`), with its path relative to `src/`.
+/// Every hand-written Rust file that ships or is run — `src/` outside `src/generated`, and the
+/// examples (the README points at them and `cargo test` builds them) — with its path relative to the
+/// crate root.
 fn hand_written_sources() -> Vec<(String, String)> {
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut out = Vec::new();
-    let mut stack = vec![src.clone()];
+    let mut stack = vec![root.join("src"), root.join("examples")];
     while let Some(dir) = stack.pop() {
-        for entry in std::fs::read_dir(&dir).expect("read src") {
+        for entry in std::fs::read_dir(&dir).expect("read sources") {
             let path = entry.expect("entry").path();
             if path.is_dir() {
                 if path.file_name() != Some("generated".as_ref()) {
@@ -144,10 +146,17 @@ fn hand_written_sources() -> Vec<(String, String)> {
                 }
                 continue;
             }
+            if path.extension() != Some("rs".as_ref()) {
+                continue;
+            }
             let text = std::fs::read_to_string(&path).expect("read source");
-            out.push((path.strip_prefix(&src).unwrap().display().to_string(), text));
+            out.push((path.strip_prefix(root).unwrap().display().to_string(), text));
         }
     }
+    assert!(
+        out.iter().any(|(p, _)| p.starts_with("examples")),
+        "no examples scanned"
+    );
     out
 }
 
