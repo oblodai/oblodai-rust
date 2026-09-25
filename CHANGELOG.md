@@ -54,6 +54,11 @@ Generated from the gateway's OpenAPI contract. See MIGRATION-2.0.md for every re
   the non-money numbers of request bodies (`models::NON_MONEY_NUMBERS`). The method tables of
   README.md and README.ru.md and `names.lock` are written by the generator as well.
 
+- **`WebhookEvent::object_id()`** reads the id field the contract declares for each event kind
+  (`uuid`, or `id` on a conversion); `uuid()` is a deprecated alias of it. On an event type this
+  version does not model it is empty — the id field is no longer guessed from `uuid`/`id` — as in
+  the other SDKs; the raw body is in `raw()`.
+
 ### Removed
 
 - Method aliases (`get` = `info`, `list` = `history`, …), `merchants().create` (not part of the

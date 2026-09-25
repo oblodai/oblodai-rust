@@ -37,7 +37,10 @@ fn verifies_every_recorded_delivery() {
         let delivery =
             verify_webhook_delivery(&raw, &headers, &VerifyOptions::new(&secret).now(ts))
                 .unwrap_or_else(|e| panic!("{event_name}: {e}"));
-        assert_eq!(delivery.event.uuid(), sample.body["uuid"].as_str().unwrap());
+        assert_eq!(
+            delivery.event.object_id(),
+            sample.body["uuid"].as_str().unwrap()
+        );
         assert_eq!(delivery.id.as_deref(), sample.header("X-Webhook-Id"));
         assert_eq!(
             delivery.event_id.as_deref(),
@@ -226,7 +229,7 @@ fn rejects_a_stale_delivery_unless_the_tolerance_is_disabled() {
             .tolerance_seconds(0),
     )
     .unwrap();
-    assert_eq!(event.uuid(), "u1");
+    assert_eq!(event.object_id(), "u1");
 
     // Within the ±300 s window it passes.
     verify_webhook(
@@ -248,14 +251,14 @@ fn verifies_during_a_rotation_from_either_side() {
     assert_eq!(
         verify_webhook(&body(), &rotated, &VerifyOptions::new("old").now(TS))
             .unwrap()
-            .uuid(),
+            .object_id(),
         "u1"
     );
     // The merchant already swapped: the main header verifies.
     assert_eq!(
         verify_webhook(&body(), &rotated, &VerifyOptions::new("new").now(TS))
             .unwrap()
-            .uuid(),
+            .object_id(),
         "u1"
     );
     // Or it keeps both, in either slot.
@@ -268,7 +271,7 @@ fn verifies_during_a_rotation_from_either_side() {
                 .now(TS)
         )
         .unwrap()
-        .uuid(),
+        .object_id(),
         "u1"
     );
 }
@@ -331,7 +334,9 @@ fn an_unknown_event_type_is_kept_not_refused() {
         .expect("an unknown event type is data, not an error");
     assert!(matches!(event, oblodai::WebhookEvent::Other(_)));
     assert_eq!(event.event_kind(), "alien");
-    assert_eq!(event.uuid(), "x");
+    // Its id field is not guessed (the contract names it per kind): the raw body still has it.
+    assert_eq!(event.object_id(), "");
+    assert_eq!(event.raw().unwrap()["uuid"], "x");
     assert_eq!(event.sequence(), Some(9));
     assert!(event.is_test());
     assert!(is_test_event(&event));
@@ -484,7 +489,7 @@ fn every_event_of_the_contract_is_a_known_kind() {
     assert!(matches!(event, oblodai::WebhookEvent::Conversion(_)));
     assert!(event.is_known());
     assert_eq!(
-        (event.uuid(), event.sequence(), event.order_id()),
+        (event.object_id(), event.sequence(), event.order_id()),
         ("c-1", Some(3), None)
     );
 }

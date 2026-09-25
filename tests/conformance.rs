@@ -261,7 +261,10 @@ fn webhook_deliveries_parse_and_expose_every_header() {
                 d["kind"].as_str().unwrap(),
                 "{name}"
             );
-            assert!(!delivery.event.uuid().is_empty(), "{name}: no object id");
+            assert!(
+                !delivery.event.object_id().is_empty(),
+                "{name}: no object id"
+            );
             for (header, field) in suite["headers"].as_object().unwrap() {
                 let want = d["headers"][header].as_str().unwrap();
                 let got = match field.as_str().unwrap() {
