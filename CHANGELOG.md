@@ -23,6 +23,19 @@ All notable changes to this crate are recorded here. The format follows
 - `RouteSpec::body_idempotency_key`: the route takes the idempotency key as a body field (the
   sandbox faucet), generated from the contract.
 
+### Changed
+
+- **Breaking:** `payments().list_history` takes its own request model `PaymentHistoryRequest`
+  (`limit`, `offset`, `status`) instead of the shared `HistoryRequest`; `HistoryRequest` now serves
+  `payouts().list_history` only. The payment feed never honoured `kind`/`include_refunds`, so the
+  new model drops them, and `status` filters by the payment status vocabulary. Migration: replace
+  `HistoryRequest` with `PaymentHistoryRequest` in payment history calls (`use
+  oblodai::models::PaymentHistoryRequest`).
+- Method docs: the payout calculation lists `payout.unsupported_network` for an unknown network;
+  lookup, test-webhook (`ok` / `status_code`) and refund amount fields are described more precisely.
+  The webhook signing constants already carry the event-id and delivery-id header names that the
+  contract now names as `event_id_header` / `delivery_id_header`.
+
 ## [2.0.0] — 2026-09-25
 
 Generated from the gateway's OpenAPI contract. See MIGRATION-2.0.md for every renamed method.

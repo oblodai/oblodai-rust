@@ -19,8 +19,8 @@ use oblodai::generated::resources::{
 };
 use oblodai::models::{
     APILogRequest, CreateWalletRequest, ExchangeRatesRequest, FaucetRequest, HistoryRequest,
-    LookupRequest, PageRequest, PaymentLinkCreateRequest, PaymentRequest, PayoutCalculateRequest,
-    PayoutLinkItem, QrRequest, RegisterWebhookRequest, SummaryRequest,
+    LookupRequest, PageRequest, PaymentHistoryRequest, PaymentLinkCreateRequest, PaymentRequest,
+    PayoutCalculateRequest, PayoutLinkItem, QrRequest, RegisterWebhookRequest, SummaryRequest,
 };
 use oblodai::{Client, ErrorKind, Result};
 use serde_json::{json, Value};
@@ -141,7 +141,7 @@ async fn live_sweep() {
         "payments.list_history",
         client
             .payments()
-            .list_history(HistoryRequest::default())
+            .list_history(PaymentHistoryRequest::default())
             .limit(5)
             .await,
     );

@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use oblodai::core::signing::{HEADER_IDEMPOTENCY_KEY, HEADER_SIGNATURE};
-use oblodai::models::{FaucetRequest, HistoryRequest, PaymentRequest};
+use oblodai::models::{FaucetRequest, PaymentHistoryRequest, PaymentRequest};
 use oblodai::{Client, ClientOptions, Hooks, HttpBackend, RetryOptions};
 use serde_json::json;
 use support::{api_error, network_error, no_envelope, ok, sample, MockBackend, Scripted};
@@ -150,7 +150,7 @@ async fn an_error_prints_code_message_and_request_id() {
     // An error raised before sending has no id and no suffix.
     let err = client
         .payments()
-        .list_history(HistoryRequest::default())
+        .list_history(PaymentHistoryRequest::default())
         .idempotency_key("k")
         .await
         .unwrap_err();
@@ -200,7 +200,7 @@ async fn a_raw_response_carries_status_headers_and_request_id() {
     let client = client_on(&mock, |b| b);
     let raw = client
         .payments()
-        .list_history(HistoryRequest::default())
+        .list_history(PaymentHistoryRequest::default())
         .limit(5)
         .with_raw_response()
         .await

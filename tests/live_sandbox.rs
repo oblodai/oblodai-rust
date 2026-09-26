@@ -18,7 +18,7 @@ use oblodai::enums::PaymentStatus;
 use oblodai::generated::resources::SandboxListWebhooksQuery;
 use oblodai::helpers::is_payment_paid;
 use oblodai::models::{
-    FaucetRequest, HistoryRequest, LookupRequest, PaymentRequest, PayoutCalculateRequest,
+    FaucetRequest, LookupRequest, PaymentHistoryRequest, PaymentRequest, PayoutCalculateRequest,
     PayoutRequest, PayoutValidateRequest, RegisterWebhookRequest, SimulateDepositRequest,
     TestWebhookKindRequest,
 };
@@ -131,7 +131,7 @@ async fn live_sandbox_journey() {
 
     let page = client
         .payments()
-        .list_history(HistoryRequest::default())
+        .list_history(PaymentHistoryRequest::default())
         .limit(5)
         .await
         .unwrap();

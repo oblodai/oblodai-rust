@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use futures_util::StreamExt;
 use oblodai::core::signing::HEADER_IDEMPOTENCY_KEY;
-use oblodai::models::HistoryRequest;
+use oblodai::models::{HistoryRequest, PaymentHistoryRequest};
 use oblodai::{Client, HttpBackend};
 use serde_json::{json, Value};
 use support::{api_error, ok, MockBackend, Scripted};
@@ -59,7 +59,7 @@ async fn awaiting_a_pager_fetches_exactly_one_page() {
     let (client, mock) = harness(vec![page(vec![invoice("a"), invoice("b")], 0, 5, 2)]);
     let first = client
         .payments()
-        .list_history(HistoryRequest::default())
+        .list_history(PaymentHistoryRequest::default())
         .limit(2)
         .await
         .unwrap();
@@ -73,7 +73,9 @@ async fn awaiting_a_pager_fetches_exactly_one_page() {
 #[tokio::test]
 async fn nothing_is_requested_until_the_pager_is_consumed() {
     let (client, mock) = harness(vec![page(vec![], 0, 0, 50)]);
-    let pager = client.payments().list_history(HistoryRequest::default());
+    let pager = client
+        .payments()
+        .list_history(PaymentHistoryRequest::default());
     assert_eq!(
         mock.call_count(),
         0,
@@ -93,7 +95,7 @@ async fn streaming_walks_every_page_lazily() {
     let mut seen = Vec::new();
     let mut stream = client
         .payments()
-        .list_history(HistoryRequest::default())
+        .list_history(PaymentHistoryRequest::default())
         .limit(2)
         .stream();
     while let Some(item) = stream.next().await {
@@ -123,7 +125,7 @@ async fn a_failed_page_ends_the_stream_with_that_error() {
     ]);
     let mut stream = client
         .payments()
-        .list_history(HistoryRequest::default())
+        .list_history(PaymentHistoryRequest::default())
         .limit(1)
         .stream();
     assert_eq!(stream.next().await.unwrap().unwrap().uuid, "1");
@@ -162,7 +164,7 @@ async fn all_collects_across_pages_with_a_cap() {
     let (client, mock) = harness(vec![page(vec![invoice("1"), invoice("2")], 0, 9, 2)]);
     let capped = client
         .payments()
-        .list_history(HistoryRequest::default())
+        .list_history(PaymentHistoryRequest::default())
         .limit(2)
         .all(Some(2))
         .await
@@ -183,7 +185,7 @@ async fn a_short_page_ends_the_walk_even_when_has_pages_lies() {
     }))]);
     let items = client
         .payments()
-        .list_history(HistoryRequest::default())
+        .list_history(PaymentHistoryRequest::default())
         .all(None)
         .await
         .unwrap();
@@ -246,7 +248,7 @@ async fn by_page_yields_one_page_per_request() {
     ]);
     let mut pages = client
         .payments()
-        .list_history(HistoryRequest::default())
+        .list_history(PaymentHistoryRequest::default())
         .limit(2)
         .by_page();
     assert_eq!(mock.call_count(), 0, "nothing before the first poll");
@@ -274,7 +276,7 @@ async fn limit_and_offset_in_the_params_start_the_walk() {
     let (client, mock) = harness(vec![page(vec![], 40, 40, 20)]);
     let _ = client
         .payments()
-        .list_history(HistoryRequest {
+        .list_history(PaymentHistoryRequest {
             limit: Some(20),
             offset: Some(40),
             ..Default::default()

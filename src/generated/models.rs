@@ -1985,12 +1985,12 @@ impl std::fmt::Debug for FaucetResult {
 
 #[derive(Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct HistoryRequest {
-    /// Only for /v1/payout/history: true — return refunds together with payouts (the former
-    /// behavior of the feed without kind). Default false: refunds are separate, kind=refund.
+    /// true — return refunds together with payouts (the former behavior of the feed without kind).
+    /// Default false: refunds are separate, kind=refund.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub include_refunds: Option<bool>,
-    /// Only for /v1/payout/history: payout — regular payouts, refund — refunds; empty — regular
-    /// payouts (with include_refunds=true — everything together).
+    /// payout — regular payouts, refund — refunds; empty — regular payouts (with
+    /// include_refunds=true — everything together).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<PayoutKind>,
     /// Page size, 1–100; out of range — 25.
@@ -1999,7 +1999,8 @@ pub struct HistoryRequest {
     /// Offset from the start of the list (newest first).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub offset: Option<i64>,
-    /// Filter by status (an exact value from the status vocabulary); empty — all.
+    /// Filter by payout status (an exact value from the payout status vocabulary: pending,
+    /// approved, awaiting_cosign, broadcasting, sent, confirmed, failed, cancelled); empty — all.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
     /// Fields this SDK version does not know yet; sent back as they are.
@@ -2060,10 +2061,13 @@ impl std::fmt::Debug for LinkCheckoutRequest {
 
 #[derive(Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct LookupRequest {
-    /// Your order reference.
+    /// Your order_id of the object: the payment's for /v1/payment/info, the payout's for
+    /// /v1/payout/info.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub order_id: Option<String>,
-    /// The invoice id in Oblodai. Either uuid or order_id is required; uuid takes precedence.
+    /// The Oblodai id of the object being looked up: the invoice (payment) for /v1/payment/info,
+    /// the payout or refund for /v1/payout/info. Either uuid or order_id is required; uuid takes
+    /// precedence.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub uuid: Option<String>,
     /// Fields this SDK version does not know yet; sent back as they are.
@@ -2707,6 +2711,34 @@ impl std::fmt::Debug for PaymentFeeResult {
         d.field("fee_fixed_usd_cents", &self.fee_fixed_usd_cents);
         d.field("fee_individual", &self.fee_individual);
         d.field("fee_percent", &self.fee_percent);
+        d.extra(&self.extra);
+        d.finish()
+    }
+}
+
+#[derive(Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct PaymentHistoryRequest {
+    /// Page size, 1–100; out of range — 25.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
+    /// Offset from the start of the list (newest first).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offset: Option<i64>,
+    /// Filter by payment status (an exact value from the payment status vocabulary: select,
+    /// created, confirm_check, paid, paid_over, wrong_amount, expired, cancelled); empty — all.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    /// Fields this SDK version does not know yet; sent back as they are.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+impl std::fmt::Debug for PaymentHistoryRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = ModelDebug::new(f, "PaymentHistoryRequest");
+        d.field("limit", &self.limit);
+        d.field("offset", &self.offset);
+        d.field("status", &self.status);
         d.extra(&self.extra);
         d.finish()
     }
@@ -5584,7 +5616,10 @@ pub struct RefundBatchItem {
     /// Bitcoin/UTXO.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub address: Option<String>,
-    /// A partial amount. Defaults to the full received amount.
+    /// The amount to refund, in the payment coin; overrides the default. Without it the refund is
+    /// the amount paid minus the payer's network surcharge and — when the store's refund fee
+    /// setting (getRefundFeeConfig) puts the commission on the customer — minus the Oblodai
+    /// commission too, never more than was credited to your balance for this payment.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub amount: Option<Money>,
     /// Fund the refund by converting balance: USDT → the payment currency only. Needed when the
@@ -5681,7 +5716,10 @@ pub struct RefundRequest {
     /// Bitcoin/UTXO.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub address: Option<String>,
-    /// A partial amount. Defaults to the full received amount.
+    /// The amount to refund, in the payment coin; overrides the default. Without it the refund is
+    /// the amount paid minus the payer's network surcharge and — when the store's refund fee
+    /// setting (getRefundFeeConfig) puts the commission on the customer — minus the Oblodai
+    /// commission too, never more than was credited to your balance for this payment.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub amount: Option<Money>,
     /// Fund the refund by converting balance: USDT → the payment currency only. Needed when the
@@ -7117,11 +7155,14 @@ impl TestWebhookKindRequest {
 
 #[derive(Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TestWebhookKindResult {
-    /// Always true: the body was delivered.
+    /// Always true: your endpoint received the body and answered, with any HTTP status — ok does
+    /// not mean it was accepted; check status_code. If the endpoint cannot be reached, the call
+    /// fails with webhook.test_failed.
     pub ok: bool,
     /// The body is signed with the project endpoint's secret.
     pub signed: bool,
-    /// The HTTP status your endpoint responded with.
+    /// The HTTP status your endpoint responded with. Only 2xx counts as accepted: a live delivery
+    /// answered with anything else is retried and eventually marked dead.
     pub status_code: i64,
     /// Fields this SDK version does not know yet; sent back as they are.
     #[serde(flatten)]
@@ -7168,7 +7209,8 @@ impl std::fmt::Debug for TestWebhookRequest {
 pub struct TestWebhookResult {
     /// How long the delivery took, ms.
     pub duration_ms: i64,
-    /// The delivery took place (the endpoint responded, with any status).
+    /// The delivery took place: the endpoint answered, with any HTTP status — ok does not mean it
+    /// was accepted; check status_code.
     pub ok: bool,
     /// The body is signed with the project endpoint's secret.
     pub signed: bool,
@@ -7177,7 +7219,8 @@ pub struct TestWebhookResult {
     /// Why the delivery did not take place; only when ok=false.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
-    /// The HTTP status returned by the endpoint; only when ok=true.
+    /// The HTTP status returned by the endpoint; only when ok=true. Only 2xx counts as accepted: a
+    /// live delivery answered with anything else is retried.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status_code: Option<i64>,
     /// Fields this SDK version does not know yet; sent back as they are.

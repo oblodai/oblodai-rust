@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use oblodai::blocking::Client;
 use oblodai::core::signing::{HEADER_IDEMPOTENCY_KEY, HEADER_PUBLIC_ID, HEADER_SIGNATURE};
-use oblodai::models::{HistoryRequest, PaymentRequest};
+use oblodai::models::{PaymentHistoryRequest, PaymentRequest};
 use oblodai::{BlockingHttpBackend, ErrorKind, RetryOptions};
 use serde_json::json;
 use support::{api_error, ok, MockBackend, Scripted};
@@ -103,7 +103,7 @@ fn pages_walk_with_a_plain_iterator() {
     let (client, mock) = harness(vec![page(vec![item()], 0, 2), page(vec![item()], 1, 2)]);
     let pager = client
         .payments()
-        .list_history(HistoryRequest::default())
+        .list_history(PaymentHistoryRequest::default())
         .limit(1);
     let collected: Vec<_> = pager.iter().collect::<Result<Vec<_>, _>>().unwrap();
     assert_eq!(collected.len(), 2);
@@ -112,7 +112,7 @@ fn pages_walk_with_a_plain_iterator() {
     let (client, mock) = harness(vec![page(vec![], 0, 0)]);
     assert!(client
         .payments()
-        .list_history(HistoryRequest::default())
+        .list_history(PaymentHistoryRequest::default())
         .page()
         .unwrap()
         .items
@@ -152,7 +152,7 @@ fn blocking_by_page_walks_page_by_page() {
     ]);
     let sizes: Vec<usize> = client
         .payments()
-        .list_history(HistoryRequest::default())
+        .list_history(PaymentHistoryRequest::default())
         .limit(2)
         .by_page()
         .map(|p| p.unwrap().items.len())

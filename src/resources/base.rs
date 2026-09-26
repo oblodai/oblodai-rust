@@ -485,10 +485,10 @@ impl<T: Decode> WithRawResponse<crate::core::transport::BlockingTransport, T> {
 /// ```no_run
 /// # async fn demo(client: &oblodai::Client) -> oblodai::Result<()> {
 /// use futures_util::StreamExt;
-/// use oblodai::models::HistoryRequest;
+/// use oblodai::models::PaymentHistoryRequest;
 ///
-/// let first = client.payments().list_history(HistoryRequest::default()).limit(20).await?;
-/// let mut items = client.payments().list_history(HistoryRequest::default()).stream();
+/// let first = client.payments().list_history(PaymentHistoryRequest::default()).limit(20).await?;
+/// let mut items = client.payments().list_history(PaymentHistoryRequest::default()).stream();
 /// while let Some(payment) = items.next().await {
 ///     println!("{}", payment?.uuid);
 /// }

@@ -21,25 +21,26 @@ use super::models::{
     ExchangeRatesRequest, FaucetRequest, FaucetResult, HistoryRequest, LinkCheckoutRequest,
     LookupRequest, MassPayoutRequest, MassPayoutResult, OnrampStartResponse, OnrampStatusResult,
     PageRequest, PaySelectRequest, PayServiceEntry, PaymentBatchRequest, PaymentDiscountRule,
-    PaymentFeeResult, PaymentInfoResult, PaymentLinkCreateRequest, PaymentLinkDetail,
-    PaymentLinkLookupRequest, PaymentLinkPublicView, PaymentLinkResponse, PaymentLinkToggleRequest,
-    PaymentLinkToggled, PaymentLinkView, PaymentQRResult, PaymentRequest, PaymentView,
-    PayoutBatchRequest, PayoutCalculateRequest, PayoutCalculation, PayoutClaimInfo, PayoutClaimed,
-    PayoutFeeResult, PayoutInfoResult, PayoutItem, PayoutLinkBatchRequest, PayoutLinkBatchResult,
-    PayoutLinkChequeRequest, PayoutLinkCreated, PayoutLinkIDRequest, PayoutLinkItem,
-    PayoutLinkView, PayoutRequest, PayoutValidateRequest, PayoutValidateResult, PayoutView,
-    PublicPayResult, PublicPaymentView, QrRequest, ReferralInfoResult, RefundBatchRequest,
-    RefundFeeResult, RefundRequest, RegisterWebhookRequest, RegisterWebhookResult, ReplayRequest,
-    ReplayResult, RequeueWebhookDeliveryRequest, RequeueWebhookDeliveryResult, ResetResult,
-    ResolveRequest, ResolveResult, RotateWebhookSecretResult, SandboxDelivery,
-    SandboxOnboardResult, SendEmailRequest, SendEmailResult, SetAccuracyRequest,
-    SetAutoConvertRequest, SetAutoRefundRequest, SetDiscountRequest, SetPaymentFeeRequest,
-    SetPayoutFeeRequest, SetRefundFeeRequest, SetWebhookActiveRequest, SetWebhookActiveResult,
-    SimulateDepositRequest, SimulateDepositResult, SoFSubmitRequest, SoFSubmitted, SoFView,
-    SplitConfigRequest, SplitConfigView, SplitRecipientOptInRequest, SplitRecipientOptInView,
-    SplitRuleCreated, SplitRuleDeleteRequest, SplitRuleDeleted, SplitRuleRequest, SplitRuleView,
-    StaticWalletView, SummaryRequest, SummaryResult, TestWebhookKindRequest, TestWebhookKindResult,
-    TestWebhookRequest, TestWebhookResult, TransferBatchRequest, TransferRequest, TransferResult,
+    PaymentFeeResult, PaymentHistoryRequest, PaymentInfoResult, PaymentLinkCreateRequest,
+    PaymentLinkDetail, PaymentLinkLookupRequest, PaymentLinkPublicView, PaymentLinkResponse,
+    PaymentLinkToggleRequest, PaymentLinkToggled, PaymentLinkView, PaymentQRResult, PaymentRequest,
+    PaymentView, PayoutBatchRequest, PayoutCalculateRequest, PayoutCalculation, PayoutClaimInfo,
+    PayoutClaimed, PayoutFeeResult, PayoutInfoResult, PayoutItem, PayoutLinkBatchRequest,
+    PayoutLinkBatchResult, PayoutLinkChequeRequest, PayoutLinkCreated, PayoutLinkIDRequest,
+    PayoutLinkItem, PayoutLinkView, PayoutRequest, PayoutValidateRequest, PayoutValidateResult,
+    PayoutView, PublicPayResult, PublicPaymentView, QrRequest, ReferralInfoResult,
+    RefundBatchRequest, RefundFeeResult, RefundRequest, RegisterWebhookRequest,
+    RegisterWebhookResult, ReplayRequest, ReplayResult, RequeueWebhookDeliveryRequest,
+    RequeueWebhookDeliveryResult, ResetResult, ResolveRequest, ResolveResult,
+    RotateWebhookSecretResult, SandboxDelivery, SandboxOnboardResult, SendEmailRequest,
+    SendEmailResult, SetAccuracyRequest, SetAutoConvertRequest, SetAutoRefundRequest,
+    SetDiscountRequest, SetPaymentFeeRequest, SetPayoutFeeRequest, SetRefundFeeRequest,
+    SetWebhookActiveRequest, SetWebhookActiveResult, SimulateDepositRequest, SimulateDepositResult,
+    SoFSubmitRequest, SoFSubmitted, SoFView, SplitConfigRequest, SplitConfigView,
+    SplitRecipientOptInRequest, SplitRecipientOptInView, SplitRuleCreated, SplitRuleDeleteRequest,
+    SplitRuleDeleted, SplitRuleRequest, SplitRuleView, StaticWalletView, SummaryRequest,
+    SummaryResult, TestWebhookKindRequest, TestWebhookKindResult, TestWebhookRequest,
+    TestWebhookResult, TransferBatchRequest, TransferRequest, TransferResult,
     TransferToPersonalResult, TransferToUserRequest, VRCSRequest, VRCSResult, WalletQRResult,
     WebhookDeliveryLogItem, WebhookResendResult,
 };
@@ -628,7 +629,7 @@ impl<Tr: Clone> Payments<Tr> {
     /// `request.overloaded`, `request.rate_limited`, `request.too_deep`.
     ///
     /// `POST /v1/payment/history` (`listPaymentHistory`).
-    pub fn list_history(&self, params: HistoryRequest) -> Pager<Tr, PaymentView> {
+    pub fn list_history(&self, params: PaymentHistoryRequest) -> Pager<Tr, PaymentView> {
         let mut call = Call::new(&routes::LIST_PAYMENT_HISTORY);
         call.body(params);
         Pager::new(self.transport.clone(), call)

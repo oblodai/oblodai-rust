@@ -126,12 +126,12 @@ async fn readme_lists(client: &Client) -> oblodai::Result<()> {
     // @snippet readme_lists
     use futures_util::StreamExt;
     use oblodai::enums::PayoutKind;
-    use oblodai::models::HistoryRequest;
+    use oblodai::models::{HistoryRequest, PaymentHistoryRequest};
 
     // one page
     let page = client
         .payments()
-        .list_history(HistoryRequest::default())
+        .list_history(PaymentHistoryRequest::default())
         .limit(50)
         .await?;
     println!("{} of {}", page.items.len(), page.paginate.total);
@@ -148,7 +148,7 @@ async fn readme_lists(client: &Client) -> oblodai::Result<()> {
     // page by page
     let mut pages = client
         .payments()
-        .list_history(HistoryRequest::default())
+        .list_history(PaymentHistoryRequest::default())
         .by_page();
     while let Some(page) = pages.next().await {
         println!("a page of {}", page?.items.len());
