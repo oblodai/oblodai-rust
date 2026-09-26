@@ -1,14 +1,16 @@
 //! Error model. One type, [`Error`], mirrors the core's error envelope:
 //!
 //! ```json
-//! { "error": { "code": "…", "message": "…", "field": "…", "retryable": false,
-//!              "retry_after": 30, "request_id": "…" } }
+//! { "error": { "code": "…", "message": "…", "field": "…", "details": { "…": "…" },
+//!              "retryable": false, "retry_after": 30, "request_id": "…" } }
 //! ```
 //!
 //! `retryable` is authoritative when the core wrote the envelope: it is the core's own
 //! classification of the failure. A response without an envelope (a proxy 502, an HTML 503) is
 //! [`Error::synthetic`] — the core never saw or never answered the request — and is retried only
 //! when repeating is safe. [`ErrorKind`] exists for matching; the discriminator is always `code`.
+
+use std::collections::BTreeMap;
 
 use serde::ser::{Serialize, SerializeStruct, Serializer};
 
@@ -43,6 +45,7 @@ pub struct Error {
     retry_after: Option<u64>,
     request_id: Option<String>,
     field: Option<String>,
+    details: Option<BTreeMap<String, String>>,
     synthetic: bool,
     /// The raw body. Never printed by `Debug` and never serialized, so a log cannot leak it.
     raw: Option<String>,
@@ -97,6 +100,12 @@ impl Error {
         self.field.as_deref()
     }
 
+    /// Machine-readable facts about the refusal, keys documented by its code (e.g.
+    /// `cli.permission_denied` carries `required_role` and `role`); `None` when absent.
+    pub fn details(&self) -> Option<&BTreeMap<String, String>> {
+        self.details.as_ref()
+    }
+
     /// No core envelope: the answer came from something in front of the core.
     pub fn synthetic(&self) -> bool {
         self.synthetic
@@ -127,6 +136,7 @@ impl Error {
             retry_after: None,
             request_id: None,
             field: None,
+            details: None,
             synthetic: false,
             raw: None,
         }
@@ -143,6 +153,7 @@ impl Error {
             retry_after: None,
             request_id: None,
             field: field.map(str::to_string),
+            details: None,
             synthetic: false,
             raw: None,
         }
@@ -160,6 +171,7 @@ impl Error {
             retry_after: None,
             request_id: None,
             field: None,
+            details: None,
             synthetic: false,
             raw: None,
         }
@@ -176,6 +188,7 @@ impl Error {
             retry_after: None,
             request_id: None,
             field: None,
+            details: None,
             synthetic: false,
             raw,
         }
@@ -192,6 +205,7 @@ impl Error {
             retry_after: None,
             request_id: None,
             field: None,
+            details: None,
             synthetic: false,
             raw: None,
         }
@@ -212,6 +226,7 @@ impl Error {
             retry_after: None,
             request_id: None,
             field: None,
+            details: None,
             synthetic: false,
             raw: None,
         }
@@ -228,6 +243,7 @@ impl Error {
             retry_after: None,
             request_id: None,
             field: None,
+            details: None,
             synthetic: false,
             raw: None,
         }
@@ -294,6 +310,7 @@ impl Error {
             retry_after: detail.retry_after.or(retry_after_header),
             request_id: detail.request_id,
             field: detail.field,
+            details: if synthetic { None } else { detail.details },
             synthetic,
             raw,
         }
@@ -328,6 +345,7 @@ impl std::fmt::Debug for Error {
             .field("retry_after", &self.retry_after)
             .field("request_id", &self.request_id)
             .field("field", &self.field)
+            .field("details", &self.details)
             .field("synthetic", &self.synthetic)
             .finish_non_exhaustive()
     }
@@ -336,7 +354,7 @@ impl std::fmt::Debug for Error {
 /// Serializes what a support ticket needs and nothing that could carry a secret.
 impl Serialize for Error {
     fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
-        let mut s = serializer.serialize_struct("OblodaiError", 9)?;
+        let mut s = serializer.serialize_struct("OblodaiError", 10)?;
         s.serialize_field("kind", self.kind.as_str())?;
         s.serialize_field("code", &self.code)?;
         s.serialize_field("message", &self.message)?;
@@ -345,6 +363,7 @@ impl Serialize for Error {
         s.serialize_field("retry_after", &self.retry_after)?;
         s.serialize_field("request_id", &self.request_id)?;
         s.serialize_field("field", &self.field)?;
+        s.serialize_field("details", &self.details)?;
         s.serialize_field("synthetic", &self.synthetic)?;
         s.end()
     }
