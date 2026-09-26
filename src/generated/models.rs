@@ -5651,11 +5651,15 @@ pub struct RefundBatchItem {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub address: Option<String>,
     /// The amount to refund, in the payment coin. Without it the refund is what is still
-    /// refundable: the amount paid minus the payer's network surcharge and — when the store's
-    /// refund fee setting (getRefundFeeConfig) puts the commission on the customer — minus the
-    /// Oblodai commission too, never more than was credited to your balance for this payment, less
-    /// the refunds already made. All refunds of a payment together cannot exceed that refundable
-    /// amount (refund.exceeds_refundable); POST /v1/payment/refund/calculate shows it.
+    /// refundable: the refundable amount less the refunds already made. The refundable amount is
+    /// the most that all refunds of this payment together can send (refund.exceeds_refundable), and
+    /// it follows the store's refund fee setting (getRefundFeeConfig). The payer's network
+    /// surcharge is never refunded. When the customer bears the Oblodai commission, it is the
+    /// amount paid minus the surcharge and the commission — what was credited to your balance for
+    /// this payment. When you bear it, it is the amount paid minus the surcharge: the commission is
+    /// paid from your balance, so the refunds debit more than the payment credited, and a balance
+    /// too small for that fails with payout.insufficient_funds. POST /v1/payment/refund/calculate
+    /// shows these numbers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub amount: Option<Money>,
     /// Fund the refund by converting balance: USDT → the payment currency only. Needed when the
@@ -5738,17 +5742,21 @@ pub struct RefundCalculation {
     /// What the buyer paid in total, including the network surcharge.
     pub amount_paid: Money,
     /// The Oblodai commission withheld from the refund: the payment's commission when
-    /// commission_bearer is customer, 0 when it is merchant.
+    /// commission_bearer is customer, 0 when it is merchant (you then pay it from your balance).
     pub commission: Money,
-    /// Who bears the Oblodai commission on this refund (the store's refund fee setting,
-    /// getRefundFeeConfig): customer — it is deducted from the refund; merchant — it is not.
+    /// Who bears the Oblodai commission on this refund — the store's refund fee setting
+    /// (getRefundFeeConfig): customer — it is deducted from the refund, and the refunds return at
+    /// most what the payment credited you; merchant — it is not deducted, and you pay it from your
+    /// balance, so the refunds debit more than the payment credited.
     pub commission_bearer: RefundCommissionBearer,
     /// The refund coin — the one the buyer paid with.
     pub currency: String,
     /// The network the refund would be sent on (canonical).
     pub network: String,
-    /// The most that all refunds of this payment together may send: amount_paid minus surcharge
-    /// (minus commission when commission_bearer is customer), never more than credited.
+    /// The most that all refunds of this payment together may send; the surcharge is never
+    /// refunded. commission_bearer customer: amount_paid minus surcharge minus commission, never
+    /// more than credited. commission_bearer merchant: amount_paid minus surcharge (the surcharge
+    /// counted per deposit), more than credited by the commission you pay from your balance.
     pub refundable: Money,
     /// Already refunded (live and completed refunds; failed and cancelled ones do not count).
     pub refunded: Money,
@@ -5811,7 +5819,8 @@ impl std::fmt::Debug for RefundCalculation {
 pub struct RefundFeeResult {
     /// true — the project set this setting itself; false — the gateway default applies.
     pub configured: bool,
-    /// The effective value: the project setting, or the gateway default if there is none.
+    /// The effective value for your refunds: the project setting, or the gateway default if there
+    /// is none (automatic refunds then deduct the commission).
     pub fee_on_customer: bool,
     /// Fields this SDK version does not know yet; sent back as they are.
     #[serde(flatten)]
@@ -5835,11 +5844,15 @@ pub struct RefundRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub address: Option<String>,
     /// The amount to refund, in the payment coin. Without it the refund is what is still
-    /// refundable: the amount paid minus the payer's network surcharge and — when the store's
-    /// refund fee setting (getRefundFeeConfig) puts the commission on the customer — minus the
-    /// Oblodai commission too, never more than was credited to your balance for this payment, less
-    /// the refunds already made. All refunds of a payment together cannot exceed that refundable
-    /// amount (refund.exceeds_refundable); POST /v1/payment/refund/calculate shows it.
+    /// refundable: the refundable amount less the refunds already made. The refundable amount is
+    /// the most that all refunds of this payment together can send (refund.exceeds_refundable), and
+    /// it follows the store's refund fee setting (getRefundFeeConfig). The payer's network
+    /// surcharge is never refunded. When the customer bears the Oblodai commission, it is the
+    /// amount paid minus the surcharge and the commission — what was credited to your balance for
+    /// this payment. When you bear it, it is the amount paid minus the surcharge: the commission is
+    /// paid from your balance, so the refunds debit more than the payment credited, and a balance
+    /// too small for that fails with payout.insufficient_funds. POST /v1/payment/refund/calculate
+    /// shows these numbers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub amount: Option<Money>,
     /// Fund the refund by converting balance: USDT → the payment currency only. Needed when the
@@ -6618,8 +6631,10 @@ impl SetPayoutFeeRequest {
 
 #[derive(Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SetRefundFeeRequest {
-    /// true — the customer receives net (the customer pays the fee); false — the merchant pays the
-    /// fee, the customer receives gross
+    /// Who bears the Oblodai commission on refunds. true — the customer: it is deducted from the
+    /// refund, which returns at most what the payment credited to your balance. false — you: it is
+    /// not deducted and is paid from your balance, on top of what the payment credited. The payer's
+    /// network surcharge is never refunded either way.
     pub fee_on_customer: bool,
     /// Fields this SDK version does not know yet; sent back as they are.
     #[serde(flatten)]
