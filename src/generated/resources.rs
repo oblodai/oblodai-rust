@@ -29,7 +29,7 @@ use super::models::{
     PayoutLinkBatchResult, PayoutLinkChequeRequest, PayoutLinkCreated, PayoutLinkIDRequest,
     PayoutLinkItem, PayoutLinkView, PayoutRequest, PayoutValidateRequest, PayoutValidateResult,
     PayoutView, PublicPayResult, PublicPaymentView, QrRequest, ReferralInfoResult,
-    RefundBatchRequest, RefundFeeResult, RefundRequest, RegisterWebhookRequest,
+    RefundBatchRequest, RefundCalculation, RefundFeeResult, RefundRequest, RegisterWebhookRequest,
     RegisterWebhookResult, ReplayRequest, ReplayResult, RequeueWebhookDeliveryRequest,
     RequeueWebhookDeliveryResult, ResetResult, ResolveRequest, ResolveResult,
     RotateWebhookSecretResult, SandboxDelivery, SandboxOnboardResult, SendEmailRequest,
@@ -569,7 +569,7 @@ impl<Tr: Clone> Payments<Tr> {
     /// Get payment status
     ///
     /// Pass `uuid` (ours) OR `order_id` (yours). Returns the current status and amounts. If both
-    /// are given, `order_id` takes precedence.
+    /// are given, `uuid` takes precedence and `order_id` is ignored.
     ///
     /// Requires role: Viewer when called with a CLI key.
     ///
@@ -972,14 +972,16 @@ impl<Tr: Clone> Refunds<Tr> {
     /// the provider's omnibus hot wallet, not the buyer). A refund sent there is irrecoverably lost
     /// to someone who never paid, so a request without `address` is rejected (`refund.no_address`):
     /// ask the buyer for an address and pass it explicitly. The payment's `uuid`/`order_id` is
-    /// required. By default the full received amount is refunded; you may specify a partial
-    /// `amount`.
+    /// required. By default the remaining refundable amount is refunded; you may specify a partial
+    /// `amount`. All refunds of a payment together cannot exceed its `refundable` amount: what was
+    /// paid minus the payer's network surcharge (minus our commission when the store's refund fee
+    /// setting puts it on the customer), never more than was credited to your balance for it — POST
+    /// /v1/payment/refund/calculate shows these numbers without refunding.
     ///
-    /// Idempotent on `(payment, address, amount)`; in total you cannot refund more than was paid.
-    /// Refunds to any address are approved automatically. The only exception is a card payment via
-    /// an on-ramp: a refund TO THE RECORDED PAYER ADDRESS of such an invoice is rejected
-    /// (`refund.omnibus_destination`), because that address belongs to the provider, not the buyer
-    /// — send the buyer's address explicitly.
+    /// Idempotent on `(payment, address, amount)`. Refunds to any address are approved
+    /// automatically. The only exception is a card payment via an on-ramp: a refund TO THE RECORDED
+    /// PAYER ADDRESS of such an invoice is rejected (`refund.omnibus_destination`), because that
+    /// address belongs to the provider, not the buyer — send the buyer's address explicitly.
     ///
     /// A refund is paid in THE SAME coin the buyer paid with. If it has already been converted into
     /// a stablecoin by auto-conversion, pass `from_currency: "USDT"` — the refund is funded by
@@ -1028,6 +1030,50 @@ impl<Tr: Clone> Refunds<Tr> {
     /// `POST /v1/payment/refund` (`refundPayment`).
     pub fn payment(&self, params: RefundRequest) -> Request<Tr, PayoutView> {
         let mut call = Call::new(&routes::REFUND_PAYMENT);
+        call.body(params);
+        Request::new(self.transport.clone(), call)
+    }
+
+    /// Calculate a refund without making it (dry run)
+    ///
+    /// Takes the same body as POST /v1/payment/refund and answers what that refund would send —
+    /// `amount`, `currency`, `network`, `address` (and whether it is the recorded payer's) — and
+    /// the numbers behind it: `amount_paid`, the payer's network `surcharge` (never refunded from
+    /// your balance), the `commission` withheld and who bears it (`commission_bearer`, the store's
+    /// refund fee setting), `credited`, the `refundable` ceiling for all refunds of the payment
+    /// together, what is already `refunded` and what `remaining` can still go. With `from_currency`
+    /// it also estimates the USDT the funding conversion would spend (`from_amount`).
+    ///
+    /// Runs the same checks as the refund itself and fails with the same error the refund would
+    /// (`refund.exceeds_refundable`, `refund.dust`, `refund.no_address`,
+    /// `refund.nothing_to_refund`, …) — except the destination address screening, which runs when
+    /// the refund is made. Reserves and sends nothing; safe to retry.
+    ///
+    /// Requires role: Viewer when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `invoice.corrupt_pay_asset`, `merchant.bad_signature`,
+    /// `merchant.key_expired`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
+    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`,
+    /// `onramp.suppresses`, `payment.bad_uuid`, `payment.no_lookup`, `payment.not_found`,
+    /// `payout.above_limit`, `payout.address_network_mismatch`, `payout.bad_address`,
+    /// `payout.bad_memo`, `payout.cap_unpriceable`, `payout.convert_bad_amount`,
+    /// `payout.convert_no_rate`, `payout.convert_same_asset`, `payout.convert_unsupported`,
+    /// `payout.daily_cap`, `payout.freeze_unknown`, `payout.frozen`, `payout.memo_conflict`,
+    /// `payout.memo_required`, `payout.memo_too_long`, `payout.merchant_frozen`, `rates.deviation`,
+    /// `rates.no_source`, `rates.non_positive`, `rates.stale_rate`, `refund.bad_amount`,
+    /// `refund.chain_ambiguous`, `refund.destination_internal`, `refund.dust`,
+    /// `refund.exceeds_refundable`, `refund.fence_check`, `refund.from_currency_personal_account`,
+    /// `refund.from_currency_unsupported`, `refund.network_required`, `refund.no_address`,
+    /// `refund.nothing_to_refund`, `refund.omnibus_destination`, `refund.paid_internally`,
+    /// `refund.unsupported_network`, `request.bad_json`, `request.body_read`,
+    /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
+    /// `request.rate_limited`, `request.too_deep`, `sandbox.convert_not_available`,
+    /// `treasury.no_ccy_map`, `wallet.static_not_found`.
+    ///
+    /// `POST /v1/payment/refund/calculate` (`calculateRefund`).
+    pub fn calculate(&self, params: RefundRequest) -> Request<Tr, RefundCalculation> {
+        let mut call = Call::new(&routes::CALCULATE_REFUND);
         call.body(params);
         Request::new(self.transport.clone(), call)
     }
@@ -1276,8 +1322,10 @@ impl<Tr: Clone> Payouts<Tr> {
     /// Runs all payout-creation checks — currency, amount, network, address, memo, address
     /// screening, fee, freeze/daily limit and balance sufficiency — but reserves and sends nothing.
     /// The response is `valid: true` with the amounts (`amount`, `commission`, `payer_amount`,
-    /// `fee_bearer`), or the same error that creation would return. The body is the same as for
-    /// POST /v1/payout (order_id is optional for validation).
+    /// `fee_bearer`), the destination `address`, and for a `from_currency` payout the USDT the
+    /// funding conversion would spend (`from_amount`, at the current rate), or the same error that
+    /// creation would return. The body is the same as for POST /v1/payout (order_id is optional for
+    /// validation).
     ///
     /// Requires role: Finance when called with a CLI key.
     ///
@@ -1289,16 +1337,17 @@ impl<Tr: Clone> Payouts<Tr> {
     /// `merchant.rate_limited`, `merchant.secret_decrypt`, `merchant.suspended`,
     /// `merchant.unknown_key`, `payout.above_limit`, `payout.address_network_mismatch`,
     /// `payout.amount_below_fee`, `payout.bad_address`, `payout.bad_amount`, `payout.bad_memo`,
-    /// `payout.bad_url_callback`, `payout.cap_unpriceable`, `payout.daily_cap`,
-    /// `payout.destination_internal`, `payout.from_currency_unsupported`,
-    /// `payout.insufficient_funds`, `payout.memo_conflict`, `payout.memo_required`,
-    /// `payout.memo_too_long`, `payout.merchant_frozen`, `payout.network_required`,
-    /// `payout.reserved_reference`, `payout.unsupported_network`, `rates.deviation`,
-    /// `rates.no_source`, `rates.non_positive`, `request.bad_json`, `request.body_read`,
-    /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
-    /// `request.rate_limited`, `request.reference_invalid`, `request.reference_too_long`,
-    /// `request.too_deep`, `request.unknown_currency`, `sandbox.convert_not_available`,
-    /// `wallet.static_not_found`, `webhook.no_endpoint`.
+    /// `payout.bad_url_callback`, `payout.cap_unpriceable`, `payout.convert_bad_amount`,
+    /// `payout.convert_insufficient`, `payout.convert_no_rate`, `payout.convert_same_asset`,
+    /// `payout.convert_unsupported`, `payout.daily_cap`, `payout.destination_internal`,
+    /// `payout.from_currency_unsupported`, `payout.insufficient_funds`, `payout.memo_conflict`,
+    /// `payout.memo_required`, `payout.memo_too_long`, `payout.merchant_frozen`,
+    /// `payout.network_required`, `payout.reserved_reference`, `payout.unsupported_network`,
+    /// `rates.deviation`, `rates.no_source`, `rates.non_positive`, `request.bad_json`,
+    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
+    /// `request.overloaded`, `request.rate_limited`, `request.reference_invalid`,
+    /// `request.reference_too_long`, `request.too_deep`, `request.unknown_currency`,
+    /// `sandbox.convert_not_available`, `wallet.static_not_found`, `webhook.no_endpoint`.
     ///
     /// `POST /v1/payout/validate` (`validatePayout`).
     pub fn validate(&self, params: PayoutValidateRequest) -> Request<Tr, PayoutValidateResult> {

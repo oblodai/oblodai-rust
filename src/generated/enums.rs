@@ -3206,6 +3206,57 @@ impl From<String> for PayoutStatus {
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[non_exhaustive]
+pub enum RefundCommissionBearer {
+    #[serde(rename = "customer")]
+    Customer,
+    #[serde(rename = "merchant")]
+    Merchant,
+    /// A value this SDK version does not know yet.
+    #[serde(untagged)]
+    Other(String),
+}
+
+impl RefundCommissionBearer {
+    /// The wire value.
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Customer => "customer",
+            Self::Merchant => "merchant",
+            Self::Other(v) => v,
+        }
+    }
+}
+
+impl Default for RefundCommissionBearer {
+    fn default() -> Self {
+        Self::Other(String::new())
+    }
+}
+
+impl std::fmt::Display for RefundCommissionBearer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for RefundCommissionBearer {
+    fn from(v: &str) -> Self {
+        match v {
+            "customer" => Self::Customer,
+            "merchant" => Self::Merchant,
+            other => Self::Other(other.to_string()),
+        }
+    }
+}
+
+impl From<String> for RefundCommissionBearer {
+    fn from(v: String) -> Self {
+        Self::from(v.as_str())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
 pub enum RefundRollup {
     #[serde(rename = "none")]
     None,

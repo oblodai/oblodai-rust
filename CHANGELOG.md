@@ -22,9 +22,19 @@ All notable changes to this crate are recorded here. The format follows
   `sdk.wrong_invoke` — both config errors before the network.
 - `RouteSpec::body_idempotency_key`: the route takes the idempotency key as a body field (the
   sandbox faucet), generated from the contract.
+- `client.refunds().calculate(...)` (and the blocking mirror, POST /v1/payment/refund/calculate):
+  dry-run a refund and get back a `RefundCalculation` — `amount`, `currency`, `network`,
+  `address`, `amount_paid`, `surcharge`, `commission`/`commission_bearer`, `credited`,
+  `refundable`, `refunded`, `remaining`, and, with `from_currency` set, the estimated
+  `from_amount`. Runs the same checks as `refunds().payment(...)` and reserves/sends nothing.
 
 ### Changed
 
+- `PayoutValidateResult` (`payouts().validate(...)`) gains `address` (the destination), and, for
+  a `from_currency` payout, `from_amount` and `rate` alongside the existing `funded_by`.
+- `PayoutRequest.memo` / `PayoutValidateRequest.memo` docs are now network-specific: the XRP
+  destination tag, the Stellar memo id, a TON comment (at most 64 bytes), and at most 120 bytes on
+  every other network.
 - **Breaking:** `payments().list_history` takes its own request model `PaymentHistoryRequest`
   (`limit`, `offset`, `status`) instead of the shared `HistoryRequest`; `HistoryRequest` now serves
   `payouts().list_history` only. The payment feed never honoured `kind`/`include_refunds`, so the

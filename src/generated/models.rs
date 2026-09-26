@@ -14,8 +14,8 @@ use super::enums::{
     AcceptedReason, AmountMode, AssetKind, AutoConvertMode, BatchItemStatus, BatchKind,
     BatchOnError, BatchStatus, ConversionWebhookStatus, DocumentJobKind, DocumentJobStatus,
     FeeType, KeyMode, OnrampIdleStatus, OnrampStatus, PaymentStatus, PayoutFeeBearer, PayoutKind,
-    PayoutLinkFeeBearer, PayoutLinkStatus, PayoutSource, PayoutStatus, RefundRollup, Role,
-    SoFStatus, WebhookDeliveryStatus,
+    PayoutLinkFeeBearer, PayoutLinkStatus, PayoutSource, PayoutStatus, RefundCommissionBearer,
+    RefundRollup, Role, SoFStatus, WebhookDeliveryStatus,
 };
 
 /// JSON names of the request fields that are numbers but not money (`type: number` in the
@@ -2061,13 +2061,13 @@ impl std::fmt::Debug for LinkCheckoutRequest {
 
 #[derive(Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct LookupRequest {
-    /// Your order_id of the object: the payment's for /v1/payment/info, the payout's for
-    /// /v1/payout/info.
+    /// Your order_id of that object: the payment's in payment operations, the payout's in payout
+    /// operations. Used only when uuid is empty.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub order_id: Option<String>,
-    /// The Oblodai id of the object being looked up: the invoice (payment) for /v1/payment/info,
-    /// the payout or refund for /v1/payout/info. Either uuid or order_id is required; uuid takes
-    /// precedence.
+    /// Our id (a UUID) of the object the operation acts on: the payment (invoice) in payment
+    /// operations, the payout or refund in payout operations. Either uuid or order_id is required;
+    /// when both are passed, uuid is used and order_id is ignored.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub uuid: Option<String>,
     /// Fields this SDK version does not know yet; sent back as they are.
@@ -2518,7 +2518,10 @@ impl std::fmt::Debug for PayServiceLimit {
 
 #[derive(Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct PaymentBatchItem {
-    /// The amount to pay in currency.
+    /// The price in currency — what you are paid for the order. The payer can be asked for more:
+    /// the invoice's payer_amount adds the network surcharge (the cost of accepting the deposit on
+    /// the chosen network, see network_surcharge) and any per-method discount or surcharge; your
+    /// credit is amount minus the commission.
     pub amount: Money,
     /// The price currency code: any of the 23 fiat currencies (USD, EUR, RUB, …) or any coin (USDT,
     /// BTC, …). JPY and KRW have zero decimal places.
@@ -3443,7 +3446,10 @@ impl std::fmt::Debug for PaymentRefundLine {
 
 #[derive(Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct PaymentRequest {
-    /// The amount to pay in currency.
+    /// The price in currency — what you are paid for the order. The payer can be asked for more:
+    /// the invoice's payer_amount adds the network surcharge (the cost of accepting the deposit on
+    /// the chosen network, see network_surcharge) and any per-method discount or surcharge; your
+    /// credit is amount minus the commission.
     pub amount: Money,
     /// The price currency code: any of the 23 fiat currencies (USD, EUR, RUB, …) or any coin (USDT,
     /// BTC, …). JPY and KRW have zero decimal places.
@@ -3949,19 +3955,24 @@ impl PayoutCalculateRequest {
 pub struct PayoutCalculation {
     /// Payout asset.
     pub currency: String,
-    /// Who pays the fee: gateway, merchant or recipient.
+    /// Who pays the network fee: gateway (Oblodai absorbs it, commission is 0), merchant (added to
+    /// amount, the recipient gets the full sum) or recipient (deducted from payer_amount).
     pub fee_bearer: PayoutFeeBearer,
     /// exact — the fee is contractual (the gateway absorbs it); estimated — an oracle estimate.
     pub fee_type: FeeType,
     /// The network — as it came in the request.
     pub network: String,
-    /// How much will be debited from the balance; null — unknown (the fee cannot be estimated).
+    /// How much will be debited from YOUR balance, in currency (the fee included when you bear it);
+    /// null — cannot be estimated right now (the fee is unknown and you bear it).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub amount: Option<Money>,
-    /// Network fee; null — cannot be estimated right now.
+    /// The network fee of the payout, in currency; who bears it is fee_bearer. null — cannot be
+    /// estimated right now (the fee oracle or the rate is unavailable), not zero: retry later.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub commission: Option<Money>,
-    /// How much the address will receive; null — unknown.
+    /// How much the RECIPIENT receives at the address, in currency (not what you pay — that is
+    /// amount). null — cannot be estimated right now (the fee is unknown and the recipient bears
+    /// it).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payer_amount: Option<Money>,
     /// Fields this SDK version does not know yet; sent back as they are.
@@ -4829,7 +4840,11 @@ pub struct PayoutRequest {
     /// amount; false — the recipient gets amount-fee; omitted — the project's fee-config.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub is_subtract: Option<bool>,
-    /// Destination tag/memo (TON Jetton). At most 120 characters.
+    /// Destination tag / memo / comment, by network: XRP — the destination tag, a uint32 (required
+    /// unless the X-address carries one; 0 for a wallet without a tag); Stellar — the memo id, a
+    /// uint64 (required unless the muxed M… address carries one); TON — a comment of at most 64
+    /// bytes (it must fit the transfer's message cell); other networks — at most 120 bytes. Omit it
+    /// where the network has none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memo: Option<String>,
     /// Network (tron, ethereum, …). Required for coins with several networks.
@@ -4898,7 +4913,11 @@ pub struct PayoutValidateRequest {
     /// amount; false — the recipient gets amount-fee; omitted — the project's fee-config.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub is_subtract: Option<bool>,
-    /// Destination tag/memo (TON Jetton). At most 120 characters.
+    /// Destination tag / memo / comment, by network: XRP — the destination tag, a uint32 (required
+    /// unless the X-address carries one; 0 for a wallet without a tag); Stellar — the memo id, a
+    /// uint64 (required unless the muxed M… address carries one); TON — a comment of at most 64
+    /// bytes (it must fit the transfer's message cell); other networks — at most 120 bytes. Omit it
+    /// where the network has none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memo: Option<String>,
     /// Network (tron, ethereum, …). Required for coins with several networks.
@@ -4955,9 +4974,12 @@ impl PayoutValidateRequest {
 
 #[derive(Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct PayoutValidateResult {
-    /// How much will be debited from the balance.
+    /// The destination address the payout will be sent to.
+    pub address: String,
+    /// How much will be debited from the balance, in currency (for a from_currency payout the
+    /// currency balance is first funded with it by the conversion, see from_amount).
     pub amount: Money,
-    /// Network fee.
+    /// Network fee, in currency; who bears it is fee_bearer.
     pub commission: Money,
     /// Payout currency.
     pub currency: String,
@@ -4967,14 +4989,23 @@ pub struct PayoutValidateResult {
     pub maturity_note: String,
     /// The payout network in canonical spelling.
     pub network: String,
-    /// How much will reach the recipient.
+    /// How much the recipient will receive at address, in currency.
     pub payer_amount: Money,
     /// Always true: a failed check responds with an error carrying the reason code.
     pub valid: bool,
+    /// How much funded_by (USDT) the conversion will debit to fund amount, at the current rate plus
+    /// the conversion spread; the conversion re-prices at execution, so the final figure can differ
+    /// slightly. Present only on a from_currency payout.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_amount: Option<Money>,
     /// The currency whose conversion funds the payout (from_currency); present only on such a
     /// payout.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub funded_by: Option<String>,
+    /// The rate the from_amount estimate used: USDT per 1 unit of currency. Present only on a
+    /// from_currency payout.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate: Option<Money>,
     /// Fields this SDK version does not know yet; sent back as they are.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
@@ -4983,6 +5014,7 @@ pub struct PayoutValidateResult {
 impl std::fmt::Debug for PayoutValidateResult {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut d = ModelDebug::new(f, "PayoutValidateResult");
+        d.field("address", &self.address);
         d.field("amount", &self.amount);
         d.field("commission", &self.commission);
         d.field("currency", &self.currency);
@@ -4991,7 +5023,9 @@ impl std::fmt::Debug for PayoutValidateResult {
         d.field("network", &self.network);
         d.field("payer_amount", &self.payer_amount);
         d.field("valid", &self.valid);
+        d.field("from_amount", &self.from_amount);
         d.field("funded_by", &self.funded_by);
+        d.field("rate", &self.rate);
         d.extra(&self.extra);
         d.finish()
     }
@@ -5616,10 +5650,12 @@ pub struct RefundBatchItem {
     /// Bitcoin/UTXO.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub address: Option<String>,
-    /// The amount to refund, in the payment coin; overrides the default. Without it the refund is
-    /// the amount paid minus the payer's network surcharge and — when the store's refund fee
-    /// setting (getRefundFeeConfig) puts the commission on the customer — minus the Oblodai
-    /// commission too, never more than was credited to your balance for this payment.
+    /// The amount to refund, in the payment coin. Without it the refund is what is still
+    /// refundable: the amount paid minus the payer's network surcharge and — when the store's
+    /// refund fee setting (getRefundFeeConfig) puts the commission on the customer — minus the
+    /// Oblodai commission too, never more than was credited to your balance for this payment, less
+    /// the refunds already made. All refunds of a payment together cannot exceed that refundable
+    /// amount (refund.exceeds_refundable); POST /v1/payment/refund/calculate shows it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub amount: Option<Money>,
     /// Fund the refund by converting balance: USDT → the payment currency only. Needed when the
@@ -5690,6 +5726,88 @@ impl RefundBatchRequest {
 }
 
 #[derive(Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct RefundCalculation {
+    /// Where the refund would go.
+    pub address: String,
+    /// true — address was omitted and the refund goes to the recorded payer_address (allowed only
+    /// when payer_address_is_refundable = true); false — the address you passed.
+    pub address_is_payer: bool,
+    /// What this refund would send: the amount you passed, or by default the remaining refundable
+    /// amount.
+    pub amount: Money,
+    /// What the buyer paid in total, including the network surcharge.
+    pub amount_paid: Money,
+    /// The Oblodai commission withheld from the refund: the payment's commission when
+    /// commission_bearer is customer, 0 when it is merchant.
+    pub commission: Money,
+    /// Who bears the Oblodai commission on this refund (the store's refund fee setting,
+    /// getRefundFeeConfig): customer — it is deducted from the refund; merchant — it is not.
+    pub commission_bearer: RefundCommissionBearer,
+    /// The refund coin — the one the buyer paid with.
+    pub currency: String,
+    /// The network the refund would be sent on (canonical).
+    pub network: String,
+    /// The most that all refunds of this payment together may send: amount_paid minus surcharge
+    /// (minus commission when commission_bearer is customer), never more than credited.
+    pub refundable: Money,
+    /// Already refunded (live and completed refunds; failed and cancelled ones do not count).
+    pub refunded: Money,
+    /// refundable minus refunded: what can still be refunded before this refund.
+    pub remaining: Money,
+    /// The payer's network surcharge inside amount_paid: the cost of accepting the deposit, never
+    /// refunded from your balance.
+    pub surcharge: Money,
+    /// The payment id.
+    pub uuid: String,
+    /// What this payment credited to your balance; null — cannot be reconstructed (a legacy
+    /// payment).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credited: Option<Money>,
+    /// How much USDT the funding conversion would debit, at the current rate plus the conversion
+    /// spread; it re-prices at execution. Present only with from_currency.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_amount: Option<Money>,
+    /// The currency whose conversion would fund the refund (from_currency); present only then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub funded_by: Option<String>,
+    /// Your order_id of the payment; null if it has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub order_id: Option<String>,
+    /// USDT per 1 unit of currency used for from_amount. Present only with from_currency.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate: Option<Money>,
+    /// Fields this SDK version does not know yet; sent back as they are.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+impl std::fmt::Debug for RefundCalculation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = ModelDebug::new(f, "RefundCalculation");
+        d.field("address", &self.address);
+        d.field("address_is_payer", &self.address_is_payer);
+        d.field("amount", &self.amount);
+        d.field("amount_paid", &self.amount_paid);
+        d.field("commission", &self.commission);
+        d.field("commission_bearer", &self.commission_bearer);
+        d.field("currency", &self.currency);
+        d.field("network", &self.network);
+        d.field("refundable", &self.refundable);
+        d.field("refunded", &self.refunded);
+        d.field("remaining", &self.remaining);
+        d.field("surcharge", &self.surcharge);
+        d.field("uuid", &self.uuid);
+        d.field("credited", &self.credited);
+        d.field("from_amount", &self.from_amount);
+        d.field("funded_by", &self.funded_by);
+        d.field("order_id", &self.order_id);
+        d.field("rate", &self.rate);
+        d.extra(&self.extra);
+        d.finish()
+    }
+}
+
+#[derive(Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct RefundFeeResult {
     /// true — the project set this setting itself; false — the gateway default applies.
     pub configured: bool,
@@ -5716,10 +5834,12 @@ pub struct RefundRequest {
     /// Bitcoin/UTXO.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub address: Option<String>,
-    /// The amount to refund, in the payment coin; overrides the default. Without it the refund is
-    /// the amount paid minus the payer's network surcharge and — when the store's refund fee
-    /// setting (getRefundFeeConfig) puts the commission on the customer — minus the Oblodai
-    /// commission too, never more than was credited to your balance for this payment.
+    /// The amount to refund, in the payment coin. Without it the refund is what is still
+    /// refundable: the amount paid minus the payer's network surcharge and — when the store's
+    /// refund fee setting (getRefundFeeConfig) puts the commission on the customer — minus the
+    /// Oblodai commission too, never more than was credited to your balance for this payment, less
+    /// the refunds already made. All refunds of a payment together cannot exceed that refundable
+    /// amount (refund.exceeds_refundable); POST /v1/payment/refund/calculate shows it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub amount: Option<Money>,
     /// Fund the refund by converting balance: USDT → the payment currency only. Needed when the
@@ -7052,7 +7172,7 @@ impl std::fmt::Debug for SummaryAmount {
 pub struct SummaryRequest {
     /// Start of the window, inclusive (RFC 3339).
     pub from: String,
-    /// End of the window, exclusive (RFC 3339).
+    /// End of the window, exclusive (RFC 3339); must be after from, otherwise summary.bad_window.
     pub to: String,
     /// Fields this SDK version does not know yet; sent back as they are.
     #[serde(flatten)]
@@ -7249,6 +7369,8 @@ pub struct TransferBatchItem {
     /// Currency code (cryptocurrency).
     pub currency: String,
     /// Idempotency key: a retry with the same order_id is a no-op; required in a transfer batch.
+    /// Always pass it (or an Idempotency-Key header, which the SDKs send for you): without either,
+    /// retrying the request after a network timeout creates a second transfer.
     pub order_id: String,
     /// The recipient's platform user id (a UUID, not a username); a username is resolved to an id
     /// via the dashboard's public profile /public/users/{username}.
@@ -7310,8 +7432,9 @@ pub struct TransferRequest {
     pub amount: Money,
     /// Currency code (cryptocurrency).
     pub currency: String,
-    /// Idempotency key: a retry with the same order_id is a no-op. Always pass it, otherwise
-    /// retrying the request after a network timeout creates a second transfer.
+    /// Idempotency key: a retry with the same order_id is a no-op. Always pass it (or an
+    /// Idempotency-Key header, which the SDKs send for you): without either, retrying the request
+    /// after a network timeout creates a second transfer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub order_id: Option<String>,
     /// Fields this SDK version does not know yet; sent back as they are.
@@ -7414,6 +7537,8 @@ pub struct TransferToUserRequest {
     /// via the dashboard's public profile /public/users/{username}.
     pub to_user_id: String,
     /// Idempotency key: a retry with the same order_id is a no-op; required in a transfer batch.
+    /// Always pass it (or an Idempotency-Key header, which the SDKs send for you): without either,
+    /// retrying the request after a network timeout creates a second transfer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub order_id: Option<String>,
     /// Fields this SDK version does not know yet; sent back as they are.

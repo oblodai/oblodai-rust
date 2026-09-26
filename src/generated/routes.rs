@@ -212,6 +212,19 @@ pub static REFUND_PAYMENT: RouteSpec = RouteSpec {
     body_idempotency_key: false,
 };
 
+/// `POST /v1/payment/refund/calculate` (`calculateRefund`).
+pub static CALCULATE_REFUND: RouteSpec = RouteSpec {
+    operation_id: "calculateRefund",
+    method: Method::Post,
+    path: "/v1/payment/refund/calculate",
+    auth: RouteAuth::Key,
+    idempotent: false,
+    safe: true,
+    bare: false,
+    list_kind: None,
+    body_idempotency_key: false,
+};
+
 /// `POST /v1/wallet/blocked-address-refund` (`refundBlockedWallet`).
 pub static REFUND_BLOCKED_WALLET: RouteSpec = RouteSpec {
     operation_id: "refundBlockedWallet",
@@ -1168,7 +1181,7 @@ pub static GET_REFERRAL_INFO: RouteSpec = RouteSpec {
     path: "/v1/referral/info",
     auth: RouteAuth::Key,
     idempotent: false,
-    safe: false,
+    safe: true,
     bare: false,
     list_kind: None,
     body_idempotency_key: false,
@@ -1246,7 +1259,7 @@ pub static GET_PAYOUT_LINK_CHEQUE: RouteSpec = RouteSpec {
     path: "/v1/payout/link/cheque",
     auth: RouteAuth::Key,
     idempotent: false,
-    safe: false,
+    safe: true,
     bare: true,
     list_kind: None,
     body_idempotency_key: false,
@@ -1621,6 +1634,7 @@ pub static ROUTES: &[&RouteSpec] = &[
     &GET_PAYMENT_LINK,
     &TOGGLE_PAYMENT_LINK,
     &REFUND_PAYMENT,
+    &CALCULATE_REFUND,
     &REFUND_BLOCKED_WALLET,
     &CREATE_PAYOUT,
     &CREATE_MASS_PAYOUT,
