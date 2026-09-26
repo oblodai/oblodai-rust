@@ -226,6 +226,33 @@ async fn readme_raw_and_hooks(client: &Client) -> oblodai::Result<()> {
     Ok(())
 }
 
+async fn readme_invoke(client: &Client) -> oblodai::Result<()> {
+    // @snippet readme_invoke
+    use oblodai::InvokeInput;
+    use serde_json::json;
+
+    // an operation by its OpenAPI operationId, JSON in and out; call options work as usual
+    let invoice = client
+        .invoke(
+            "createPayment",
+            InvokeInput {
+                body: Some(json!({"amount": "25", "currency": "USDT"})),
+                ..Default::default()
+            },
+        )?
+        .idempotency_key("order-1001")
+        .await?;
+    println!("{}", invoice["url"]);
+
+    // a paged operation is `invoke_list`, a document (PDF/CSV) is `invoke_file`
+    let first = client
+        .invoke_list("listPaymentHistory", InvokeInput::default())?
+        .await?;
+    println!("{} of {}", first.items.len(), first.paginate.total);
+    // @end
+    Ok(())
+}
+
 async fn readme_sandbox(client: &Client, invoice_uuid: String) -> oblodai::Result<()> {
     // @snippet readme_sandbox
     use oblodai::generated::resources::SandboxListWebhooksQuery;
@@ -376,6 +403,7 @@ async fn the_snippets_run() {
     readme_sandbox(&client, "x".into()).await.unwrap();
     readme_lists(&client).await.unwrap();
     readme_raw_and_hooks(&client).await.unwrap();
+    readme_invoke(&client).await.unwrap();
     readme_jobs(&client).await.unwrap();
 
     let refused = readme_errors(

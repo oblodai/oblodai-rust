@@ -15,6 +15,13 @@ All notable changes to this crate are recorded here. The format follows
 - Every method's documentation names the minimum team role a CLI key needs to call it;
   money-out operations (payouts, refunds, transfers, auto-withdrawal, split rules) take only the
   store owner's own CLI key.
+- `Client::invoke`, `invoke_list` and `invoke_file` (and the blocking mirrors): call any operation
+  by its OpenAPI `operationId` with an `InvokeInput` (path, query, JSON body), through the same
+  transport as the typed methods; the answer is raw JSON, a pager of raw JSON, or a `FileResult`.
+  An unknown id is `sdk.unknown_operation`, the wrong method for the route's kind
+  `sdk.wrong_invoke` — both config errors before the network.
+- `RouteSpec::body_idempotency_key`: the route takes the idempotency key as a body field (the
+  sandbox faucet), generated from the contract.
 
 ## [2.0.0] — 2026-09-25
 

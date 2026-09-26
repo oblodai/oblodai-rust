@@ -14,6 +14,7 @@ pub static CREATE_PAYMENT: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/payment/info` (`getPaymentInfo`).
@@ -26,6 +27,7 @@ pub static GET_PAYMENT_INFO: RouteSpec = RouteSpec {
     safe: true,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/payment/qr` (`getPaymentQr`).
@@ -38,6 +40,7 @@ pub static GET_PAYMENT_QR: RouteSpec = RouteSpec {
     safe: true,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/payment/history` (`listPaymentHistory`).
@@ -50,6 +53,7 @@ pub static LIST_PAYMENT_HISTORY: RouteSpec = RouteSpec {
     safe: true,
     bare: false,
     list_kind: Some(ListKind::Paged),
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/payment/services` (`listPaymentServices`).
@@ -62,6 +66,7 @@ pub static LIST_PAYMENT_SERVICES: RouteSpec = RouteSpec {
     safe: true,
     bare: false,
     list_kind: Some(ListKind::Paged),
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/payment/cancel` (`cancelPayment`).
@@ -74,6 +79,7 @@ pub static CANCEL_PAYMENT: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/payment/send-email` (`sendPaymentEmail`).
@@ -86,6 +92,7 @@ pub static SEND_PAYMENT_EMAIL: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/checkout-config/set` (`setCheckoutConfig`).
@@ -98,6 +105,7 @@ pub static SET_CHECKOUT_CONFIG: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/checkout-config/get` (`getCheckoutConfig`).
@@ -110,6 +118,7 @@ pub static GET_CHECKOUT_CONFIG: RouteSpec = RouteSpec {
     safe: true,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/payment/aml-links` (`getPaymentAmlLinks`).
@@ -122,6 +131,7 @@ pub static GET_PAYMENT_AML_LINKS: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/payment/resolve` (`resolvePayment`).
@@ -134,6 +144,7 @@ pub static RESOLVE_PAYMENT: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/payment/link` (`createPaymentLink`).
@@ -146,6 +157,7 @@ pub static CREATE_PAYMENT_LINK: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/payment/link/list` (`listPaymentLinks`).
@@ -158,6 +170,7 @@ pub static LIST_PAYMENT_LINKS: RouteSpec = RouteSpec {
     safe: true,
     bare: false,
     list_kind: Some(ListKind::Paged),
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/payment/link/info` (`getPaymentLink`).
@@ -170,6 +183,7 @@ pub static GET_PAYMENT_LINK: RouteSpec = RouteSpec {
     safe: true,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/payment/link/toggle` (`togglePaymentLink`).
@@ -182,6 +196,7 @@ pub static TOGGLE_PAYMENT_LINK: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/payment/refund` (`refundPayment`).
@@ -194,6 +209,7 @@ pub static REFUND_PAYMENT: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/wallet/blocked-address-refund` (`refundBlockedWallet`).
@@ -206,6 +222,7 @@ pub static REFUND_BLOCKED_WALLET: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/payout` (`createPayout`).
@@ -218,6 +235,7 @@ pub static CREATE_PAYOUT: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/payout/mass` (`createMassPayout`).
@@ -230,6 +248,7 @@ pub static CREATE_MASS_PAYOUT: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/payout/info` (`getPayoutInfo`).
@@ -242,6 +261,7 @@ pub static GET_PAYOUT_INFO: RouteSpec = RouteSpec {
     safe: true,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/payout/history` (`listPayoutHistory`).
@@ -254,6 +274,7 @@ pub static LIST_PAYOUT_HISTORY: RouteSpec = RouteSpec {
     safe: true,
     bare: false,
     list_kind: Some(ListKind::Paged),
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/payout/calculate` (`calculatePayout`).
@@ -266,6 +287,7 @@ pub static CALCULATE_PAYOUT: RouteSpec = RouteSpec {
     safe: true,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/payout/validate` (`validatePayout`).
@@ -278,6 +300,7 @@ pub static VALIDATE_PAYOUT: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/payout/cancel` (`cancelPayout`).
@@ -290,6 +313,7 @@ pub static CANCEL_PAYOUT: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/payout/approve` (`approvePayout`).
@@ -302,6 +326,7 @@ pub static APPROVE_PAYOUT: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/payout/services` (`listPayoutServices`).
@@ -314,6 +339,7 @@ pub static LIST_PAYOUT_SERVICES: RouteSpec = RouteSpec {
     safe: true,
     bare: false,
     list_kind: Some(ListKind::Paged),
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/transfer/to-personal` (`transferToPersonal`).
@@ -326,6 +352,7 @@ pub static TRANSFER_TO_PERSONAL: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/transfer/to-user` (`transferToUser`).
@@ -338,6 +365,7 @@ pub static TRANSFER_TO_USER: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/transfer/batch` (`createTransferBatch`).
@@ -350,6 +378,7 @@ pub static CREATE_TRANSFER_BATCH: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/payout/link` (`createPayoutLink`).
@@ -362,6 +391,7 @@ pub static CREATE_PAYOUT_LINK: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/payout/link/batch` (`createPayoutLinkBatch`).
@@ -374,6 +404,7 @@ pub static CREATE_PAYOUT_LINK_BATCH: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/payout/link/list` (`listPayoutLinks`).
@@ -386,6 +417,7 @@ pub static LIST_PAYOUT_LINKS: RouteSpec = RouteSpec {
     safe: true,
     bare: false,
     list_kind: Some(ListKind::Paged),
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/payout/link/info` (`getPayoutLink`).
@@ -398,6 +430,7 @@ pub static GET_PAYOUT_LINK: RouteSpec = RouteSpec {
     safe: true,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/payout/link/cancel` (`cancelPayoutLink`).
@@ -410,6 +443,7 @@ pub static CANCEL_PAYOUT_LINK: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `GET /v1/claim/{token}` (`getPayoutClaim`).
@@ -422,6 +456,7 @@ pub static GET_PAYOUT_CLAIM: RouteSpec = RouteSpec {
     safe: true,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/claim/{token}` (`claimPayout`).
@@ -434,6 +469,7 @@ pub static CLAIM_PAYOUT: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/payment/batch` (`createPaymentBatch`).
@@ -446,6 +482,7 @@ pub static CREATE_PAYMENT_BATCH: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/refund/batch` (`createRefundBatch`).
@@ -458,6 +495,7 @@ pub static CREATE_REFUND_BATCH: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/payout/batch` (`createPayoutBatch`).
@@ -470,6 +508,7 @@ pub static CREATE_PAYOUT_BATCH: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/batch/info` (`getBatchInfo`).
@@ -482,6 +521,7 @@ pub static GET_BATCH_INFO: RouteSpec = RouteSpec {
     safe: true,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/split/rule` (`createSplitRule`).
@@ -494,6 +534,7 @@ pub static CREATE_SPLIT_RULE: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/split/rule/list` (`listSplitRules`).
@@ -506,6 +547,7 @@ pub static LIST_SPLIT_RULES: RouteSpec = RouteSpec {
     safe: true,
     bare: false,
     list_kind: Some(ListKind::Paged),
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/split/rule/delete` (`deleteSplitRule`).
@@ -518,6 +560,7 @@ pub static DELETE_SPLIT_RULE: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/split/config/set` (`setSplitConfig`).
@@ -530,6 +573,7 @@ pub static SET_SPLIT_CONFIG: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/split/config/get` (`getSplitConfig`).
@@ -542,6 +586,7 @@ pub static GET_SPLIT_CONFIG: RouteSpec = RouteSpec {
     safe: true,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/split/recipient/optin` (`setSplitRecipientOptIn`).
@@ -554,6 +599,7 @@ pub static SET_SPLIT_RECIPIENT_OPT_IN: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/split/recipient/optin/get` (`getSplitRecipientOptIn`).
@@ -566,6 +612,7 @@ pub static GET_SPLIT_RECIPIENT_OPT_IN: RouteSpec = RouteSpec {
     safe: true,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/wallet` (`createWallet`).
@@ -578,6 +625,7 @@ pub static CREATE_WALLET: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/wallet/block` (`blockWallet`).
@@ -590,6 +638,7 @@ pub static BLOCK_WALLET: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/wallet/qr` (`getWalletQr`).
@@ -602,6 +651,7 @@ pub static GET_WALLET_QR: RouteSpec = RouteSpec {
     safe: true,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/balance` (`getBalance`).
@@ -614,6 +664,7 @@ pub static GET_BALANCE: RouteSpec = RouteSpec {
     safe: true,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/summary` (`getSummary`).
@@ -626,6 +677,7 @@ pub static GET_SUMMARY: RouteSpec = RouteSpec {
     safe: true,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/exchange-rate/list` (`listExchangeRates`).
@@ -638,6 +690,7 @@ pub static LIST_EXCHANGE_RATES: RouteSpec = RouteSpec {
     safe: true,
     bare: false,
     list_kind: Some(ListKind::Paged),
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/payment/resend` (`resendPaymentWebhook`).
@@ -650,6 +703,7 @@ pub static RESEND_PAYMENT_WEBHOOK: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/webhooks` (`registerWebhook`).
@@ -662,6 +716,7 @@ pub static REGISTER_WEBHOOK: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/webhooks/deliveries` (`listWebhookDeliveries`).
@@ -674,6 +729,7 @@ pub static LIST_WEBHOOK_DELIVERIES: RouteSpec = RouteSpec {
     safe: true,
     bare: false,
     list_kind: Some(ListKind::Paged),
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/webhooks/deliveries/requeue` (`requeueWebhookDelivery`).
@@ -686,6 +742,7 @@ pub static REQUEUE_WEBHOOK_DELIVERY: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/payment/testing-webhook` (`sendLegacyTestWebhook`).
@@ -698,6 +755,7 @@ pub static SEND_LEGACY_TEST_WEBHOOK: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/test-webhook/payment` (`sendTestPaymentWebhook`).
@@ -710,6 +768,7 @@ pub static SEND_TEST_PAYMENT_WEBHOOK: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/test-webhook/wallet` (`sendTestWalletWebhook`).
@@ -722,6 +781,7 @@ pub static SEND_TEST_WALLET_WEBHOOK: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/test-webhook/payout` (`sendTestPayoutWebhook`).
@@ -734,6 +794,7 @@ pub static SEND_TEST_PAYOUT_WEBHOOK: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/test-webhook/conversion` (`sendTestConversionWebhook`).
@@ -746,6 +807,7 @@ pub static SEND_TEST_CONVERSION_WEBHOOK: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/webhooks/rotate-secret` (`rotateWebhookSecret`).
@@ -758,6 +820,7 @@ pub static ROTATE_WEBHOOK_SECRET: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/webhooks/active` (`setWebhookActive`).
@@ -770,6 +833,7 @@ pub static SET_WEBHOOK_ACTIVE: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/payment/accuracy/set` (`setAccuracy`).
@@ -782,6 +846,7 @@ pub static SET_ACCURACY: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/payment/accuracy/get` (`getAccuracy`).
@@ -794,6 +859,7 @@ pub static GET_ACCURACY: RouteSpec = RouteSpec {
     safe: true,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/payment/autorefund/set` (`setAutoRefund`).
@@ -806,6 +872,7 @@ pub static SET_AUTO_REFUND: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/payment/autorefund/get` (`getAutoRefund`).
@@ -818,6 +885,7 @@ pub static GET_AUTO_REFUND: RouteSpec = RouteSpec {
     safe: true,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/payment/discount/set` (`setDiscount`).
@@ -830,6 +898,7 @@ pub static SET_DISCOUNT: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/payment/discount/list` (`listDiscounts`).
@@ -842,6 +911,7 @@ pub static LIST_DISCOUNTS: RouteSpec = RouteSpec {
     safe: true,
     bare: false,
     list_kind: Some(ListKind::Paged),
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/payment/api-log` (`listApiLog`).
@@ -854,6 +924,7 @@ pub static LIST_API_LOG: RouteSpec = RouteSpec {
     safe: true,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/payment/autoconvert/get` (`getAutoConvert`).
@@ -866,6 +937,7 @@ pub static GET_AUTO_CONVERT: RouteSpec = RouteSpec {
     safe: true,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/payment/autoconvert/set` (`setAutoConvert`).
@@ -878,6 +950,7 @@ pub static SET_AUTO_CONVERT: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/payment/accepted/set` (`setAcceptedCurrencies`).
@@ -890,6 +963,7 @@ pub static SET_ACCEPTED_CURRENCIES: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/payment/accepted/list` (`listAcceptedCurrencies`).
@@ -902,6 +976,7 @@ pub static LIST_ACCEPTED_CURRENCIES: RouteSpec = RouteSpec {
     safe: true,
     bare: false,
     list_kind: Some(ListKind::Paged),
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/payout/fee-config/set` (`setPayoutFeeConfig`).
@@ -914,6 +989,7 @@ pub static SET_PAYOUT_FEE_CONFIG: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/payout/fee-config/get` (`getPayoutFeeConfig`).
@@ -926,6 +1002,7 @@ pub static GET_PAYOUT_FEE_CONFIG: RouteSpec = RouteSpec {
     safe: true,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/payout/refund-fee-config/set` (`setRefundFeeConfig`).
@@ -938,6 +1015,7 @@ pub static SET_REFUND_FEE_CONFIG: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/payout/refund-fee-config/get` (`getRefundFeeConfig`).
@@ -950,6 +1028,7 @@ pub static GET_REFUND_FEE_CONFIG: RouteSpec = RouteSpec {
     safe: true,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/payment/fee-config/set` (`setPaymentFeeConfig`).
@@ -962,6 +1041,7 @@ pub static SET_PAYMENT_FEE_CONFIG: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/payment/fee-config/get` (`getPaymentFeeConfig`).
@@ -974,6 +1054,7 @@ pub static GET_PAYMENT_FEE_CONFIG: RouteSpec = RouteSpec {
     safe: true,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/auto-withdraw/set` (`setAutoWithdrawRule`).
@@ -986,6 +1067,7 @@ pub static SET_AUTO_WITHDRAW_RULE: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/auto-withdraw/list` (`listAutoWithdrawRules`).
@@ -998,6 +1080,7 @@ pub static LIST_AUTO_WITHDRAW_RULES: RouteSpec = RouteSpec {
     safe: true,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/auto-withdraw/delete` (`deleteAutoWithdrawRule`).
@@ -1010,6 +1093,7 @@ pub static DELETE_AUTO_WITHDRAW_RULE: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/vrcs` (`configureVrcs`).
@@ -1022,6 +1106,7 @@ pub static CONFIGURE_VRCS: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/api-allowlist/list` (`listApiAllowlist`).
@@ -1034,6 +1119,7 @@ pub static LIST_API_ALLOWLIST: RouteSpec = RouteSpec {
     safe: true,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/api-allowlist/add` (`addApiAllowlistEntry`).
@@ -1046,6 +1132,7 @@ pub static ADD_API_ALLOWLIST_ENTRY: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/api-allowlist/remove` (`removeApiAllowlistEntry`).
@@ -1058,6 +1145,7 @@ pub static REMOVE_API_ALLOWLIST_ENTRY: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/api-allowlist/enable` (`setApiAllowlistEnabled`).
@@ -1070,6 +1158,7 @@ pub static SET_API_ALLOWLIST_ENABLED: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/referral/info` (`getReferralInfo`).
@@ -1082,6 +1171,7 @@ pub static GET_REFERRAL_INFO: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `GET /v1/documents/{kind}/{id}` (`getSignedDocument`).
@@ -1094,6 +1184,7 @@ pub static GET_SIGNED_DOCUMENT: RouteSpec = RouteSpec {
     safe: true,
     bare: true,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `GET /v1/documents/balance` (`getBalanceDocument`).
@@ -1106,6 +1197,7 @@ pub static GET_BALANCE_DOCUMENT: RouteSpec = RouteSpec {
     safe: true,
     bare: true,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `GET /v1/documents/fees` (`getFeesDocument`).
@@ -1118,6 +1210,7 @@ pub static GET_FEES_DOCUMENT: RouteSpec = RouteSpec {
     safe: true,
     bare: true,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `GET /v1/documents/ledger` (`getLedgerDocument`).
@@ -1130,6 +1223,7 @@ pub static GET_LEDGER_DOCUMENT: RouteSpec = RouteSpec {
     safe: true,
     bare: true,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `GET /v1/documents/split` (`getSplitDocument`).
@@ -1142,6 +1236,7 @@ pub static GET_SPLIT_DOCUMENT: RouteSpec = RouteSpec {
     safe: true,
     bare: true,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/payout/link/cheque` (`getPayoutLinkCheque`).
@@ -1154,6 +1249,7 @@ pub static GET_PAYOUT_LINK_CHEQUE: RouteSpec = RouteSpec {
     safe: false,
     bare: true,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `GET /v1/documents/statement` (`getStatementDocument`).
@@ -1166,6 +1262,7 @@ pub static GET_STATEMENT_DOCUMENT: RouteSpec = RouteSpec {
     safe: true,
     bare: true,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `GET /v1/documents/batch` (`getBatchDocument`).
@@ -1178,6 +1275,7 @@ pub static GET_BATCH_DOCUMENT: RouteSpec = RouteSpec {
     safe: true,
     bare: true,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `GET /v1/documents/link` (`getPaymentLinkDocument`).
@@ -1190,6 +1288,7 @@ pub static GET_PAYMENT_LINK_DOCUMENT: RouteSpec = RouteSpec {
     safe: true,
     bare: true,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `GET /v1/documents/wallet/statement` (`getWalletStatementDocument`).
@@ -1202,6 +1301,7 @@ pub static GET_WALLET_STATEMENT_DOCUMENT: RouteSpec = RouteSpec {
     safe: true,
     bare: true,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `GET /v1/documents/referrals` (`getReferralsDocument`).
@@ -1214,6 +1314,7 @@ pub static GET_REFERRALS_DOCUMENT: RouteSpec = RouteSpec {
     safe: true,
     bare: true,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/documents/jobs` (`createDocumentJob`).
@@ -1226,6 +1327,7 @@ pub static CREATE_DOCUMENT_JOB: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/documents/jobs/info` (`getDocumentJob`).
@@ -1238,6 +1340,7 @@ pub static GET_DOCUMENT_JOB: RouteSpec = RouteSpec {
     safe: true,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `GET /v1/documents/jobs/file` (`downloadDocumentJobFile`).
@@ -1250,6 +1353,7 @@ pub static DOWNLOAD_DOCUMENT_JOB_FILE: RouteSpec = RouteSpec {
     safe: true,
     bare: true,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `GET /v1/aml/{token}` (`getSourceOfFundsForm`).
@@ -1262,6 +1366,7 @@ pub static GET_SOURCE_OF_FUNDS_FORM: RouteSpec = RouteSpec {
     safe: true,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/aml/{token}` (`submitSourceOfFunds`).
@@ -1274,6 +1379,7 @@ pub static SUBMIT_SOURCE_OF_FUNDS: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `GET /v1/link/{id}` (`getPublicPaymentLink`).
@@ -1286,6 +1392,7 @@ pub static GET_PUBLIC_PAYMENT_LINK: RouteSpec = RouteSpec {
     safe: true,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/link/{id}/checkout` (`checkoutPaymentLink`).
@@ -1298,6 +1405,7 @@ pub static CHECKOUT_PAYMENT_LINK: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `GET /v1/currencies` (`listCurrencies`).
@@ -1310,6 +1418,7 @@ pub static LIST_CURRENCIES: RouteSpec = RouteSpec {
     safe: true,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `GET /v1/pay/{id}` (`getCheckout`).
@@ -1322,6 +1431,7 @@ pub static GET_CHECKOUT: RouteSpec = RouteSpec {
     safe: true,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/pay/{id}/select` (`selectCheckoutMethod`).
@@ -1334,6 +1444,7 @@ pub static SELECT_CHECKOUT_METHOD: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/pay/{id}/onramp` (`startCheckoutOnramp`).
@@ -1346,6 +1457,7 @@ pub static START_CHECKOUT_ONRAMP: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `GET /v1/pay/{id}/onramp` (`getCheckoutOnramp`).
@@ -1358,6 +1470,7 @@ pub static GET_CHECKOUT_ONRAMP: RouteSpec = RouteSpec {
     safe: true,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `GET /v1/pay/{id}/qr` (`getCheckoutQr`).
@@ -1370,6 +1483,7 @@ pub static GET_CHECKOUT_QR: RouteSpec = RouteSpec {
     safe: true,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/merchants/{id}/sandbox` (`onboardSandboxStore`).
@@ -1382,6 +1496,7 @@ pub static ONBOARD_SANDBOX_STORE: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/sandbox/faucet` (`sandboxFaucet`).
@@ -1394,6 +1509,7 @@ pub static SANDBOX_FAUCET: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: true,
 };
 
 /// `POST /v1/sandbox/deposit` (`sandboxSimulateDeposit`).
@@ -1406,6 +1522,7 @@ pub static SANDBOX_SIMULATE_DEPOSIT: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/sandbox/reset` (`sandboxReset`).
@@ -1418,6 +1535,7 @@ pub static SANDBOX_RESET: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `GET /v1/sandbox/webhooks` (`sandboxListWebhooks`).
@@ -1430,6 +1548,7 @@ pub static SANDBOX_LIST_WEBHOOKS: RouteSpec = RouteSpec {
     safe: true,
     bare: false,
     list_kind: Some(ListKind::Paged),
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/sandbox/webhooks/replay` (`sandboxReplayWebhook`).
@@ -1442,6 +1561,7 @@ pub static SANDBOX_REPLAY_WEBHOOK: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/cli/device` (`startCliLogin`).
@@ -1454,6 +1574,7 @@ pub static START_CLI_LOGIN: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/cli/token` (`pollCliLogin`).
@@ -1466,6 +1587,7 @@ pub static POLL_CLI_LOGIN: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// `POST /v1/cli/logout` (`logoutCliLogin`).
@@ -1478,6 +1600,7 @@ pub static LOGOUT_CLI_LOGIN: RouteSpec = RouteSpec {
     safe: false,
     bare: false,
     list_kind: None,
+    body_idempotency_key: false,
 };
 
 /// Every route, in the order of the contract.

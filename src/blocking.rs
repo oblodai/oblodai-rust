@@ -60,6 +60,8 @@ impl Client {
     }
 
     crate::generated::resource_accessors!(BlockingTransport);
+
+    crate::invoke::invoke_methods!(BlockingTransport);
 }
 
 impl ClientBuilder {

@@ -87,6 +87,8 @@ pub mod core;
 pub mod error;
 pub mod generated;
 pub mod helpers;
+#[cfg(feature = "reqwest-client")]
+pub mod invoke;
 pub mod lro;
 pub mod resources;
 pub mod webhooks;
@@ -98,6 +100,8 @@ pub mod blocking;
 pub use client::Client;
 pub use config::{ClientBuilder, ClientOptions, DEFAULT_BASE_URL, SDK_VERSION};
 pub use error::{Error, ErrorDetail, ErrorKind, Result};
+#[cfg(feature = "reqwest-client")]
+pub use invoke::InvokeInput;
 
 pub use generated::{enums, models, routes};
 

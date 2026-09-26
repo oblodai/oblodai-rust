@@ -341,6 +341,38 @@ let traced = client.with_options(
 traced.account().get_balance().await?;
 ```
 
+### Вызов любой операции по id
+
+Для инструментов, которые ведёт контракт OpenAPI, а не типизированные модели (MCP-сервер, общий
+прокси): `invoke`, `invoke_list` и `invoke_file` принимают `operationId` и JSON и идут через тот же
+транспорт, что и типизированные методы, — подпись, идемпотентность, повторы, ошибки. Публичные
+операции работают на клиенте без ключа. Незнакомый этой версии id — `sdk.unknown_operation`, метод
+не того вида — `sdk.wrong_invoke`; обе ошибки — до сети.
+
+```rust
+use oblodai::InvokeInput;
+use serde_json::json;
+
+// an operation by its OpenAPI operationId, JSON in and out; call options work as usual
+let invoice = client
+    .invoke(
+        "createPayment",
+        InvokeInput {
+            body: Some(json!({"amount": "25", "currency": "USDT"})),
+            ..Default::default()
+        },
+    )?
+    .idempotency_key("order-1001")
+    .await?;
+println!("{}", invoice["url"]);
+
+// a paged operation is `invoke_list`, a document (PDF/CSV) is `invoke_file`
+let first = client
+    .invoke_list("listPaymentHistory", InvokeInput::default())?
+    .await?;
+println!("{} of {}", first.items.len(), first.paginate.total);
+```
+
 ### Статусы и суммы
 
 - Платёж: `select → created → confirm_check → paid | paid_over | wrong_amount | expired | cancelled`

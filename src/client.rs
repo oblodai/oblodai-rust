@@ -76,6 +76,8 @@ impl Client {
     }
 
     crate::generated::resource_accessors!(Transport);
+
+    crate::invoke::invoke_methods!(Transport);
 }
 
 impl ClientBuilder {

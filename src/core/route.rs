@@ -87,6 +87,9 @@ pub struct RouteSpec {
     /// Outside the JSON envelope: the answer is a file (PDF/CSV).
     pub bare: bool,
     pub list_kind: Option<ListKind>,
+    /// The call option `idempotency_key` fills the body field of that name instead of a header
+    /// (the route is not deduplicated by the gateway, the operation itself takes the key).
+    pub body_idempotency_key: bool,
 }
 
 impl std::fmt::Display for RouteSpec {

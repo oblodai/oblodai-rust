@@ -140,6 +140,18 @@ impl Call {
         }
     }
 
+    /// A body that is JSON already (`Client::invoke`); `Null` is sent as no body.
+    #[cfg(feature = "reqwest-client")]
+    pub(crate) fn json_body(&mut self, body: Value) {
+        self.body = Some(body);
+    }
+
+    /// Query parameters that are pairs already (`Client::invoke`), in the caller's order.
+    #[cfg(feature = "reqwest-client")]
+    pub(crate) fn query_pairs(&mut self, pairs: Vec<(String, String)>) {
+        self.query.extend(pairs);
+    }
+
     /// Ruling 10: the call option `idempotency_key` fills the body field of that name.
     pub(crate) fn idempotency_key_in_body(&mut self) {
         self.idempotency_key_in_body = true;
