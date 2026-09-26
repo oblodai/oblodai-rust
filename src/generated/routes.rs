@@ -1468,9 +1468,9 @@ pub static POLL_CLI_LOGIN: RouteSpec = RouteSpec {
     list_kind: None,
 };
 
-/// `POST /v1/cli/logout` (`logoutCli`).
-pub static LOGOUT_CLI: RouteSpec = RouteSpec {
-    operation_id: "logoutCli",
+/// `POST /v1/cli/logout` (`logoutCliLogin`).
+pub static LOGOUT_CLI_LOGIN: RouteSpec = RouteSpec {
+    operation_id: "logoutCliLogin",
     method: Method::Post,
     path: "/v1/cli/logout",
     auth: RouteAuth::Key,
@@ -1604,7 +1604,7 @@ pub static ROUTES: &[&RouteSpec] = &[
     &SANDBOX_REPLAY_WEBHOOK,
     &START_CLI_LOGIN,
     &POLL_CLI_LOGIN,
-    &LOGOUT_CLI,
+    &LOGOUT_CLI_LOGIN,
 ];
 
 /// The route of an OpenAPI `operationId`.
