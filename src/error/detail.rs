@@ -3,6 +3,8 @@
 //! One malformed field must never cost the others — least of all `code`, which merchants branch
 //! on, or `retryable`, which is the gateway's own classification of the failure.
 
+use std::collections::BTreeMap;
+
 /// The error envelope as the core writes it.
 ///
 /// Decoded field by field by [`ErrorDetail::from_json`]: one malformed field never costs the
@@ -14,6 +16,9 @@ pub struct ErrorDetail {
     pub code: String,
     pub message: Option<String>,
     pub field: Option<String>,
+    /// Machine-readable facts about the refusal (string values only), keys documented by its
+    /// code; `None` when the core sent none.
+    pub details: Option<BTreeMap<String, String>>,
     pub retryable: Option<bool>,
     pub retry_after: Option<u64>,
     pub request_id: Option<String>,
@@ -69,6 +74,7 @@ impl ErrorDetail {
             code,
             message: str_field(map.get("message")),
             field: str_field(map.get("field")),
+            details: details_field(map.get("details")),
             // Only a literal boolean overrides the status-derived default: a string "false" or a
             // 0 must never be read as the core's classification.
             retryable: map.get("retryable").and_then(serde_json::Value::as_bool),
@@ -81,6 +87,20 @@ impl ErrorDetail {
     /// when nothing else in the object can be trusted.
     pub fn request_id_of(value: &serde_json::Value) -> Option<String> {
         str_field(value.as_object()?.get("request_id"))
+    }
+}
+
+/// The string values of `details`; `None` when it is absent, not an object or has none.
+fn details_field(value: Option<&serde_json::Value>) -> Option<BTreeMap<String, String>> {
+    let out: BTreeMap<String, String> = value?
+        .as_object()?
+        .iter()
+        .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+        .collect();
+    if out.is_empty() {
+        None
+    } else {
+        Some(out)
     }
 }
 

@@ -34,6 +34,30 @@ fn a_float_retry_after_does_not_destroy_the_rest_of_the_envelope() {
 }
 
 #[test]
+fn details_keep_only_string_values() {
+    let body = br#"{"error":{"code":"cli.permission_denied","retryable":false,
+                   "details":{"required_role":"finance","role":"viewer","n":3,"x":null}}}"#;
+    let err = decode_envelope(403, body, None, None).unwrap_err();
+    let details = err.details().expect("details");
+    assert_eq!(details.len(), 2);
+    assert_eq!(details["required_role"], "finance");
+    assert_eq!(details["role"], "viewer");
+    let json = serde_json::to_value(&err).unwrap();
+    assert_eq!(json["details"]["role"], "viewer");
+
+    let list = br#"{"error":{"code":"cli.permission_denied","details":["finance"]}}"#;
+    assert!(decode_envelope(403, list, None, None)
+        .unwrap_err()
+        .details()
+        .is_none());
+    let none = br#"{"error":{"code":"cli.permission_denied"}}"#;
+    assert!(decode_envelope(403, none, None, None)
+        .unwrap_err()
+        .details()
+        .is_none());
+}
+
+#[test]
 fn a_numeric_string_retry_after_is_read_and_other_shapes_are_dropped() {
     let with = |slot: &str| {
         let body = format!(
