@@ -1444,6 +1444,42 @@ pub static SANDBOX_REPLAY_WEBHOOK: RouteSpec = RouteSpec {
     list_kind: None,
 };
 
+/// `POST /v1/cli/device` (`startCliLogin`).
+pub static START_CLI_LOGIN: RouteSpec = RouteSpec {
+    operation_id: "startCliLogin",
+    method: Method::Post,
+    path: "/v1/cli/device",
+    auth: RouteAuth::Public,
+    idempotent: false,
+    safe: false,
+    bare: false,
+    list_kind: None,
+};
+
+/// `POST /v1/cli/token` (`pollCliLogin`).
+pub static POLL_CLI_LOGIN: RouteSpec = RouteSpec {
+    operation_id: "pollCliLogin",
+    method: Method::Post,
+    path: "/v1/cli/token",
+    auth: RouteAuth::Public,
+    idempotent: false,
+    safe: false,
+    bare: false,
+    list_kind: None,
+};
+
+/// `POST /v1/cli/logout` (`logoutCli`).
+pub static LOGOUT_CLI: RouteSpec = RouteSpec {
+    operation_id: "logoutCli",
+    method: Method::Post,
+    path: "/v1/cli/logout",
+    auth: RouteAuth::Key,
+    idempotent: false,
+    safe: false,
+    bare: false,
+    list_kind: None,
+};
+
 /// Every route, in the order of the contract.
 pub static ROUTES: &[&RouteSpec] = &[
     &CREATE_PAYMENT,
@@ -1566,6 +1602,9 @@ pub static ROUTES: &[&RouteSpec] = &[
     &SANDBOX_RESET,
     &SANDBOX_LIST_WEBHOOKS,
     &SANDBOX_REPLAY_WEBHOOK,
+    &START_CLI_LOGIN,
+    &POLL_CLI_LOGIN,
+    &LOGOUT_CLI,
 ];
 
 /// The route of an OpenAPI `operationId`.

@@ -638,7 +638,7 @@ impl From<String> for DocumentJobStatus {
     }
 }
 
-/// Коды ошибок, которыми отвечают операции этого документа.
+/// Error codes returned by the operations of this document.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[non_exhaustive]
 pub enum ErrorCode {
@@ -762,6 +762,26 @@ pub enum ErrorCode {
     CheckoutcfgUrlTooLong,
     #[serde(rename = "cheque.token_required")]
     ChequeTokenRequired,
+    #[serde(rename = "cli.access_denied")]
+    CliAccessDenied,
+    #[serde(rename = "cli.authorization_pending")]
+    CliAuthorizationPending,
+    #[serde(rename = "cli.bad_name")]
+    CliBadName,
+    #[serde(rename = "cli.expired_token")]
+    CliExpiredToken,
+    #[serde(rename = "cli.invalid_device_code")]
+    CliInvalidDeviceCode,
+    #[serde(rename = "cli.not_cli_key")]
+    CliNotCliKey,
+    #[serde(rename = "cli.permission_denied")]
+    CliPermissionDenied,
+    #[serde(rename = "cli.rate_limited")]
+    CliRateLimited,
+    #[serde(rename = "cli.slow_down")]
+    CliSlowDown,
+    #[serde(rename = "cli.unavailable")]
+    CliUnavailable,
     #[serde(rename = "compliance.blocked")]
     ComplianceBlocked,
     #[serde(rename = "compliance.blocked_address")]
@@ -934,8 +954,12 @@ pub enum ErrorCode {
     MerchantBadSignature,
     #[serde(rename = "merchant.email_taken")]
     MerchantEmailTaken,
+    #[serde(rename = "merchant.key_expired")]
+    MerchantKeyExpired,
     #[serde(rename = "merchant.key_mode_mismatch")]
     MerchantKeyModeMismatch,
+    #[serde(rename = "merchant.key_not_found")]
+    MerchantKeyNotFound,
     #[serde(rename = "merchant.no_personal_wallet")]
     MerchantNoPersonalWallet,
     #[serde(rename = "merchant.not_found")]
@@ -1611,6 +1635,16 @@ impl ErrorCode {
             Self::CheckoutcfgDisabled => "checkoutcfg.disabled",
             Self::CheckoutcfgUrlTooLong => "checkoutcfg.url_too_long",
             Self::ChequeTokenRequired => "cheque.token_required",
+            Self::CliAccessDenied => "cli.access_denied",
+            Self::CliAuthorizationPending => "cli.authorization_pending",
+            Self::CliBadName => "cli.bad_name",
+            Self::CliExpiredToken => "cli.expired_token",
+            Self::CliInvalidDeviceCode => "cli.invalid_device_code",
+            Self::CliNotCliKey => "cli.not_cli_key",
+            Self::CliPermissionDenied => "cli.permission_denied",
+            Self::CliRateLimited => "cli.rate_limited",
+            Self::CliSlowDown => "cli.slow_down",
+            Self::CliUnavailable => "cli.unavailable",
             Self::ComplianceBlocked => "compliance.blocked",
             Self::ComplianceBlockedAddress => "compliance.blocked_address",
             Self::ComplianceBlocklistUnavailable => "compliance.blocklist_unavailable",
@@ -1697,7 +1731,9 @@ impl ErrorCode {
             Self::MerchantBadId => "merchant.bad_id",
             Self::MerchantBadSignature => "merchant.bad_signature",
             Self::MerchantEmailTaken => "merchant.email_taken",
+            Self::MerchantKeyExpired => "merchant.key_expired",
             Self::MerchantKeyModeMismatch => "merchant.key_mode_mismatch",
+            Self::MerchantKeyNotFound => "merchant.key_not_found",
             Self::MerchantNoPersonalWallet => "merchant.no_personal_wallet",
             Self::MerchantNotFound => "merchant.not_found",
             Self::MerchantProjectMismatch => "merchant.project_mismatch",
@@ -2081,6 +2117,16 @@ impl From<&str> for ErrorCode {
             "checkoutcfg.disabled" => Self::CheckoutcfgDisabled,
             "checkoutcfg.url_too_long" => Self::CheckoutcfgUrlTooLong,
             "cheque.token_required" => Self::ChequeTokenRequired,
+            "cli.access_denied" => Self::CliAccessDenied,
+            "cli.authorization_pending" => Self::CliAuthorizationPending,
+            "cli.bad_name" => Self::CliBadName,
+            "cli.expired_token" => Self::CliExpiredToken,
+            "cli.invalid_device_code" => Self::CliInvalidDeviceCode,
+            "cli.not_cli_key" => Self::CliNotCliKey,
+            "cli.permission_denied" => Self::CliPermissionDenied,
+            "cli.rate_limited" => Self::CliRateLimited,
+            "cli.slow_down" => Self::CliSlowDown,
+            "cli.unavailable" => Self::CliUnavailable,
             "compliance.blocked" => Self::ComplianceBlocked,
             "compliance.blocked_address" => Self::ComplianceBlockedAddress,
             "compliance.blocklist_unavailable" => Self::ComplianceBlocklistUnavailable,
@@ -2167,7 +2213,9 @@ impl From<&str> for ErrorCode {
             "merchant.bad_id" => Self::MerchantBadId,
             "merchant.bad_signature" => Self::MerchantBadSignature,
             "merchant.email_taken" => Self::MerchantEmailTaken,
+            "merchant.key_expired" => Self::MerchantKeyExpired,
             "merchant.key_mode_mismatch" => Self::MerchantKeyModeMismatch,
+            "merchant.key_not_found" => Self::MerchantKeyNotFound,
             "merchant.no_personal_wallet" => Self::MerchantNoPersonalWallet,
             "merchant.not_found" => Self::MerchantNotFound,
             "merchant.project_mismatch" => Self::MerchantProjectMismatch,
@@ -2528,6 +2576,57 @@ impl From<&str> for FeeType {
 }
 
 impl From<String> for FeeType {
+    fn from(v: String) -> Self {
+        Self::from(v.as_str())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
+pub enum KeyMode {
+    #[serde(rename = "live")]
+    Live,
+    #[serde(rename = "test")]
+    Test,
+    /// A value this SDK version does not know yet.
+    #[serde(untagged)]
+    Other(String),
+}
+
+impl KeyMode {
+    /// The wire value.
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Live => "live",
+            Self::Test => "test",
+            Self::Other(v) => v,
+        }
+    }
+}
+
+impl Default for KeyMode {
+    fn default() -> Self {
+        Self::Other(String::new())
+    }
+}
+
+impl std::fmt::Display for KeyMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for KeyMode {
+    fn from(v: &str) -> Self {
+        match v {
+            "live" => Self::Live,
+            "test" => Self::Test,
+            other => Self::Other(other.to_string()),
+        }
+    }
+}
+
+impl From<String> for KeyMode {
     fn from(v: String) -> Self {
         Self::from(v.as_str())
     }
@@ -3155,6 +3254,65 @@ impl From<&str> for RefundRollup {
 }
 
 impl From<String> for RefundRollup {
+    fn from(v: String) -> Self {
+        Self::from(v.as_str())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
+pub enum Role {
+    #[serde(rename = "viewer")]
+    Viewer,
+    #[serde(rename = "finance")]
+    Finance,
+    #[serde(rename = "admin")]
+    Admin,
+    #[serde(rename = "owner")]
+    Owner,
+    /// A value this SDK version does not know yet.
+    #[serde(untagged)]
+    Other(String),
+}
+
+impl Role {
+    /// The wire value.
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Viewer => "viewer",
+            Self::Finance => "finance",
+            Self::Admin => "admin",
+            Self::Owner => "owner",
+            Self::Other(v) => v,
+        }
+    }
+}
+
+impl Default for Role {
+    fn default() -> Self {
+        Self::Other(String::new())
+    }
+}
+
+impl std::fmt::Display for Role {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for Role {
+    fn from(v: &str) -> Self {
+        match v {
+            "viewer" => Self::Viewer,
+            "finance" => Self::Finance,
+            "admin" => Self::Admin,
+            "owner" => Self::Owner,
+            other => Self::Other(other.to_string()),
+        }
+    }
+}
+
+impl From<String> for Role {
     fn from(v: String) -> Self {
         Self::from(v.as_str())
     }
