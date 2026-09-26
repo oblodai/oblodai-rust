@@ -16,7 +16,7 @@ Payments, payouts, payment links, splits, static wallets, webhooks — one API k
 <img src="https://img.shields.io/badge/MSRV-1.86-DEA584?style=flat-square" alt="MSRV 1.86">
 <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-000000?style=flat-square" alt="License: MIT"></a>
 
-[Documentation](https://docs.oblodai.com) · [Dashboard](https://my.oblodai.com) · [Читать по-русски →](README.ru.md)
+[Documentation](https://docs.oblodai.com) · [Dashboard](https://my.oblodai.com) · [Read in Russian →](README.ru.md)
 
 </div>
 
@@ -200,7 +200,7 @@ The request id links your logs with the gateway's: it is in every error's text,
 [MIGRATION-2.0.md](MIGRATION-2.0.md). The table below is written by the generator.
 
 <!-- sdkgen:methods -->
-16 resources, 120 methods.
+17 resources, 123 methods.
 
 | Resource | Methods |
 | --- | --- |
@@ -220,6 +220,7 @@ The request id links your logs with the gateway's: it is in every error's text,
 | `documents()` | `get_signed` · `get_balance` · `get_fees` · `get_ledger` · `get_split` · `get_payout_link_cheque` · `get_statement` · `get_batch` · `get_payment_link` · `get_wallet_statement` · `get_referrals` · `create_job` · `get_job` · `download_job_file` |
 | `checkout()` | `get_source_of_funds_form` · `submit_source_of_funds` · `get_public_payment_link` · `payment_link` · `list_currencies` · `get` · `select_method` · `start_onramp` · `get_onramp` · `get_qr` |
 | `sandbox()` | `onboard_store` · `faucet` · `simulate_deposit` · `reset` · `list_webhooks` · `replay_webhook` |
+| `cli_login()` | `start` · `poll` · `logout_cli` |
 <!-- /sdkgen:methods -->
 
 A document route answers with `FileResult { bytes, content_type, filename }`. Models keep the

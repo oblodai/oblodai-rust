@@ -14,7 +14,8 @@ use super::models::{
     AcceptedSetResult, AccuracyResult, ApproveRequest, AutoConvertResult, AutoRefundPolicyResult,
     AutoWithdrawDeleteRequest, AutoWithdrawListResult, AutoWithdrawSetRequest, BalanceResult,
     BatchInfoRequest, BatchInfoResponse, BatchSubmitResponse, BlockWalletRequest,
-    BlockWalletResult, BlockedRefundRequest, BlockedRefundResult, CancelPayoutRequest,
+    BlockWalletResult, BlockedRefundRequest, BlockedRefundResult, CLIDeviceAuthorization,
+    CLIDeviceRequest, CLILogoutResult, CLIToken, CLITokenRequest, CancelPayoutRequest,
     CheckoutConfigRequest, CheckoutConfigView, ClaimRequest, CreateWalletRequest, CurrenciesResult,
     DocumentJobAccepted, DocumentJobInfoRequest, DocumentJobRequest, DocumentJobView, ExchangeRate,
     ExchangeRatesRequest, FaucetRequest, FaucetResult, HistoryRequest, LinkCheckoutRequest,
@@ -48,84 +49,90 @@ use super::routes;
 /// client that has `fn transport(&self) -> $tr`: `resource_accessors!(Transport);`.
 macro_rules! resource_accessors {
     ($tr:ty) => {
-        /// Приём оплаты: создать счёт, узнать статус, история, QR.
+        /// Accepting payments: create an invoice, check its status, history, QR code.
         pub fn payments(&self) -> $crate::generated::resources::Payments<$tr> {
             $crate::generated::resources::Payments::new(self.transport())
         }
 
-        /// Многоразовые ссылки на оплату: одна ссылка — много платежей.
+        /// Reusable payment links: one link, many payments.
         pub fn payment_links(&self) -> $crate::generated::resources::PaymentLinks<$tr> {
             $crate::generated::resources::PaymentLinks::new(self.transport())
         }
 
-        /// Вернуть деньги плательщику (списание с вашего баланса).
+        /// Return money to the payer (debited from your balance).
         pub fn refunds(&self) -> $crate::generated::resources::Refunds<$tr> {
             $crate::generated::resources::Refunds::new(self.transport())
         }
 
-        /// Отправить деньги на адрес (списание с вашего баланса).
+        /// Send money to an address (debited from your balance).
         pub fn payouts(&self) -> $crate::generated::resources::Payouts<$tr> {
             $crate::generated::resources::Payouts::new(self.transport())
         }
 
-        /// Выплата без адреса: получатель сам вводит адрес по секретной ссылке.
+        /// Payouts without an address: the recipient enters their own address via a secret link.
         pub fn payout_links(&self) -> $crate::generated::resources::PayoutLinks<$tr> {
             $crate::generated::resources::PayoutLinks::new(self.transport())
         }
 
-        /// Асинхронные батчи: платежи, возвраты, выплаты, переводы пачками.
+        /// Asynchronous batches of payments, refunds, payouts and transfers.
         pub fn batches(&self) -> $crate::generated::resources::Batches<$tr> {
             $crate::generated::resources::Batches::new(self.transport())
         }
 
-        /// Автоматическое разделение поступлений между получателями.
+        /// Automatic splitting of incoming funds between recipients.
         pub fn splits(&self) -> $crate::generated::resources::Splits<$tr> {
             $crate::generated::resources::Splits::new(self.transport())
         }
 
-        /// Постоянные (статические) адреса пополнения под клиента.
+        /// Permanent (static) deposit addresses assigned to a customer.
         pub fn wallets(&self) -> $crate::generated::resources::Wallets<$tr> {
             $crate::generated::resources::Wallets::new(self.transport())
         }
 
-        /// Балансы мерчанта и курсы обмена.
+        /// Merchant balances and exchange rates.
         pub fn account(&self) -> $crate::generated::resources::Account<$tr> {
             $crate::generated::resources::Account::new(self.transport())
         }
 
-        /// Регистрация endpoint'а для коллбэков, тест и переотправка.
+        /// Registering the callback endpoint, test deliveries and resends.
         pub fn webhooks(&self) -> $crate::generated::resources::Webhooks<$tr> {
             $crate::generated::resources::Webhooks::new(self.transport())
         }
 
-        /// Настройки магазина: допуск сумм, скидки, автовозвраты, валюты, авто-вывод.
+        /// Store settings: amount tolerance, discounts, auto-refunds, currencies, auto-withdrawal.
         pub fn settings(&self) -> $crate::generated::resources::Settings<$tr> {
             $crate::generated::resources::Settings::new(self.transport())
         }
 
-        /// Ротация ключей и IP-allowlist API.
+        /// Key rotation and the API IP allowlist.
         pub fn api_allowlist(&self) -> $crate::generated::resources::ApiAllowlist<$tr> {
             $crate::generated::resources::ApiAllowlist::new(self.transport())
         }
 
-        /// Реферальная программа.
+        /// Referral program.
         pub fn referrals(&self) -> $crate::generated::resources::Referrals<$tr> {
             $crate::generated::resources::Referrals::new(self.transport())
         }
 
-        /// PDF-документы операций: чеки, счета, отчёты за период.
+        /// PDF documents for operations: receipts, invoices, period reports.
         pub fn documents(&self) -> $crate::generated::resources::Documents<$tr> {
             $crate::generated::resources::Documents::new(self.transport())
         }
 
-        /// Эндпоинты для страницы оплаты — работают без секрета.
+        /// Endpoints for the payment page — they work without the secret.
         pub fn checkout(&self) -> $crate::generated::resources::Checkout<$tr> {
             $crate::generated::resources::Checkout::new(self.transport())
         }
 
-        /// Dev-store: тестовые деньги, симуляция депозитов и повтор вебхуков.
+        /// Dev store: test money, simulated deposits and webhook replay.
         pub fn sandbox(&self) -> $crate::generated::resources::Sandbox<$tr> {
             $crate::generated::resources::Sandbox::new(self.transport())
+        }
+
+        /// Browser login of the `oblodai` CLI (OAuth 2.0 device authorization, RFC 8628) and logout
+        /// of its key.
+        pub fn cli_login(&self) -> $crate::generated::resources::CliLogin<$tr> {
+            $crate::generated::resources::CliLogin::new(self.transport())
         }
     };
 }
@@ -134,11 +141,11 @@ pub(crate) use resource_accessors;
 /// Query parameters of `Documents::get_signed`.
 #[derive(Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct GetSignedDocumentQuery {
-    /// Срок действия ссылки (unix-время) из document_url.
+    /// The link expiry (Unix time) from document_url.
     pub exp: i64,
-    /// Подпись ссылки из document_url.
+    /// The link signature from document_url.
     pub sig: String,
-    /// Язык документа (по умолчанию en); список — document.Languages.
+    /// Document language (en by default); the list is document.Languages.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lang: Option<String>,
 }
@@ -167,7 +174,7 @@ impl GetSignedDocumentQuery {
 /// Query parameters of `Documents::get_balance`.
 #[derive(Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct GetBalanceDocumentQuery {
-    /// Язык документа (по умолчанию en); список — document.Languages.
+    /// Document language (en by default); the list is document.Languages.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lang: Option<String>,
 }
@@ -183,16 +190,16 @@ impl std::fmt::Debug for GetBalanceDocumentQuery {
 /// Query parameters of `Documents::get_fees`.
 #[derive(Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct GetFeesDocumentQuery {
-    /// Начало периода, YYYY-MM-DD (по умолчанию — первое число текущего месяца).
+    /// Start of the period, YYYY-MM-DD (defaults to the first day of the current month).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from: Option<String>,
-    /// Конец периода включительно, YYYY-MM-DD (по умолчанию — сегодня); период — до года.
+    /// End of the period, inclusive, YYYY-MM-DD (defaults to today); the period is up to one year.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub to: Option<String>,
-    /// Язык документа (по умолчанию en); список — document.Languages.
+    /// Document language (en by default); the list is document.Languages.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lang: Option<String>,
-    /// Формат файла: pdf (по умолчанию) или csv.
+    /// File format: pdf (default) or csv.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub format: Option<String>,
 }
@@ -211,16 +218,16 @@ impl std::fmt::Debug for GetFeesDocumentQuery {
 /// Query parameters of `Documents::get_ledger`.
 #[derive(Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct GetLedgerDocumentQuery {
-    /// Начало периода, YYYY-MM-DD (по умолчанию — первое число текущего месяца).
+    /// Start of the period, YYYY-MM-DD (defaults to the first day of the current month).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from: Option<String>,
-    /// Конец периода включительно, YYYY-MM-DD (по умолчанию — сегодня); период — до года.
+    /// End of the period, inclusive, YYYY-MM-DD (defaults to today); the period is up to one year.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub to: Option<String>,
-    /// Язык документа (по умолчанию en); список — document.Languages.
+    /// Document language (en by default); the list is document.Languages.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lang: Option<String>,
-    /// Формат файла: pdf (по умолчанию) или csv.
+    /// File format: pdf (default) or csv.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub format: Option<String>,
 }
@@ -239,9 +246,9 @@ impl std::fmt::Debug for GetLedgerDocumentQuery {
 /// Query parameters of `Documents::get_split`.
 #[derive(Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct GetSplitDocumentQuery {
-    /// UUID платежа.
+    /// The payment UUID.
     pub uuid: String,
-    /// Язык документа (по умолчанию en); список — document.Languages.
+    /// Document language (en by default); the list is document.Languages.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lang: Option<String>,
 }
@@ -268,16 +275,16 @@ impl GetSplitDocumentQuery {
 /// Query parameters of `Documents::get_statement`.
 #[derive(Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct GetStatementDocumentQuery {
-    /// Начало периода, YYYY-MM-DD (по умолчанию — первое число текущего месяца).
+    /// Start of the period, YYYY-MM-DD (defaults to the first day of the current month).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from: Option<String>,
-    /// Конец периода включительно, YYYY-MM-DD (по умолчанию — сегодня); период — до года.
+    /// End of the period, inclusive, YYYY-MM-DD (defaults to today); the period is up to one year.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub to: Option<String>,
-    /// Язык документа (по умолчанию en); список — document.Languages.
+    /// Document language (en by default); the list is document.Languages.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lang: Option<String>,
-    /// Формат файла: pdf (по умолчанию) или csv.
+    /// File format: pdf (default) or csv.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub format: Option<String>,
 }
@@ -296,12 +303,12 @@ impl std::fmt::Debug for GetStatementDocumentQuery {
 /// Query parameters of `Documents::get_batch`.
 #[derive(Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct GetBatchDocumentQuery {
-    /// UUID батча.
+    /// The batch UUID.
     pub uuid: String,
-    /// Язык документа (по умолчанию en); список — document.Languages.
+    /// Document language (en by default); the list is document.Languages.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lang: Option<String>,
-    /// Формат файла: pdf (по умолчанию) или csv.
+    /// File format: pdf (default) or csv.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub format: Option<String>,
 }
@@ -329,18 +336,18 @@ impl GetBatchDocumentQuery {
 /// Query parameters of `Documents::get_payment_link`.
 #[derive(Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct GetPaymentLinkDocumentQuery {
-    /// UUID платёжной ссылки.
+    /// The payment link UUID.
     pub uuid: String,
-    /// Начало периода, YYYY-MM-DD (по умолчанию — первое число текущего месяца).
+    /// Start of the period, YYYY-MM-DD (defaults to the first day of the current month).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from: Option<String>,
-    /// Конец периода включительно, YYYY-MM-DD (по умолчанию — сегодня); период — до года.
+    /// End of the period, inclusive, YYYY-MM-DD (defaults to today); the period is up to one year.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub to: Option<String>,
-    /// Язык документа (по умолчанию en); список — document.Languages.
+    /// Document language (en by default); the list is document.Languages.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lang: Option<String>,
-    /// Формат файла: pdf (по умолчанию) или csv.
+    /// File format: pdf (default) or csv.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub format: Option<String>,
 }
@@ -370,18 +377,18 @@ impl GetPaymentLinkDocumentQuery {
 /// Query parameters of `Documents::get_wallet_statement`.
 #[derive(Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct GetWalletStatementDocumentQuery {
-    /// UUID статического кошелька.
+    /// The static wallet UUID.
     pub uuid: String,
-    /// Начало периода, YYYY-MM-DD (по умолчанию — первое число текущего месяца).
+    /// Start of the period, YYYY-MM-DD (defaults to the first day of the current month).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from: Option<String>,
-    /// Конец периода включительно, YYYY-MM-DD (по умолчанию — сегодня); период — до года.
+    /// End of the period, inclusive, YYYY-MM-DD (defaults to today); the period is up to one year.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub to: Option<String>,
-    /// Язык документа (по умолчанию en); список — document.Languages.
+    /// Document language (en by default); the list is document.Languages.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lang: Option<String>,
-    /// Формат файла: pdf (по умолчанию) или csv.
+    /// File format: pdf (default) or csv.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub format: Option<String>,
 }
@@ -411,16 +418,16 @@ impl GetWalletStatementDocumentQuery {
 /// Query parameters of `Documents::get_referrals`.
 #[derive(Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct GetReferralsDocumentQuery {
-    /// Начало периода, YYYY-MM-DD (по умолчанию — первое число текущего месяца).
+    /// Start of the period, YYYY-MM-DD (defaults to the first day of the current month).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from: Option<String>,
-    /// Конец периода включительно, YYYY-MM-DD (по умолчанию — сегодня); период — до года.
+    /// End of the period, inclusive, YYYY-MM-DD (defaults to today); the period is up to one year.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub to: Option<String>,
-    /// Язык документа (по умолчанию en); список — document.Languages.
+    /// Document language (en by default); the list is document.Languages.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lang: Option<String>,
-    /// Формат файла: pdf (по умолчанию) или csv.
+    /// File format: pdf (default) or csv.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub format: Option<String>,
 }
@@ -439,7 +446,7 @@ impl std::fmt::Debug for GetReferralsDocumentQuery {
 /// Query parameters of `Documents::download_job_file`.
 #[derive(Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct DownloadDocumentJobFileQuery {
-    /// Идентификатор задачи из ответа POST /v1/documents/jobs.
+    /// The job id from the POST /v1/documents/jobs response.
     pub job_id: String,
 }
 
@@ -463,10 +470,10 @@ impl DownloadDocumentJobFileQuery {
 /// Query parameters of `Sandbox::list_webhooks`.
 #[derive(Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SandboxListWebhooksQuery {
-    /// Размер страницы (1–100, по умолчанию 25).
+    /// Page size (1–100, default 25).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
-    /// Смещение страницы.
+    /// Page offset.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub offset: Option<i64>,
 }
@@ -480,7 +487,7 @@ impl std::fmt::Debug for SandboxListWebhooksQuery {
     }
 }
 
-/// Приём оплаты: создать счёт, узнать статус, история, QR.
+/// Accepting payments: create an invoice, check its status, history, QR code.
 #[derive(Clone, Debug)]
 pub struct Payments<Tr> {
     transport: Tr,
@@ -491,60 +498,65 @@ impl<Tr: Clone> Payments<Tr> {
         Self { transport }
     }
 
-    /// Создать платёж (счёт на оплату)
+    /// Create a payment (invoice)
     ///
-    /// Создаёт счёт и возвращает адрес + сумму к оплате и ссылку на страницу оплаты.
+    /// Creates an invoice and returns the address and amount to pay plus a link to the payment
+    /// page.
     ///
-    /// **Как проще всего:** передайте `amount` (сумма), `currency` (валюта цены, напр. `USD`),
-    /// `order_id` (ваш номер заказа). Если укажете `network` и `to_currency` — сразу зафиксируется
-    /// конкретная монета/сеть. Если НЕ укажете — получится валюто-агностичная ссылка: клиент сам
-    /// выберет валюту и сеть на странице оплаты.
+    /// **The simplest way:** pass `amount`, `currency` (the price currency, e.g. `USD`) and
+    /// `order_id` (your order number). If you set `network` and `to_currency`, a specific
+    /// coin/network is locked in immediately. If you DON'T, you get a currency-agnostic link: the
+    /// customer picks the currency and network on the payment page.
     ///
-    /// **Цена и расчёт — разные вещи.** `currency` говорит, сколько счёт СТОИТ: это может быть фиат
-    /// (`USD`, `EUR`, `RUB`, `GBP`, `JPY` и ещё сорок фиатных валют — полный список в
-    /// `/v1/currencies`) или любая монета. `to_currency` говорит, чем ПЛАТЯТ: **только крипта**.
-    /// Фиата мы не храним, поэтому баланс, выплаты и возвраты всегда в монете — счёт на 5000 ₽
-    /// выставить можно, а получить за него можно USDT, TRX и т. д.
+    /// **Price and settlement are different things.** `currency` says what the invoice COSTS: it
+    /// can be fiat (`USD`, `EUR`, `RUB`, `GBP`, `JPY` and forty more fiat currencies — the full
+    /// list is in `/v1/currencies`) or any coin. `to_currency` says what the customer PAYS WITH:
+    /// **crypto only**. We do not hold fiat, so balances, payouts and refunds are always in a coin
+    /// — you can issue an invoice for 5000 RUB, but it is paid in USDT, TRX, etc.
     ///
-    /// Отсюда правило: если цена в фиате, то `to_currency` либо задаётся явно, либо не задаётся
-    /// вовсе — вместе с `network` (тогда монету выберет покупатель). Цена в фиате + одна лишь
-    /// `network`, без монеты, вернёт `payment.to_currency_required`: вывести монету из рублей
-    /// неоткуда.
+    /// Hence the rule: if the price is in fiat, `to_currency` is either set explicitly or omitted
+    /// together with `network` (then the buyer picks the coin). A fiat price with only `network`
+    /// and no coin returns `payment.to_currency_required`: there is no way to derive a coin from
+    /// rubles.
     ///
-    /// У иены и воны (`JPY`, `KRW`) **нет копеек** — сумма пишется без дробной части (`"10000"`, не
-    /// `"10000.00"`). Полный список валют цены — в `pricing_currencies` у `GET /v1/currencies`.
+    /// The yen and the won (`JPY`, `KRW`) have **no minor units** — write the amount without a
+    /// fractional part (`"10000"`, not `"10000.00"`). The full list of price currencies is in
+    /// `pricing_currencies` of `GET /v1/currencies`.
     ///
-    /// **Идемпотентность:** повтор с тем же `order_id` вернёт тот же счёт (двойного счёта не
-    /// будет).
+    /// **Idempotency:** a retry with the same `order_id` returns the same invoice (no duplicate
+    /// invoice is created).
     ///
-    /// Необязательные удобства: `lifetime` (сколько секунд живёт счёт, 300–43200),
-    /// `url_return`/`url_success` (куда вернуть клиента), `url_callback` (куда слать вебхук),
-    /// `additional_data` (ваши приватные данные), `payer_email`, `accuracy_payment_percent` (допуск
-    /// недо/переплаты 0–5%), `is_refresh` (оживить просроченный счёт по order_id).
+    /// Optional conveniences: `lifetime` (invoice lifetime in seconds, 300–43200),
+    /// `url_return`/`url_success` (where to send the customer back), `url_callback` (where to send
+    /// the webhook), `additional_data` (your private data), `payer_email`,
+    /// `accuracy_payment_percent` (underpayment/overpayment tolerance, 0–5%), `is_refresh` (revive
+    /// an expired invoice by order_id).
+    ///
+    /// Requires role: Finance when called with a CLI key.
     ///
     /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
-    /// `idempotency.bad_key`, `idempotency.in_progress`, `idempotency.key_reused`,
-    /// `idempotency.unavailable`, `internal`, `invoice.address_failed`, `invoice.address_taken`,
-    /// `invoice.already_paid`, `invoice.bad_price`, `invoice.corrupt_pay_asset`,
-    /// `invoice.daily_quota`, `invoice.deposit_pending`, `invoice.fiat_pay_asset`,
-    /// `invoice.no_pay_asset`, `invoice.quote_failed`, `invoice.refresh_lease`,
-    /// `invoice.refresh_not_expired`, `invoice.refresh_paid`, `invoice.refresh_select`,
-    /// `invoice.surcharge_asset`, `merchant.acceptance_blocked`, `merchant.bad_signature`,
-    /// `merchant.key_mode_mismatch`, `merchant.not_found`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`,
-    /// `onramp.suppresses`, `pay.method_not_accepted`, `pay.surcharge_unknown`,
-    /// `payment.bad_accuracy`, `payment.bad_amount`, `payment.bad_payer_email`,
-    /// `payment.bad_redirect_url`, `payment.bad_subtract`, `payment.bad_url_callback`,
-    /// `payment.below_minimum`, `payment.discount_unavailable`, `payment.minimum_unavailable`,
-    /// `payment.network_required`, `payment.not_found`, `payment.subtract_impossible`,
-    /// `payment.surcharge_unavailable`, `payment.to_currency_required`,
-    /// `payment.unknown_to_currency`, `payment.unsupported_network`, `postgres.lock_pool_busy`,
-    /// `rates.deviation`, `rates.fiat_pay_asset`, `rates.no_pay_asset`, `rates.no_source`,
-    /// `rates.non_positive`, `rates.stale_rate`, `rates.unavailable`, `request.bad_json`,
-    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
-    /// `request.overloaded`, `request.rate_limited`, `request.reference_invalid`,
-    /// `request.reference_too_long`, `request.too_deep`, `request.unknown_currency`,
-    /// `webhook.no_endpoint`.
+    /// `cli.permission_denied`, `idempotency.bad_key`, `idempotency.in_progress`,
+    /// `idempotency.key_reused`, `idempotency.unavailable`, `internal`, `invoice.address_failed`,
+    /// `invoice.address_taken`, `invoice.already_paid`, `invoice.bad_price`,
+    /// `invoice.corrupt_pay_asset`, `invoice.daily_quota`, `invoice.deposit_pending`,
+    /// `invoice.fiat_pay_asset`, `invoice.no_pay_asset`, `invoice.quote_failed`,
+    /// `invoice.refresh_lease`, `invoice.refresh_not_expired`, `invoice.refresh_paid`,
+    /// `invoice.refresh_select`, `invoice.surcharge_asset`, `merchant.acceptance_blocked`,
+    /// `merchant.bad_signature`, `merchant.key_expired`, `merchant.key_mode_mismatch`,
+    /// `merchant.not_found`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `onramp.suppresses`,
+    /// `pay.method_not_accepted`, `pay.surcharge_unknown`, `payment.bad_accuracy`,
+    /// `payment.bad_amount`, `payment.bad_payer_email`, `payment.bad_redirect_url`,
+    /// `payment.bad_subtract`, `payment.bad_url_callback`, `payment.below_minimum`,
+    /// `payment.discount_unavailable`, `payment.minimum_unavailable`, `payment.network_required`,
+    /// `payment.not_found`, `payment.subtract_impossible`, `payment.surcharge_unavailable`,
+    /// `payment.to_currency_required`, `payment.unknown_to_currency`,
+    /// `payment.unsupported_network`, `postgres.lock_pool_busy`, `rates.deviation`,
+    /// `rates.fiat_pay_asset`, `rates.no_pay_asset`, `rates.no_source`, `rates.non_positive`,
+    /// `rates.stale_rate`, `rates.unavailable`, `request.bad_json`, `request.body_read`,
+    /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
+    /// `request.rate_limited`, `request.reference_invalid`, `request.reference_too_long`,
+    /// `request.too_deep`, `request.unknown_currency`, `webhook.no_endpoint`.
     ///
     /// `POST /v1/payment` (`createPayment`).
     pub fn create(&self, params: PaymentRequest) -> Request<Tr, PaymentView> {
@@ -553,18 +565,21 @@ impl<Tr: Clone> Payments<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Узнать статус платежа
+    /// Get payment status
     ///
-    /// Передайте `uuid` (наш) ИЛИ `order_id` (ваш). Вернёт текущий статус и суммы. Если оба —
-    /// приоритет у `order_id`.
+    /// Pass `uuid` (ours) OR `order_id` (yours). Returns the current status and amounts. If both
+    /// are given, `order_id` takes precedence.
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `invoice.corrupt_pay_asset`, `merchant.bad_signature`, `merchant.key_mode_mismatch`,
-    /// `merchant.rate_limited`, `merchant.secret_decrypt`, `merchant.suspended`,
-    /// `merchant.unknown_key`, `onramp.suppresses`, `payment.bad_uuid`, `payment.no_lookup`,
-    /// `payment.not_found`, `payout.not_found`, `request.bad_json`, `request.body_read`,
-    /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
-    /// `request.rate_limited`, `request.too_deep`.
+    /// Requires role: Viewer when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `invoice.corrupt_pay_asset`, `merchant.bad_signature`,
+    /// `merchant.key_expired`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
+    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`,
+    /// `onramp.suppresses`, `payment.bad_uuid`, `payment.no_lookup`, `payment.not_found`,
+    /// `payout.not_found`, `request.bad_json`, `request.body_read`, `request.control_char`,
+    /// `request.duplicate_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
+    /// `request.too_deep`.
     ///
     /// `POST /v1/payment/info` (`getPaymentInfo`).
     pub fn get_info(&self, params: LookupRequest) -> Request<Tr, PaymentInfoResult> {
@@ -573,17 +588,20 @@ impl<Tr: Clone> Payments<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// QR-код адреса счёта
+    /// Invoice address QR code
     ///
-    /// Возвращает QR адреса оплаты (по `uuid`/`order_id`) как PNG data:-URI — вставляется прямо в
-    /// `<img src>`.
+    /// Returns the QR code of the payment address (by `uuid`/`order_id`) as a PNG data: URI — drop
+    /// it straight into `<img src>`.
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `invoice.corrupt_pay_asset`, `merchant.bad_signature`, `merchant.key_mode_mismatch`,
-    /// `merchant.rate_limited`, `merchant.secret_decrypt`, `merchant.suspended`,
-    /// `merchant.unknown_key`, `payment.bad_uuid`, `payment.no_lookup`, `payment.not_found`,
-    /// `request.bad_json`, `request.body_read`, `request.control_char`, `request.duplicate_field`,
-    /// `request.nul_byte`, `request.overloaded`, `request.rate_limited`, `request.too_deep`.
+    /// Requires role: Viewer when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `invoice.corrupt_pay_asset`, `merchant.bad_signature`,
+    /// `merchant.key_expired`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
+    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`, `payment.bad_uuid`,
+    /// `payment.no_lookup`, `payment.not_found`, `request.bad_json`, `request.body_read`,
+    /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
+    /// `request.rate_limited`, `request.too_deep`.
     ///
     /// `POST /v1/payment/qr` (`getPaymentQr`).
     pub fn get_qr(&self, params: LookupRequest) -> Request<Tr, PaymentQRResult> {
@@ -592,19 +610,22 @@ impl<Tr: Clone> Payments<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// История платежей
+    /// Payment history
     ///
-    /// Список ваших платежей, новые сверху: `items` + блок `paginate` (`total` — всего записей по
-    /// фильтру, `per_page`, `offset`, `has_pages`). Тело: `limit` (1–100, по умолчанию 25),
-    /// `offset`, необязательный `status` — то же значение, что в ответах и вебхуках (`created`,
+    /// Your payments, newest first: `items` plus a `paginate` block (`total` — number of records
+    /// matching the filter, `per_page`, `offset`, `has_pages`). Body: `limit` (1–100, default 25),
+    /// `offset`, optional `status` — the same value as in responses and webhooks (`created`,
     /// `confirm_check`, `paid`, `paid_over`, `wrong_amount`, `expired`, `cancelled`, `select`).
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `invoice.corrupt_pay_asset`, `merchant.bad_signature`, `merchant.key_mode_mismatch`,
-    /// `merchant.rate_limited`, `merchant.secret_decrypt`, `merchant.suspended`,
-    /// `merchant.unknown_key`, `onramp.suppressed_in`, `payment.bad_status`, `payment.not_found`,
-    /// `request.bad_json`, `request.body_read`, `request.control_char`, `request.duplicate_field`,
-    /// `request.nul_byte`, `request.overloaded`, `request.rate_limited`, `request.too_deep`.
+    /// Requires role: Viewer when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `invoice.corrupt_pay_asset`, `merchant.bad_signature`,
+    /// `merchant.key_expired`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
+    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`,
+    /// `onramp.suppressed_in`, `payment.bad_status`, `payment.not_found`, `request.bad_json`,
+    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
+    /// `request.overloaded`, `request.rate_limited`, `request.too_deep`.
     ///
     /// `POST /v1/payment/history` (`listPaymentHistory`).
     pub fn list_history(&self, params: HistoryRequest) -> Pager<Tr, PaymentView> {
@@ -613,18 +634,20 @@ impl<Tr: Clone> Payments<Tr> {
         Pager::new(self.transport.clone(), call)
     }
 
-    /// Доступные валюты и сети для приёма
+    /// Currencies and networks available for accepting payments
     ///
-    /// Список валют/сетей, которые можно принимать, с лимитами и комиссиями. Тело запроса — пустой
+    /// The currencies/networks you can accept, with limits and fees. The request body is an empty
     /// `{}`.
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`, `rates.deviation`,
-    /// `rates.fiat_pay_asset`, `rates.no_pay_asset`, `rates.no_source`, `rates.non_positive`,
-    /// `rates.unavailable`, `request.bad_json`, `request.body_read`, `request.control_char`,
-    /// `request.duplicate_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
-    /// `request.too_deep`.
+    /// Requires role: Viewer when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `rates.deviation`, `rates.fiat_pay_asset`,
+    /// `rates.no_pay_asset`, `rates.no_source`, `rates.non_positive`, `rates.unavailable`,
+    /// `request.bad_json`, `request.body_read`, `request.control_char`, `request.duplicate_field`,
+    /// `request.nul_byte`, `request.overloaded`, `request.rate_limited`, `request.too_deep`.
     ///
     /// `POST /v1/payment/services` (`listPaymentServices`).
     pub fn list_services(&self, params: PageRequest) -> Pager<Tr, PayServiceEntry> {
@@ -633,20 +656,23 @@ impl<Tr: Clone> Payments<Tr> {
         Pager::new(self.transport.clone(), call)
     }
 
-    /// Отменить счёт
+    /// Cancel an invoice
     ///
-    /// Отменяет ваш неоплаченный счёт (например, созданный по ошибке) по `uuid`/`order_id`.
-    /// Разрешено, пока по счёту не увиден ни один платёж или депозит в сети; после этого — 409
-    /// (`invoice.already_paid` / `invoice.deposit_pending`): такой счёт надо не отменять, а
-    /// провести или вернуть.
+    /// Cancels your unpaid invoice (e.g. one created by mistake) by `uuid`/`order_id`. Allowed as
+    /// long as no payment or on-chain deposit has been seen for the invoice; after that — 409
+    /// (`invoice.already_paid` / `invoice.deposit_pending`): such an invoice must be settled or
+    /// refunded, not cancelled.
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `invoice.already_paid`, `invoice.corrupt_pay_asset`, `invoice.deposit_pending`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`,
-    /// `onramp.suppresses`, `payment.bad_uuid`, `payment.no_lookup`, `payment.not_found`,
-    /// `request.bad_json`, `request.body_read`, `request.control_char`, `request.duplicate_field`,
-    /// `request.nul_byte`, `request.overloaded`, `request.rate_limited`, `request.too_deep`.
+    /// Requires role: Finance when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `invoice.already_paid`, `invoice.corrupt_pay_asset`,
+    /// `invoice.deposit_pending`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `onramp.suppresses`, `payment.bad_uuid`,
+    /// `payment.no_lookup`, `payment.not_found`, `request.bad_json`, `request.body_read`,
+    /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
+    /// `request.rate_limited`, `request.too_deep`.
     ///
     /// `POST /v1/payment/cancel` (`cancelPayment`).
     pub fn cancel(&self, params: LookupRequest) -> Request<Tr, PaymentView> {
@@ -655,22 +681,25 @@ impl<Tr: Clone> Payments<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Отправить счёт на e-mail
+    /// Email the invoice
     ///
-    /// Шлёт покупателю письмо с кнопкой «Оплатить» для существующего платежа (по
-    /// `uuid`/`order_id`). Адрес — поле `email` или `payer_email` платежа. Требует настроенный SMTP
-    /// (иначе `email.disabled`). Отправка ограничена ПО АДРЕСУ ПОЛУЧАТЕЛЯ: не больше 10 писем на
-    /// один адрес за час, считая по всем вашим платежам (иначе `email.rate_limited`, 429). Чек об
-    /// оплате отправляется автоматически на `payer_email`, когда платёж получен.
+    /// Sends the buyer an email with a "Pay" button for an existing payment (by `uuid`/`order_id`).
+    /// The address is the `email` field or the payment's `payer_email`. Requires SMTP to be
+    /// configured (otherwise `email.disabled`). Sending is limited PER RECIPIENT ADDRESS: no more
+    /// than 10 emails to one address per hour, counted across all your payments (otherwise
+    /// `email.rate_limited`, 429). A payment receipt is sent automatically to `payer_email` once
+    /// the payment is received.
+    ///
+    /// Requires role: Finance when called with a CLI key.
     ///
     /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
-    /// `email.bad_recipient`, `email.disabled`, `email.no_recipient`, `email.rate_limited`,
-    /// `internal`, `invoice.corrupt_pay_asset`, `merchant.bad_signature`,
-    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
-    /// `merchant.suspended`, `merchant.unknown_key`, `payment.bad_uuid`, `payment.no_lookup`,
-    /// `payment.not_found`, `request.bad_json`, `request.body_read`, `request.control_char`,
-    /// `request.duplicate_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
-    /// `request.too_deep`.
+    /// `cli.permission_denied`, `email.bad_recipient`, `email.disabled`, `email.no_recipient`,
+    /// `email.rate_limited`, `internal`, `invoice.corrupt_pay_asset`, `merchant.bad_signature`,
+    /// `merchant.key_expired`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
+    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`, `payment.bad_uuid`,
+    /// `payment.no_lookup`, `payment.not_found`, `request.bad_json`, `request.body_read`,
+    /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
+    /// `request.rate_limited`, `request.too_deep`.
     ///
     /// `POST /v1/payment/send-email` (`sendPaymentEmail`).
     pub fn send_email(&self, params: SendEmailRequest) -> Request<Tr, SendEmailResult> {
@@ -679,27 +708,29 @@ impl<Tr: Clone> Payments<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Настройки страницы оплаты
+    /// Payment page settings
     ///
-    /// Куда возвращать покупателя после оплаты (`success_url`) и после отказа (`fail_url`), и слать
-    /// ли ему чек на почту (`email_receipts`).
+    /// Where to send the buyer after payment (`success_url`) and after a failure (`fail_url`), and
+    /// whether to email them a receipt (`email_receipts`).
     ///
-    /// Редиректы — это ЗНАЧЕНИЯ ПО УМОЛЧАНИЮ: они подставляются только в те счета, где вы не
-    /// прислали `url_success`/`url_return` сами. Присланное в `/v1/payment` всегда сильнее. Чек —
-    /// не умолчание, а решение: у него нет поля в счёте, и он уходит только если покупатель оставил
-    /// почту.
+    /// The redirects are DEFAULTS: they apply only to invoices where you did not send
+    /// `url_success`/`url_return` yourself. Values sent in `/v1/payment` always win. The receipt is
+    /// not a default but a decision: the invoice has no field for it, and it is sent only if the
+    /// buyer left an email.
     ///
-    /// Присылайте только те поля, которые меняете: пропущенное поле сохраняет прежнее значение, а
-    /// пустая строка в редиректе — это «никуда не отправлять». Адрес должен быть http(s); проверка
-    /// на записи, а не на показе.
+    /// Send only the fields you change: an omitted field keeps its previous value, and an empty
+    /// string in a redirect means "do not redirect". The URL must be http(s); it is validated on
+    /// write, not on display.
+    ///
+    /// Requires role: Finance when called with a CLI key.
     ///
     /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
-    /// `checkoutcfg.bad_url`, `checkoutcfg.disabled`, `checkoutcfg.url_too_long`, `internal`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`,
-    /// `request.body_read`, `request.control_char`, `request.duplicate_field`,
-    /// `request.missing_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
-    /// `request.too_deep`.
+    /// `checkoutcfg.bad_url`, `checkoutcfg.disabled`, `checkoutcfg.url_too_long`,
+    /// `cli.permission_denied`, `internal`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`, `request.body_read`,
+    /// `request.control_char`, `request.duplicate_field`, `request.missing_field`,
+    /// `request.nul_byte`, `request.overloaded`, `request.rate_limited`, `request.too_deep`.
     ///
     /// `POST /v1/checkout-config/set` (`setCheckoutConfig`).
     pub fn set_checkout_config(
@@ -711,17 +742,19 @@ impl<Tr: Clone> Payments<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Текущие настройки страницы оплаты
+    /// Current payment page settings
     ///
-    /// Возвращает `success_url`, `fail_url`, `email_receipts` проекта. Ненастроенное поле отдаётся
-    /// своим ФАКТИЧЕСКИМ поведением: пустой редирект и `email_receipts: true`.
+    /// Returns the project's `success_url`, `fail_url`, `email_receipts`. An unconfigured field is
+    /// returned as its EFFECTIVE behavior: an empty redirect and `email_receipts: true`.
+    ///
+    /// Requires role: Viewer when called with a CLI key.
     ///
     /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
-    /// `checkoutcfg.disabled`, `internal`, `merchant.bad_signature`, `merchant.key_mode_mismatch`,
-    /// `merchant.rate_limited`, `merchant.secret_decrypt`, `merchant.suspended`,
-    /// `merchant.unknown_key`, `request.body_read`, `request.control_char`,
-    /// `request.duplicate_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
-    /// `request.too_deep`.
+    /// `checkoutcfg.disabled`, `cli.permission_denied`, `internal`, `merchant.bad_signature`,
+    /// `merchant.key_expired`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
+    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`,
+    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
+    /// `request.overloaded`, `request.rate_limited`, `request.too_deep`.
     ///
     /// `POST /v1/checkout-config/get` (`getCheckoutConfig`).
     pub fn get_checkout_config(&self) -> Request<Tr, CheckoutConfigView> {
@@ -729,21 +762,22 @@ impl<Tr: Clone> Payments<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Ссылки на анкету происхождения средств
+    /// Source-of-funds questionnaire links
     ///
-    /// По `uuid` или `order_id`. Если по платежу ничего не заблокировано — **пустой массив**; это
-    /// единственное, по чему различаются случаи, сама причина наружу не уходит. Каждый элемент:
-    /// `link` (передайте её плательщику), `expired_at`, `status`
-    /// (`init|pending|completed|expired`). Содержимое анкеты вам не показывается: это данные вашего
-    /// клиента, а не ваши.
+    /// By `uuid` or `order_id`. If nothing is blocked for the payment — an **empty array**; that is
+    /// the only thing that distinguishes the cases, the reason itself is not disclosed. Each item:
+    /// `link` (hand it to the payer), `expired_at`, `status` (`init|pending|completed|expired`).
+    /// The questionnaire contents are not shown to you: they are your customer's data, not yours.
+    ///
+    /// Requires role: Finance when called with a CLI key.
     ///
     /// Errors: `aml.sof_race`, `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
-    /// `internal`, `invoice.corrupt_pay_asset`, `merchant.bad_signature`,
-    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
-    /// `merchant.suspended`, `merchant.unknown_key`, `payment.bad_uuid`, `payment.no_reference`,
-    /// `payment.not_found`, `request.bad_json`, `request.body_read`, `request.control_char`,
-    /// `request.duplicate_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
-    /// `request.too_deep`.
+    /// `cli.permission_denied`, `internal`, `invoice.corrupt_pay_asset`, `merchant.bad_signature`,
+    /// `merchant.key_expired`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
+    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`, `payment.bad_uuid`,
+    /// `payment.no_reference`, `payment.not_found`, `request.bad_json`, `request.body_read`,
+    /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
+    /// `request.rate_limited`, `request.too_deep`.
     ///
     /// `POST /v1/payment/aml-links` (`getPaymentAmlLinks`).
     pub fn get_aml_links(&self, params: AMLLinksRequest) -> Request<Tr, AMLLinksResult> {
@@ -752,44 +786,47 @@ impl<Tr: Clone> Payments<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Разрешить недоплату: принять или вернуть
+    /// Resolve an underpayment: accept or refund
     ///
-    /// Для платежа в статусе `wrong_amount` (недоплата, срок вышел) мерчант явно решает судьбу
-    /// денег: `action:"accept"` — оставить частичную оплату как расчёт (снимает автовозврат),
-    /// `action:"refund"` — вернуть полученное плательщику сейчас (адрес/сеть по умолчанию —
-    /// записанный адрес плательщика). Двигает деньги — подписывается вашим API-ключом, как и всё
-    /// остальное: ключ у мерчанта один и он полнодоступный.
+    /// For a payment in status `wrong_amount` (underpaid, expired) the merchant explicitly decides
+    /// what happens to the money: `action:"accept"` — keep the partial payment as settlement
+    /// (cancels the auto-refund), `action:"refund"` — return what was received to the payer now
+    /// (address/network default to the recorded payer address). It moves money — it is signed with
+    /// your API key like everything else: a merchant has one key and it has full access.
+    ///
+    /// Requires role: Finance when called with a CLI key.
     ///
     /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
-    /// `compliance.blocked`, `compliance.blocked_address`, `compliance.blocklist_unavailable`,
-    /// `compliance.no_destination`, `compliance.no_network`, `compliance.sanctioned_address`,
-    /// `compliance.sanctions_unavailable`, `idempotency.bad_key`, `idempotency.in_progress`,
-    /// `idempotency.key_reused`, `idempotency.unavailable`, `internal`,
+    /// `cli.permission_denied`, `compliance.blocked`, `compliance.blocked_address`,
+    /// `compliance.blocklist_unavailable`, `compliance.no_destination`, `compliance.no_network`,
+    /// `compliance.sanctioned_address`, `compliance.sanctions_unavailable`, `idempotency.bad_key`,
+    /// `idempotency.in_progress`, `idempotency.key_reused`, `idempotency.unavailable`, `internal`,
     /// `invoice.corrupt_pay_asset`, `ledger.account_not_found`, `ledger.asset_mismatch`,
     /// `ledger.bad_direction`, `ledger.duplicate_posting`, `ledger.fiat_asset`,
     /// `ledger.idempotency_conflict`, `ledger.missing_idempotency_key`, `ledger.no_lines`,
     /// `ledger.non_positive_amount`, `ledger.sandbox_live_mix`, `ledger.unbalanced`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`,
-    /// `onramp.suppresses`, `payment.bad_uuid`, `payment.no_lookup`, `payment.not_found`,
-    /// `payout.above_limit`, `payout.address_network_mismatch`, `payout.amount_below_fee`,
-    /// `payout.approver_is_creator`, `payout.asset_mismatch`, `payout.bad_address`,
-    /// `payout.bad_amount`, `payout.bad_memo`, `payout.bad_owner_kind`, `payout.cap_unpriceable`,
-    /// `payout.convert_bad_amount`, `payout.convert_frozen`, `payout.convert_idempotency_conflict`,
-    /// `payout.convert_insufficient`, `payout.convert_no_rate`, `payout.convert_same_asset`,
-    /// `payout.convert_unsupported`, `payout.daily_cap`, `payout.destination_not_activated`,
-    /// `payout.duplicate_reference`, `payout.fee_asset_mismatch`, `payout.freeze_unknown`,
-    /// `payout.frozen`, `payout.funds_maturing`, `payout.funds_settling`,
-    /// `payout.illegal_transition`, `payout.insufficient_funds`, `payout.memo_conflict`,
-    /// `payout.memo_required`, `payout.memo_too_long`, `payout.merchant_frozen`,
-    /// `payout.no_destination`, `payout.no_owner`, `payout.not_found`, `payout.not_pending`,
-    /// `payout.reference_collision`, `postgres.lock_pool_busy`, `rates.deviation`,
-    /// `rates.no_source`, `rates.non_positive`, `rates.stale_rate`, `refund.destination_internal`,
-    /// `refund.dust`, `refund.exceeds_excess`, `refund.exceeds_refundable`, `refund.fence_check`,
-    /// `refund.from_currency_personal_account`, `refund.no_address`, `refund.nothing_to_refund`,
-    /// `refund.omnibus_destination`, `refund.paid_internally`, `refund.reference_collision`,
-    /// `request.bad_json`, `request.body_read`, `request.control_char`, `request.duplicate_field`,
-    /// `request.nul_byte`, `request.overloaded`, `request.rate_limited`, `request.too_deep`,
+    /// `merchant.bad_signature`, `merchant.key_expired`, `merchant.key_mode_mismatch`,
+    /// `merchant.rate_limited`, `merchant.secret_decrypt`, `merchant.suspended`,
+    /// `merchant.unknown_key`, `onramp.suppresses`, `payment.bad_uuid`, `payment.no_lookup`,
+    /// `payment.not_found`, `payout.above_limit`, `payout.address_network_mismatch`,
+    /// `payout.amount_below_fee`, `payout.approver_is_creator`, `payout.asset_mismatch`,
+    /// `payout.bad_address`, `payout.bad_amount`, `payout.bad_memo`, `payout.bad_owner_kind`,
+    /// `payout.cap_unpriceable`, `payout.convert_bad_amount`, `payout.convert_frozen`,
+    /// `payout.convert_idempotency_conflict`, `payout.convert_insufficient`,
+    /// `payout.convert_no_rate`, `payout.convert_same_asset`, `payout.convert_unsupported`,
+    /// `payout.daily_cap`, `payout.destination_not_activated`, `payout.duplicate_reference`,
+    /// `payout.fee_asset_mismatch`, `payout.freeze_unknown`, `payout.frozen`,
+    /// `payout.funds_maturing`, `payout.funds_settling`, `payout.illegal_transition`,
+    /// `payout.insufficient_funds`, `payout.memo_conflict`, `payout.memo_required`,
+    /// `payout.memo_too_long`, `payout.merchant_frozen`, `payout.no_destination`,
+    /// `payout.no_owner`, `payout.not_found`, `payout.not_pending`, `payout.reference_collision`,
+    /// `postgres.lock_pool_busy`, `rates.deviation`, `rates.no_source`, `rates.non_positive`,
+    /// `rates.stale_rate`, `refund.destination_internal`, `refund.dust`, `refund.exceeds_excess`,
+    /// `refund.exceeds_refundable`, `refund.fence_check`, `refund.from_currency_personal_account`,
+    /// `refund.no_address`, `refund.nothing_to_refund`, `refund.omnibus_destination`,
+    /// `refund.paid_internally`, `refund.reference_collision`, `request.bad_json`,
+    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
+    /// `request.overloaded`, `request.rate_limited`, `request.too_deep`,
     /// `resolution.already_refunded`, `resolution.already_resolved`, `resolution.bad_action`,
     /// `resolution.chain_ambiguous`, `resolution.disabled`, `resolution.network_required`,
     /// `resolution.not_underpaid`, `resolution.unsupported_network`, `treasury.no_ccy_map`,
@@ -803,7 +840,7 @@ impl<Tr: Clone> Payments<Tr> {
     }
 }
 
-/// Многоразовые ссылки на оплату: одна ссылка — много платежей.
+/// Reusable payment links: one link, many payments.
 #[derive(Clone, Debug)]
 pub struct PaymentLinks<Tr> {
     transport: Tr,
@@ -814,20 +851,24 @@ impl<Tr: Clone> PaymentLinks<Tr> {
         Self { transport }
     }
 
-    /// Создать платёжную ссылку
+    /// Create a payment link
     ///
-    /// Переиспользуемая ссылка (как страница доната): по ней платят много людей, каждый платёж —
-    /// свой инвойс со своим адресом. `amount_mode`: `fixed` (сумма задана в `amount_fixed`), `open`
-    /// (клиент вводит любую сумму, опц. `amount_min`), `range` (клиент вводит в диапазоне
-    /// `amount_min`…`amount_max`). `currency` — валюта цены (крипто-тикер, напр. `USDT`).
+    /// A reusable link (like a donation page): many people pay through it, each payment is its own
+    /// invoice with its own address. `amount_mode`: `fixed` (the amount is set in `amount_fixed`),
+    /// `open` (the customer enters any amount, optionally `amount_min`), `range` (the customer
+    /// enters an amount between `amount_min` and `amount_max`). `currency` — the price currency (a
+    /// crypto ticker, e.g. `USDT`).
     ///
-    /// Валюту/сеть оплаты можно **закрепить** (`pinned_currency` + `pinned_network`) или оставить
-    /// пустыми — тогда клиент выбирает их на странице оплаты. `expires_in` — срок жизни ссылки в
-    /// секундах (0 = **бессрочно**; сами инвойсы при этом живут обычный короткий срок). В ответе —
-    /// `link_id` и `url` для клиента.
+    /// The payment currency/network can be **pinned** (`pinned_currency` + `pinned_network`) or
+    /// left empty — then the customer picks them on the payment page. `expires_in` — the link
+    /// lifetime in seconds (0 = **never expires**; the invoices themselves still have the usual
+    /// short lifetime). The response contains `link_id` and the `url` for the customer.
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `merchant.acceptance_blocked`, `merchant.bad_signature`, `merchant.key_mode_mismatch`,
+    /// Requires role: Finance when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `merchant.acceptance_blocked`,
+    /// `merchant.bad_signature`, `merchant.key_expired`, `merchant.key_mode_mismatch`,
     /// `merchant.rate_limited`, `merchant.secret_decrypt`, `merchant.suspended`,
     /// `merchant.unknown_key`, `paylink.bad_amount`, `paylink.bad_max`, `paylink.bad_min`,
     /// `paylink.bad_mode`, `paylink.bad_range`, `paylink.disabled`, `paylink.expires_in_negative`,
@@ -843,15 +884,18 @@ impl<Tr: Clone> PaymentLinks<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Список ссылок
+    /// List links
     ///
-    /// Ваши платёжные ссылки, новые сверху.
+    /// Your payment links, newest first.
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`, `paylink.disabled`,
-    /// `request.bad_json`, `request.body_read`, `request.control_char`, `request.duplicate_field`,
-    /// `request.nul_byte`, `request.overloaded`, `request.rate_limited`, `request.too_deep`.
+    /// Requires role: Viewer when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `paylink.disabled`, `request.bad_json`,
+    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
+    /// `request.overloaded`, `request.rate_limited`, `request.too_deep`.
     ///
     /// `POST /v1/payment/link/list` (`listPaymentLinks`).
     pub fn list(&self, params: PageRequest) -> Pager<Tr, PaymentLinkView> {
@@ -860,16 +904,19 @@ impl<Tr: Clone> PaymentLinks<Tr> {
         Pager::new(self.transport.clone(), call)
     }
 
-    /// Ссылка + её платежи
+    /// Link and its payments
     ///
-    /// По `link_id`: конфиг ссылки и собранные по ней платежи (`payments[]`).
+    /// By `link_id`: the link configuration and the payments collected through it (`payments[]`).
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`, `paylink.bad_id`,
-    /// `paylink.disabled`, `paylink.not_found`, `request.bad_json`, `request.body_read`,
-    /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
-    /// `request.rate_limited`, `request.too_deep`.
+    /// Requires role: Viewer when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `paylink.bad_id`, `paylink.disabled`,
+    /// `paylink.not_found`, `request.bad_json`, `request.body_read`, `request.control_char`,
+    /// `request.duplicate_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
+    /// `request.too_deep`.
     ///
     /// `POST /v1/payment/link/info` (`getPaymentLink`).
     pub fn get(&self, params: PaymentLinkLookupRequest) -> Request<Tr, PaymentLinkDetail> {
@@ -878,16 +925,19 @@ impl<Tr: Clone> PaymentLinks<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Включить/выключить ссылку
+    /// Enable/disable a link
     ///
-    /// `{link_id, active}`. Выключенная ссылка не принимает новые платежи.
+    /// `{link_id, active}`. A disabled link does not accept new payments.
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`, `paylink.bad_id`,
-    /// `paylink.disabled`, `paylink.not_found`, `request.bad_json`, `request.body_read`,
-    /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
-    /// `request.rate_limited`, `request.too_deep`.
+    /// Requires role: Finance when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `paylink.bad_id`, `paylink.disabled`,
+    /// `paylink.not_found`, `request.bad_json`, `request.body_read`, `request.control_char`,
+    /// `request.duplicate_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
+    /// `request.too_deep`.
     ///
     /// `POST /v1/payment/link/toggle` (`togglePaymentLink`).
     pub fn toggle(&self, params: PaymentLinkToggleRequest) -> Request<Tr, PaymentLinkToggled> {
@@ -897,7 +947,7 @@ impl<Tr: Clone> PaymentLinks<Tr> {
     }
 }
 
-/// Вернуть деньги плательщику (списание с вашего баланса).
+/// Return money to the payer (debited from your balance).
 #[derive(Clone, Debug)]
 pub struct Refunds<Tr> {
     transport: Tr,
@@ -908,66 +958,69 @@ impl<Tr: Clone> Refunds<Tr> {
         Self { transport }
     }
 
-    /// Вернуть платёж
+    /// Refund a payment
     ///
-    /// Возврат — это списание с вашего баланса.
+    /// A refund is debited from your balance.
     ///
-    /// `address` (куда вернуть) можно опустить ТОЛЬКО если в платеже `payer_address_is_refundable`
-    /// = true: тогда вернём на записанный адрес плательщика (`payer_address`). Если там false —
-    /// адрес плательщика нам известен, но он не является адресом возврата (Bitcoin/UTXO: первый
-    /// вход мог быть биржей или сдачей; XRP: общий адрес биржи с тегом назначения; оплата КАРТОЙ
-    /// через крипто-он-рамп: отправитель — омнибусный горячий кошелёк провайдера, а не покупатель).
-    /// Возврат туда уходит безвозвратно тому, кто денег не платил, поэтому запрос без `address`
-    /// будет отклонён (`refund.no_address`): спросите адрес у покупателя и передайте его явно.
-    /// Нужен `uuid`/`order_id` платежа. По умолчанию вернём всю полученную сумму; можно указать
-    /// частичную `amount`.
+    /// `address` (where to refund) may be omitted ONLY if the payment has
+    /// `payer_address_is_refundable` = true: then we refund to the recorded payer address
+    /// (`payer_address`). If it is false, we know the payer's address but it is not a refund
+    /// address (Bitcoin/UTXO: the first input may belong to an exchange or be change; XRP: a shared
+    /// exchange address with a destination tag; CARD payment via a crypto on-ramp: the sender is
+    /// the provider's omnibus hot wallet, not the buyer). A refund sent there is irrecoverably lost
+    /// to someone who never paid, so a request without `address` is rejected (`refund.no_address`):
+    /// ask the buyer for an address and pass it explicitly. The payment's `uuid`/`order_id` is
+    /// required. By default the full received amount is refunded; you may specify a partial
+    /// `amount`.
     ///
-    /// Идемпотентно по `(платёж, адрес, сумма)`; суммарно нельзя вернуть больше, чем оплачено.
-    /// Возврат подтверждается автоматически на любой адрес. Единственное исключение — платёж картой
-    /// через он-рамп: возврат НА ЗАПИСАННЫЙ АДРЕС ПЛАТЕЛЬЩИКА такого счёта отклоняется
-    /// (`refund.omnibus_destination`), потому что этот адрес принадлежит провайдеру, а не
-    /// покупателю — пришлите адрес покупателя явно.
+    /// Idempotent on `(payment, address, amount)`; in total you cannot refund more than was paid.
+    /// Refunds to any address are approved automatically. The only exception is a card payment via
+    /// an on-ramp: a refund TO THE RECORDED PAYER ADDRESS of such an invoice is rejected
+    /// (`refund.omnibus_destination`), because that address belongs to the provider, not the buyer
+    /// — send the buyer's address explicitly.
     ///
-    /// Возврат платится ТОЙ ЖЕ монетой, которой заплатил покупатель. Если она уже сведена в стейбл
-    /// автообменом, передайте `from_currency: "USDT"` — возврат профинансируется конвертацией
-    /// вашего баланса USDT и останется ВОЗВРАТОМ: счёт пометится возвращённым, доли партнёрам
-    /// отзовутся. Отправить деньги обычной выплатой тоже можно, но в отчётах это будет выплата, а
-    /// не возврат.
+    /// A refund is paid in THE SAME coin the buyer paid with. If it has already been converted into
+    /// a stablecoin by auto-conversion, pass `from_currency: "USDT"` — the refund is funded by
+    /// converting your USDT balance and remains a REFUND: the invoice is marked refunded and
+    /// partner shares are reversed. You can also send the money as a regular payout, but reports
+    /// will show it as a payout, not a refund.
+    ///
+    /// Requires role: Finance when called with a CLI key.
     ///
     /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
-    /// `compliance.blocked`, `compliance.blocked_address`, `compliance.blocklist_unavailable`,
-    /// `compliance.no_destination`, `compliance.no_network`, `compliance.sanctioned_address`,
-    /// `compliance.sanctions_unavailable`, `idempotency.bad_key`, `idempotency.in_progress`,
-    /// `idempotency.key_reused`, `idempotency.unavailable`, `internal`,
+    /// `cli.permission_denied`, `compliance.blocked`, `compliance.blocked_address`,
+    /// `compliance.blocklist_unavailable`, `compliance.no_destination`, `compliance.no_network`,
+    /// `compliance.sanctioned_address`, `compliance.sanctions_unavailable`, `idempotency.bad_key`,
+    /// `idempotency.in_progress`, `idempotency.key_reused`, `idempotency.unavailable`, `internal`,
     /// `invoice.corrupt_pay_asset`, `ledger.account_not_found`, `ledger.asset_mismatch`,
     /// `ledger.bad_direction`, `ledger.duplicate_posting`, `ledger.fiat_asset`,
     /// `ledger.idempotency_conflict`, `ledger.missing_idempotency_key`, `ledger.no_lines`,
     /// `ledger.non_positive_amount`, `ledger.sandbox_live_mix`, `ledger.unbalanced`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`,
-    /// `onramp.suppresses`, `payment.bad_uuid`, `payment.no_lookup`, `payment.not_found`,
-    /// `payout.above_limit`, `payout.address_network_mismatch`, `payout.amount_below_fee`,
-    /// `payout.approver_is_creator`, `payout.asset_mismatch`, `payout.bad_address`,
-    /// `payout.bad_amount`, `payout.bad_memo`, `payout.bad_owner_kind`, `payout.cap_unpriceable`,
-    /// `payout.convert_bad_amount`, `payout.convert_frozen`, `payout.convert_idempotency_conflict`,
-    /// `payout.convert_insufficient`, `payout.convert_no_rate`, `payout.convert_same_asset`,
-    /// `payout.convert_unsupported`, `payout.daily_cap`, `payout.destination_not_activated`,
-    /// `payout.duplicate_reference`, `payout.fee_asset_mismatch`, `payout.freeze_unknown`,
-    /// `payout.frozen`, `payout.funds_maturing`, `payout.funds_settling`,
-    /// `payout.illegal_transition`, `payout.insufficient_funds`, `payout.memo_conflict`,
-    /// `payout.memo_required`, `payout.memo_too_long`, `payout.merchant_frozen`,
-    /// `payout.no_destination`, `payout.no_owner`, `payout.not_found`, `payout.not_pending`,
-    /// `payout.reference_collision`, `postgres.lock_pool_busy`, `rates.deviation`,
-    /// `rates.no_source`, `rates.non_positive`, `rates.stale_rate`, `refund.bad_amount`,
-    /// `refund.chain_ambiguous`, `refund.destination_internal`, `refund.dust`,
-    /// `refund.exceeds_excess`, `refund.exceeds_refundable`, `refund.fence_check`,
-    /// `refund.from_currency_personal_account`, `refund.from_currency_unsupported`,
-    /// `refund.network_required`, `refund.no_address`, `refund.nothing_to_refund`,
-    /// `refund.omnibus_destination`, `refund.paid_internally`, `refund.reference_collision`,
-    /// `refund.unsupported_network`, `request.bad_json`, `request.body_read`,
-    /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
-    /// `request.rate_limited`, `request.too_deep`, `sandbox.convert_not_available`,
-    /// `treasury.no_ccy_map`, `wallet.static_not_found`.
+    /// `merchant.bad_signature`, `merchant.key_expired`, `merchant.key_mode_mismatch`,
+    /// `merchant.rate_limited`, `merchant.secret_decrypt`, `merchant.suspended`,
+    /// `merchant.unknown_key`, `onramp.suppresses`, `payment.bad_uuid`, `payment.no_lookup`,
+    /// `payment.not_found`, `payout.above_limit`, `payout.address_network_mismatch`,
+    /// `payout.amount_below_fee`, `payout.approver_is_creator`, `payout.asset_mismatch`,
+    /// `payout.bad_address`, `payout.bad_amount`, `payout.bad_memo`, `payout.bad_owner_kind`,
+    /// `payout.cap_unpriceable`, `payout.convert_bad_amount`, `payout.convert_frozen`,
+    /// `payout.convert_idempotency_conflict`, `payout.convert_insufficient`,
+    /// `payout.convert_no_rate`, `payout.convert_same_asset`, `payout.convert_unsupported`,
+    /// `payout.daily_cap`, `payout.destination_not_activated`, `payout.duplicate_reference`,
+    /// `payout.fee_asset_mismatch`, `payout.freeze_unknown`, `payout.frozen`,
+    /// `payout.funds_maturing`, `payout.funds_settling`, `payout.illegal_transition`,
+    /// `payout.insufficient_funds`, `payout.memo_conflict`, `payout.memo_required`,
+    /// `payout.memo_too_long`, `payout.merchant_frozen`, `payout.no_destination`,
+    /// `payout.no_owner`, `payout.not_found`, `payout.not_pending`, `payout.reference_collision`,
+    /// `postgres.lock_pool_busy`, `rates.deviation`, `rates.no_source`, `rates.non_positive`,
+    /// `rates.stale_rate`, `refund.bad_amount`, `refund.chain_ambiguous`,
+    /// `refund.destination_internal`, `refund.dust`, `refund.exceeds_excess`,
+    /// `refund.exceeds_refundable`, `refund.fence_check`, `refund.from_currency_personal_account`,
+    /// `refund.from_currency_unsupported`, `refund.network_required`, `refund.no_address`,
+    /// `refund.nothing_to_refund`, `refund.omnibus_destination`, `refund.paid_internally`,
+    /// `refund.reference_collision`, `refund.unsupported_network`, `request.bad_json`,
+    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
+    /// `request.overloaded`, `request.rate_limited`, `request.too_deep`,
+    /// `sandbox.convert_not_available`, `treasury.no_ccy_map`, `wallet.static_not_found`.
     ///
     /// `POST /v1/payment/refund` (`refundPayment`).
     pub fn payment(&self, params: RefundRequest) -> Request<Tr, PayoutView> {
@@ -976,31 +1029,36 @@ impl<Tr: Clone> Refunds<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Вернуть средства со статик-кошелька
+    /// Refund funds from a static wallet
     ///
-    /// Возвращает на `address` ЧИСТУЮ сумму, полученную на (заблокированном) статик-кошельке: из
-    /// полученного вычитается уже возвращённое. Пока возврат жив (создан, отправлен, подтверждён),
-    /// повторный вызов возвращает его же. Если возврат не состоялся (failed/cancelled), вызов можно
-    /// повторить — в том числе на другой адрес. Отменённые reorg'ом депозиты не считаются.
+    /// Refunds to `address` the NET amount received on a (blocked) static wallet: the amount
+    /// already refunded is subtracted from what was received. While a refund is alive (created,
+    /// sent, confirmed), a repeated call returns that same refund. If the refund did not go through
+    /// (failed/cancelled), the call can be repeated — including to a different address. Deposits
+    /// reverted by a reorg are not counted.
     ///
-    /// Блокировка смотрит ВПЕРЁД: она останавливает следующий приход, а не пересматривает уже
-    /// зачисленные. Деньги, пришедшие ПОСЛЕ блокировки, на баланс не попадают — они уходят в
-    /// карантин и ждут решения оператора; вернуть их этой ручкой можно после того, как он их
-    /// разобрал. Пока не разобраны — они ещё не ваши, и ответ будет «возвращать нечего».
+    /// Blocking looks FORWARD: it stops the next incoming deposit, it does not revisit ones already
+    /// credited. Money that arrives AFTER the block does not reach the balance — it goes to
+    /// quarantine and waits for an operator's decision; you can refund it with this endpoint once
+    /// the operator has reviewed it. Until then it is not yours yet, and the response will be
+    /// "nothing to refund".
+    ///
+    /// Requires role: Finance when called with a CLI key.
     ///
     /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
-    /// `compliance.blocked`, `compliance.blocked_address`, `compliance.blocklist_unavailable`,
-    /// `compliance.no_destination`, `compliance.no_network`, `compliance.sanctioned_address`,
-    /// `compliance.sanctions_unavailable`, `internal`, `ledger.account_not_found`,
-    /// `ledger.asset_mismatch`, `ledger.bad_direction`, `ledger.duplicate_posting`,
-    /// `ledger.fiat_asset`, `ledger.idempotency_conflict`, `ledger.missing_idempotency_key`,
-    /// `ledger.no_lines`, `ledger.non_positive_amount`, `ledger.sandbox_live_mix`,
-    /// `ledger.unbalanced`, `merchant.bad_signature`, `merchant.key_mode_mismatch`,
-    /// `merchant.rate_limited`, `merchant.secret_decrypt`, `merchant.suspended`,
-    /// `merchant.unknown_key`, `payout.above_limit`, `payout.address_network_mismatch`,
-    /// `payout.amount_below_fee`, `payout.asset_mismatch`, `payout.bad_address`,
-    /// `payout.bad_amount`, `payout.bad_memo`, `payout.bad_owner_kind`, `payout.cap_unpriceable`,
-    /// `payout.daily_cap`, `payout.destination_not_activated`, `payout.duplicate_reference`,
+    /// `cli.permission_denied`, `compliance.blocked`, `compliance.blocked_address`,
+    /// `compliance.blocklist_unavailable`, `compliance.no_destination`, `compliance.no_network`,
+    /// `compliance.sanctioned_address`, `compliance.sanctions_unavailable`, `internal`,
+    /// `ledger.account_not_found`, `ledger.asset_mismatch`, `ledger.bad_direction`,
+    /// `ledger.duplicate_posting`, `ledger.fiat_asset`, `ledger.idempotency_conflict`,
+    /// `ledger.missing_idempotency_key`, `ledger.no_lines`, `ledger.non_positive_amount`,
+    /// `ledger.sandbox_live_mix`, `ledger.unbalanced`, `merchant.bad_signature`,
+    /// `merchant.key_expired`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
+    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`,
+    /// `payout.above_limit`, `payout.address_network_mismatch`, `payout.amount_below_fee`,
+    /// `payout.asset_mismatch`, `payout.bad_address`, `payout.bad_amount`, `payout.bad_memo`,
+    /// `payout.bad_owner_kind`, `payout.cap_unpriceable`, `payout.daily_cap`,
+    /// `payout.destination_not_activated`, `payout.duplicate_reference`,
     /// `payout.fee_asset_mismatch`, `payout.freeze_unknown`, `payout.frozen`,
     /// `payout.funds_maturing`, `payout.funds_settling`, `payout.insufficient_funds`,
     /// `payout.memo_conflict`, `payout.memo_required`, `payout.memo_too_long`,
@@ -1020,7 +1078,7 @@ impl<Tr: Clone> Refunds<Tr> {
     }
 }
 
-/// Отправить деньги на адрес (списание с вашего баланса).
+/// Send money to an address (debited from your balance).
 #[derive(Clone, Debug)]
 pub struct Payouts<Tr> {
     transport: Tr,
@@ -1031,46 +1089,49 @@ impl<Tr: Clone> Payouts<Tr> {
         Self { transport }
     }
 
-    /// Создать выплату
+    /// Create a payout
     ///
-    /// Отправить деньги на адрес. Идемпотентно по `order_id`. Выплата уходит сразу: ключ мерчанта
-    /// несёт полную выплатную полномочность, белого списка адресов нет, ручного подтверждения тоже
-    /// (`approval_required` в ответе всегда `false`). Ограничивают её суточный лимит, заморозка
-    /// аккаунта и комплаенс-проверка адреса.
+    /// Send money to an address. Idempotent on `order_id`. The payout goes out immediately: the
+    /// merchant key carries full payout authority, there is no address whitelist and no manual
+    /// approval (`approval_required` in the response is always `false`). It is limited by the daily
+    /// limit, account freeze and the address compliance check.
     ///
-    /// **Конвертация (`from_currency`):** укажите `from_currency: "USDT"`, чтобы оплатить выплату в
-    /// `currency`, списав ваш баланс USDT — мы сконвертируем USDT → `currency` (только те валюты,
-    /// что казначейство может добыть он-чейн). В ответе появится объект `convert` с `from_amount`
-    /// (сколько USDT списано) и `rate`.
+    /// **Conversion (`from_currency`):** set `from_currency: "USDT"` to fund a payout in `currency`
+    /// by debiting your USDT balance — we convert USDT → `currency` (only currencies the treasury
+    /// can source on-chain). The response then contains a `convert` object with `from_amount` (how
+    /// much USDT was debited) and `rate`.
     ///
-    /// Ещё: `memo` (тег/мемо для TON), `url_callback` (свой адрес вебхука для этой выплаты).
+    /// Also: `memo` (tag/memo for TON), `url_callback` (your own webhook URL for this payout).
+    ///
+    /// Requires role: Finance when called with a CLI key.
     ///
     /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
-    /// `compliance.blocked`, `compliance.blocked_address`, `compliance.blocklist_unavailable`,
-    /// `compliance.no_destination`, `compliance.no_network`, `compliance.sanctioned_address`,
-    /// `compliance.sanctions_unavailable`, `idempotency.bad_key`, `idempotency.in_progress`,
-    /// `idempotency.key_reused`, `idempotency.unavailable`, `internal`, `ledger.account_not_found`,
-    /// `ledger.asset_mismatch`, `ledger.bad_direction`, `ledger.duplicate_posting`,
-    /// `ledger.fiat_asset`, `ledger.idempotency_conflict`, `ledger.missing_idempotency_key`,
-    /// `ledger.no_lines`, `ledger.non_positive_amount`, `ledger.sandbox_live_mix`,
-    /// `ledger.unbalanced`, `merchant.bad_signature`, `merchant.key_mode_mismatch`,
-    /// `merchant.rate_limited`, `merchant.secret_decrypt`, `merchant.suspended`,
-    /// `merchant.unknown_key`, `payout.above_limit`, `payout.address_network_mismatch`,
-    /// `payout.amount_below_fee`, `payout.asset_mismatch`, `payout.bad_address`,
-    /// `payout.bad_amount`, `payout.bad_memo`, `payout.bad_owner_kind`, `payout.bad_url_callback`,
-    /// `payout.cap_unpriceable`, `payout.convert_bad_amount`, `payout.convert_frozen`,
-    /// `payout.convert_idempotency_conflict`, `payout.convert_insufficient`,
-    /// `payout.convert_no_rate`, `payout.convert_same_asset`, `payout.convert_unsupported`,
-    /// `payout.daily_cap`, `payout.destination_internal`, `payout.destination_not_activated`,
-    /// `payout.duplicate_reference`, `payout.fee_asset_mismatch`, `payout.freeze_unknown`,
-    /// `payout.from_currency_unsupported`, `payout.frozen`, `payout.funds_maturing`,
-    /// `payout.funds_settling`, `payout.insufficient_funds`, `payout.memo_conflict`,
-    /// `payout.memo_required`, `payout.memo_too_long`, `payout.merchant_frozen`,
-    /// `payout.network_required`, `payout.no_destination`, `payout.no_owner`, `payout.not_found`,
-    /// `payout.order_id_required`, `payout.reference_collision`, `payout.reserved_reference`,
-    /// `payout.unsupported_network`, `rates.deviation`, `rates.no_source`, `rates.non_positive`,
-    /// `rates.stale_rate`, `request.bad_json`, `request.body_read`, `request.control_char`,
-    /// `request.duplicate_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
+    /// `cli.permission_denied`, `compliance.blocked`, `compliance.blocked_address`,
+    /// `compliance.blocklist_unavailable`, `compliance.no_destination`, `compliance.no_network`,
+    /// `compliance.sanctioned_address`, `compliance.sanctions_unavailable`, `idempotency.bad_key`,
+    /// `idempotency.in_progress`, `idempotency.key_reused`, `idempotency.unavailable`, `internal`,
+    /// `ledger.account_not_found`, `ledger.asset_mismatch`, `ledger.bad_direction`,
+    /// `ledger.duplicate_posting`, `ledger.fiat_asset`, `ledger.idempotency_conflict`,
+    /// `ledger.missing_idempotency_key`, `ledger.no_lines`, `ledger.non_positive_amount`,
+    /// `ledger.sandbox_live_mix`, `ledger.unbalanced`, `merchant.bad_signature`,
+    /// `merchant.key_expired`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
+    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`,
+    /// `payout.above_limit`, `payout.address_network_mismatch`, `payout.amount_below_fee`,
+    /// `payout.asset_mismatch`, `payout.bad_address`, `payout.bad_amount`, `payout.bad_memo`,
+    /// `payout.bad_owner_kind`, `payout.bad_url_callback`, `payout.cap_unpriceable`,
+    /// `payout.convert_bad_amount`, `payout.convert_frozen`, `payout.convert_idempotency_conflict`,
+    /// `payout.convert_insufficient`, `payout.convert_no_rate`, `payout.convert_same_asset`,
+    /// `payout.convert_unsupported`, `payout.daily_cap`, `payout.destination_internal`,
+    /// `payout.destination_not_activated`, `payout.duplicate_reference`,
+    /// `payout.fee_asset_mismatch`, `payout.freeze_unknown`, `payout.from_currency_unsupported`,
+    /// `payout.frozen`, `payout.funds_maturing`, `payout.funds_settling`,
+    /// `payout.insufficient_funds`, `payout.memo_conflict`, `payout.memo_required`,
+    /// `payout.memo_too_long`, `payout.merchant_frozen`, `payout.network_required`,
+    /// `payout.no_destination`, `payout.no_owner`, `payout.not_found`, `payout.order_id_required`,
+    /// `payout.reference_collision`, `payout.reserved_reference`, `payout.unsupported_network`,
+    /// `rates.deviation`, `rates.no_source`, `rates.non_positive`, `rates.stale_rate`,
+    /// `request.bad_json`, `request.body_read`, `request.control_char`, `request.duplicate_field`,
+    /// `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
     /// `request.reference_invalid`, `request.reference_too_long`, `request.too_deep`,
     /// `request.unknown_currency`, `sandbox.convert_not_available`, `treasury.no_ccy_map`,
     /// `wallet.static_not_found`, `webhook.no_endpoint`.
@@ -1082,21 +1143,24 @@ impl<Tr: Clone> Payouts<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Массовая выплата
+    /// Mass payout
     ///
-    /// Много выплат за один запрос (до 100). Каждая независима: ошибка по одной не останавливает
-    /// остальные, по каждой возвращается результат. Идемпотентно по `order_id`, как обычная
-    /// выплата.
+    /// Many payouts in one request (up to 100). Each one is independent: an error in one does not
+    /// stop the rest, and a result is returned for each. Idempotent on `order_id`, like a regular
+    /// payout.
+    ///
+    /// Requires role: Finance when called with a CLI key.
     ///
     /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
-    /// `batch.duplicate_order_id`, `compliance.blocked`, `compliance.blocked_address`,
-    /// `compliance.blocklist_unavailable`, `compliance.no_destination`, `compliance.no_network`,
-    /// `compliance.sanctioned_address`, `compliance.sanctions_unavailable`, `idempotency.bad_key`,
-    /// `idempotency.in_progress`, `idempotency.key_reused`, `idempotency.unavailable`, `internal`,
-    /// `ledger.account_not_found`, `ledger.asset_mismatch`, `ledger.bad_direction`,
-    /// `ledger.duplicate_posting`, `ledger.fiat_asset`, `ledger.idempotency_conflict`,
-    /// `ledger.missing_idempotency_key`, `ledger.no_lines`, `ledger.non_positive_amount`,
-    /// `ledger.sandbox_live_mix`, `ledger.unbalanced`, `merchant.bad_signature`,
+    /// `batch.duplicate_order_id`, `cli.permission_denied`, `compliance.blocked`,
+    /// `compliance.blocked_address`, `compliance.blocklist_unavailable`,
+    /// `compliance.no_destination`, `compliance.no_network`, `compliance.sanctioned_address`,
+    /// `compliance.sanctions_unavailable`, `idempotency.bad_key`, `idempotency.in_progress`,
+    /// `idempotency.key_reused`, `idempotency.unavailable`, `internal`, `ledger.account_not_found`,
+    /// `ledger.asset_mismatch`, `ledger.bad_direction`, `ledger.duplicate_posting`,
+    /// `ledger.fiat_asset`, `ledger.idempotency_conflict`, `ledger.missing_idempotency_key`,
+    /// `ledger.no_lines`, `ledger.non_positive_amount`, `ledger.sandbox_live_mix`,
+    /// `ledger.unbalanced`, `merchant.bad_signature`, `merchant.key_expired`,
     /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
     /// `merchant.suspended`, `merchant.unknown_key`, `payout.above_limit`,
     /// `payout.address_network_mismatch`, `payout.amount_below_fee`, `payout.asset_mismatch`,
@@ -1126,21 +1190,24 @@ impl<Tr: Clone> Payouts<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Узнать статус выплаты
+    /// Get payout status
     ///
-    /// По `uuid`/`order_id`.
+    /// By `uuid`/`order_id`.
     ///
-    /// Дополнительно к общему объекту выплаты этот ответ несёт `error` и `error_code`: последняя
-    /// записанная причина, почему выплата упала или застряла (текст и, когда он есть, машинный код
-    /// вида `payout.insufficient_funds`). Оба ключа присутствуют всегда; `null` — ошибок не
-    /// записано.
+    /// In addition to the common payout object this response carries `error` and `error_code`: the
+    /// last recorded reason why the payout failed or got stuck (the text and, when present, a
+    /// machine code like `payout.insufficient_funds`). Both keys are always present; `null` — no
+    /// errors recorded.
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`, `payout.bad_uuid`,
-    /// `payout.no_lookup`, `payout.not_found`, `request.bad_json`, `request.body_read`,
-    /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
-    /// `request.rate_limited`, `request.too_deep`.
+    /// Requires role: Viewer when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `payout.bad_uuid`, `payout.no_lookup`,
+    /// `payout.not_found`, `request.bad_json`, `request.body_read`, `request.control_char`,
+    /// `request.duplicate_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
+    /// `request.too_deep`.
     ///
     /// `POST /v1/payout/info` (`getPayoutInfo`).
     pub fn get_info(&self, params: LookupRequest) -> Request<Tr, PayoutInfoResult> {
@@ -1149,20 +1216,23 @@ impl<Tr: Clone> Payouts<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// История выплат
+    /// Payout history
     ///
-    /// Список ваших выплат, новые сверху: `items` + блок `paginate` (`total`, `per_page`, `offset`,
-    /// `has_pages`). Тело: `limit`, `offset`, необязательные `status`, `kind` (`refund` | `payout`
-    /// | пусто — выплаты без возвратов) и `include_refunds`: по умолчанию возвраты в историю выплат
-    /// не входят, `true` без `kind` возвращает выплаты и возвраты одной лентой; только возвраты —
-    /// `kind: refund`.
+    /// Your payouts, newest first: `items` plus a `paginate` block (`total`, `per_page`, `offset`,
+    /// `has_pages`). Body: `limit`, `offset`, optional `status`, `kind` (`refund` | `payout` |
+    /// empty — payouts without refunds) and `include_refunds`: by default refunds are not included
+    /// in the payout history; `true` without `kind` returns payouts and refunds as one feed;
+    /// refunds only — `kind: refund`.
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`, `payout.bad_kind`,
-    /// `payout.bad_status`, `payout.not_found`, `request.bad_json`, `request.body_read`,
-    /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
-    /// `request.rate_limited`, `request.too_deep`.
+    /// Requires role: Viewer when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `payout.bad_kind`, `payout.bad_status`,
+    /// `payout.not_found`, `request.bad_json`, `request.body_read`, `request.control_char`,
+    /// `request.duplicate_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
+    /// `request.too_deep`.
     ///
     /// `POST /v1/payout/history` (`listPayoutHistory`).
     pub fn list_history(&self, params: HistoryRequest) -> Pager<Tr, PayoutView> {
@@ -1171,18 +1241,21 @@ impl<Tr: Clone> Payouts<Tr> {
         Pager::new(self.transport.clone(), call)
     }
 
-    /// Рассчитать сумму и комиссию выплаты
+    /// Calculate payout amount and fee
     ///
-    /// Предварительный расчёт: сколько спишется, сколько комиссия, сколько получит адрес — без
-    /// создания выплаты.
+    /// A preliminary calculation: how much will be debited, the fee, and how much the address will
+    /// receive — without creating a payout.
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`,
-    /// `payout.amount_below_fee`, `payout.bad_amount`, `payout.network_required`,
-    /// `payout.unsupported_network`, `rates.deviation`, `rates.no_source`, `rates.non_positive`,
-    /// `request.bad_json`, `request.body_read`, `request.control_char`, `request.duplicate_field`,
-    /// `request.nul_byte`, `request.overloaded`, `request.rate_limited`, `request.too_deep`,
+    /// Requires role: Viewer when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `payout.amount_below_fee`,
+    /// `payout.bad_amount`, `payout.network_required`, `payout.unsupported_network`,
+    /// `rates.deviation`, `rates.no_source`, `rates.non_positive`, `request.bad_json`,
+    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
+    /// `request.overloaded`, `request.rate_limited`, `request.too_deep`,
     /// `request.unknown_currency`.
     ///
     /// `POST /v1/payout/calculate` (`calculatePayout`).
@@ -1192,23 +1265,26 @@ impl<Tr: Clone> Payouts<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Проверить выплату без создания (dry-run)
+    /// Validate a payout without creating it (dry run)
     ///
-    /// Прогоняет все проверки создания выплаты — валюта, сумма, сеть, адрес, memo, скрининг адреса,
-    /// комиссия, заморозка/суточный лимит и достаточность баланса — но ничего не резервирует и не
-    /// отправляет. Ответ `valid: true` с суммами (`amount`, `commission`, `payer_amount`,
-    /// `fee_bearer`), либо та же ошибка, что вернуло бы создание. Тело — как у POST /v1/payout
-    /// (order_id необязателен для проверки).
+    /// Runs all payout-creation checks — currency, amount, network, address, memo, address
+    /// screening, fee, freeze/daily limit and balance sufficiency — but reserves and sends nothing.
+    /// The response is `valid: true` with the amounts (`amount`, `commission`, `payer_amount`,
+    /// `fee_bearer`), or the same error that creation would return. The body is the same as for
+    /// POST /v1/payout (order_id is optional for validation).
+    ///
+    /// Requires role: Finance when called with a CLI key.
     ///
     /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
-    /// `compliance.blocked`, `compliance.blocked_address`, `compliance.blocklist_unavailable`,
-    /// `compliance.no_destination`, `compliance.no_network`, `compliance.sanctioned_address`,
-    /// `compliance.sanctions_unavailable`, `internal`, `merchant.bad_signature`,
-    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
-    /// `merchant.suspended`, `merchant.unknown_key`, `payout.above_limit`,
-    /// `payout.address_network_mismatch`, `payout.amount_below_fee`, `payout.bad_address`,
-    /// `payout.bad_amount`, `payout.bad_memo`, `payout.bad_url_callback`, `payout.cap_unpriceable`,
-    /// `payout.daily_cap`, `payout.destination_internal`, `payout.from_currency_unsupported`,
+    /// `cli.permission_denied`, `compliance.blocked`, `compliance.blocked_address`,
+    /// `compliance.blocklist_unavailable`, `compliance.no_destination`, `compliance.no_network`,
+    /// `compliance.sanctioned_address`, `compliance.sanctions_unavailable`, `internal`,
+    /// `merchant.bad_signature`, `merchant.key_expired`, `merchant.key_mode_mismatch`,
+    /// `merchant.rate_limited`, `merchant.secret_decrypt`, `merchant.suspended`,
+    /// `merchant.unknown_key`, `payout.above_limit`, `payout.address_network_mismatch`,
+    /// `payout.amount_below_fee`, `payout.bad_address`, `payout.bad_amount`, `payout.bad_memo`,
+    /// `payout.bad_url_callback`, `payout.cap_unpriceable`, `payout.daily_cap`,
+    /// `payout.destination_internal`, `payout.from_currency_unsupported`,
     /// `payout.insufficient_funds`, `payout.memo_conflict`, `payout.memo_required`,
     /// `payout.memo_too_long`, `payout.merchant_frozen`, `payout.network_required`,
     /// `payout.reserved_reference`, `payout.unsupported_network`, `rates.deviation`,
@@ -1225,24 +1301,26 @@ impl<Tr: Clone> Payouts<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Отменить неотправленную выплату
+    /// Cancel an unsent payout
     ///
-    /// Отменяет выплату и освобождает зарезервированные средства, пока она не отправлена в сеть
-    /// (статусы pending / approved / awaiting_cosign); после отправки — 409. Возврат тоже является
-    /// выплатой, поэтому этим же методом отклоняется ещё не отправленный возврат. Только своя
-    /// выплата.
+    /// Cancels a payout and releases the reserved funds as long as it has not been broadcast to the
+    /// network (statuses pending / approved / awaiting_cosign); after broadcast — 409. A refund is
+    /// also a payout, so this same method rejects a refund that has not been sent yet. Only your
+    /// own payout.
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `ledger.account_not_found`, `ledger.asset_mismatch`, `ledger.bad_direction`,
-    /// `ledger.duplicate_posting`, `ledger.fiat_asset`, `ledger.idempotency_conflict`,
-    /// `ledger.missing_idempotency_key`, `ledger.no_lines`, `ledger.non_positive_amount`,
-    /// `ledger.sandbox_live_mix`, `ledger.unbalanced`, `merchant.bad_signature`,
-    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
-    /// `merchant.suspended`, `merchant.unknown_key`, `payout.already_broadcast`,
-    /// `payout.bad_state`, `payout.bad_uuid`, `payout.illegal_transition`, `payout.not_found`,
-    /// `request.bad_json`, `request.body_read`, `request.control_char`, `request.duplicate_field`,
-    /// `request.nul_byte`, `request.overloaded`, `request.rate_limited`, `request.too_deep`,
-    /// `split.bad_reversal_claim`.
+    /// Requires role: Finance when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `ledger.account_not_found`, `ledger.asset_mismatch`,
+    /// `ledger.bad_direction`, `ledger.duplicate_posting`, `ledger.fiat_asset`,
+    /// `ledger.idempotency_conflict`, `ledger.missing_idempotency_key`, `ledger.no_lines`,
+    /// `ledger.non_positive_amount`, `ledger.sandbox_live_mix`, `ledger.unbalanced`,
+    /// `merchant.bad_signature`, `merchant.key_expired`, `merchant.key_mode_mismatch`,
+    /// `merchant.rate_limited`, `merchant.secret_decrypt`, `merchant.suspended`,
+    /// `merchant.unknown_key`, `payout.already_broadcast`, `payout.bad_state`, `payout.bad_uuid`,
+    /// `payout.illegal_transition`, `payout.not_found`, `request.bad_json`, `request.body_read`,
+    /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
+    /// `request.rate_limited`, `request.too_deep`, `split.bad_reversal_claim`.
     ///
     /// `POST /v1/payout/cancel` (`cancelPayout`).
     pub fn cancel(&self, params: CancelPayoutRequest) -> Request<Tr, PayoutView> {
@@ -1251,18 +1329,21 @@ impl<Tr: Clone> Payouts<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Подтвердить выплату
+    /// Approve a payout
     ///
-    /// Подтверждает выплату, ожидающую подтверждения. Выплаты по API-ключу подтверждаются
-    /// автоматически — этот метод нужен только внутренним/кабинетным сценариям.
+    /// Approves a payout awaiting approval. Payouts made with an API key are approved automatically
+    /// — this method is only needed for internal/dashboard scenarios.
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`,
-    /// `payout.approver_is_creator`, `payout.bad_uuid`, `payout.freeze_unknown`, `payout.frozen`,
-    /// `payout.illegal_transition`, `payout.not_found`, `payout.not_pending`, `request.bad_json`,
-    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
-    /// `request.overloaded`, `request.rate_limited`, `request.too_deep`.
+    /// Requires role: Finance when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `payout.approver_is_creator`,
+    /// `payout.bad_uuid`, `payout.freeze_unknown`, `payout.frozen`, `payout.illegal_transition`,
+    /// `payout.not_found`, `payout.not_pending`, `request.bad_json`, `request.body_read`,
+    /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
+    /// `request.rate_limited`, `request.too_deep`.
     ///
     /// `POST /v1/payout/approve` (`approvePayout`).
     pub fn approve(&self, params: ApproveRequest) -> Request<Tr, PayoutView> {
@@ -1271,16 +1352,19 @@ impl<Tr: Clone> Payouts<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Доступные валюты и сети для выплат
+    /// Currencies and networks available for payouts
     ///
-    /// Список с лимитами и комиссиями. Тело — пустой `{}`.
+    /// The list with limits and fees. The body is an empty `{}`.
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`, `rates.deviation`,
-    /// `rates.no_source`, `rates.non_positive`, `request.bad_json`, `request.body_read`,
-    /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
-    /// `request.rate_limited`, `request.too_deep`.
+    /// Requires role: Viewer when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `rates.deviation`, `rates.no_source`,
+    /// `rates.non_positive`, `request.bad_json`, `request.body_read`, `request.control_char`,
+    /// `request.duplicate_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
+    /// `request.too_deep`.
     ///
     /// `POST /v1/payout/services` (`listPayoutServices`).
     pub fn list_services(&self, params: PageRequest) -> Pager<Tr, PayServiceEntry> {
@@ -1289,25 +1373,27 @@ impl<Tr: Clone> Payouts<Tr> {
         Pager::new(self.transport.clone(), call)
     }
 
-    /// Перевод на личный кошелёк
+    /// Transfer to the personal wallet
     ///
-    /// Перевести средства с бизнес-кошелька мерчанта на личный кошелёк владельца аккаунта. Требует
-    /// привязки мерчанта к пользователю.
+    /// Transfer funds from the merchant's business wallet to the account owner's personal wallet.
+    /// Requires the merchant to be linked to a user.
+    ///
+    /// Not available to CLI keys: call it with the integration key.
     ///
     /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
-    /// `idempotency.bad_key`, `idempotency.in_progress`, `idempotency.key_reused`,
-    /// `idempotency.unavailable`, `internal`, `ledger.account_not_found`, `ledger.asset_mismatch`,
-    /// `ledger.bad_direction`, `ledger.duplicate_posting`, `ledger.fiat_asset`,
-    /// `ledger.idempotency_conflict`, `ledger.missing_idempotency_key`, `ledger.no_lines`,
-    /// `ledger.non_positive_amount`, `ledger.sandbox_live_mix`, `ledger.unbalanced`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.no_personal_wallet`,
-    /// `merchant.not_found`, `merchant.rate_limited`, `merchant.secret_decrypt`,
-    /// `merchant.suspended`, `merchant.unknown_key`, `payout.above_limit`,
-    /// `payout.cap_unpriceable`, `payout.daily_cap`, `payout.merchant_frozen`,
-    /// `personal.amount_invalid`, `personal.bad_source_id`, `personal.funds_maturing`,
-    /// `personal.insufficient`, `rates.deviation`, `rates.no_source`, `rates.non_positive`,
-    /// `request.bad_json`, `request.body_read`, `request.control_char`, `request.duplicate_field`,
-    /// `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
+    /// `cli.permission_denied`, `idempotency.bad_key`, `idempotency.in_progress`,
+    /// `idempotency.key_reused`, `idempotency.unavailable`, `internal`, `ledger.account_not_found`,
+    /// `ledger.asset_mismatch`, `ledger.bad_direction`, `ledger.duplicate_posting`,
+    /// `ledger.fiat_asset`, `ledger.idempotency_conflict`, `ledger.missing_idempotency_key`,
+    /// `ledger.no_lines`, `ledger.non_positive_amount`, `ledger.sandbox_live_mix`,
+    /// `ledger.unbalanced`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.no_personal_wallet`, `merchant.not_found`,
+    /// `merchant.rate_limited`, `merchant.secret_decrypt`, `merchant.suspended`,
+    /// `merchant.unknown_key`, `payout.above_limit`, `payout.cap_unpriceable`, `payout.daily_cap`,
+    /// `payout.merchant_frozen`, `personal.amount_invalid`, `personal.bad_source_id`,
+    /// `personal.funds_maturing`, `personal.insufficient`, `rates.deviation`, `rates.no_source`,
+    /// `rates.non_positive`, `request.bad_json`, `request.body_read`, `request.control_char`,
+    /// `request.duplicate_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
     /// `request.reference_invalid`, `request.reference_too_long`, `request.too_deep`,
     /// `request.unknown_currency`, `sandbox.transfer_not_available`, `transfer.bad_amount`.
     ///
@@ -1321,29 +1407,32 @@ impl<Tr: Clone> Payouts<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Внутренний перевод пользователю платформы
+    /// Internal transfer to a platform user
     ///
-    /// Перевести средства с бизнес-кошелька на личный кошелёк ДРУГОГО пользователя платформы (без
-    /// комиссии, мгновенно, без сети). Получатель адресуется по user id; юзернейм резолвится
-    /// публичным эндпоинтом кабинета /public/users/{username}.
+    /// Transfer funds from the business wallet to the personal wallet of ANOTHER platform user (no
+    /// fee, instant, off-chain). The recipient is addressed by user id; a username is resolved by
+    /// the dashboard's public endpoint /public/users/{username}.
+    ///
+    /// Requires role: Finance when called with a CLI key.
     ///
     /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
-    /// `idempotency.bad_key`, `idempotency.in_progress`, `idempotency.key_reused`,
-    /// `idempotency.unavailable`, `internal`, `ledger.account_not_found`, `ledger.asset_mismatch`,
-    /// `ledger.bad_direction`, `ledger.duplicate_posting`, `ledger.fiat_asset`,
-    /// `ledger.idempotency_conflict`, `ledger.missing_idempotency_key`, `ledger.no_lines`,
-    /// `ledger.non_positive_amount`, `ledger.sandbox_live_mix`, `ledger.unbalanced`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`,
-    /// `payout.above_limit`, `payout.cap_unpriceable`, `payout.daily_cap`,
-    /// `payout.merchant_frozen`, `personal.amount_invalid`, `personal.bad_source`,
-    /// `personal.bad_source_id`, `personal.insufficient`, `personal.no_recipient`,
-    /// `personal.self_transfer`, `rates.deviation`, `rates.no_source`, `rates.non_positive`,
-    /// `request.bad_json`, `request.body_read`, `request.control_char`, `request.duplicate_field`,
-    /// `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
-    /// `request.reference_invalid`, `request.reference_too_long`, `request.too_deep`,
-    /// `request.unknown_currency`, `sandbox.transfer_not_available`, `transfer.bad_amount`,
-    /// `transfer.bad_recipient`, `transfer.no_recipient`, `transfer.recipient_not_found`.
+    /// `cli.permission_denied`, `idempotency.bad_key`, `idempotency.in_progress`,
+    /// `idempotency.key_reused`, `idempotency.unavailable`, `internal`, `ledger.account_not_found`,
+    /// `ledger.asset_mismatch`, `ledger.bad_direction`, `ledger.duplicate_posting`,
+    /// `ledger.fiat_asset`, `ledger.idempotency_conflict`, `ledger.missing_idempotency_key`,
+    /// `ledger.no_lines`, `ledger.non_positive_amount`, `ledger.sandbox_live_mix`,
+    /// `ledger.unbalanced`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `payout.above_limit`,
+    /// `payout.cap_unpriceable`, `payout.daily_cap`, `payout.merchant_frozen`,
+    /// `personal.amount_invalid`, `personal.bad_source`, `personal.bad_source_id`,
+    /// `personal.insufficient`, `personal.no_recipient`, `personal.self_transfer`,
+    /// `rates.deviation`, `rates.no_source`, `rates.non_positive`, `request.bad_json`,
+    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
+    /// `request.overloaded`, `request.rate_limited`, `request.reference_invalid`,
+    /// `request.reference_too_long`, `request.too_deep`, `request.unknown_currency`,
+    /// `sandbox.transfer_not_available`, `transfer.bad_amount`, `transfer.bad_recipient`,
+    /// `transfer.no_recipient`, `transfer.recipient_not_found`.
     ///
     /// `POST /v1/transfer/to-user` (`transferToUser`).
     pub fn transfer_to_user(&self, params: TransferToUserRequest) -> Request<Tr, TransferResult> {
@@ -1352,21 +1441,25 @@ impl<Tr: Clone> Payouts<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Массовые внутренние переводы (ведомость)
+    /// Bulk internal transfers (payroll)
     ///
-    /// Асинхронная пачка внутренних переводов: {"transfers":\[\<как /v1/transfer/to-user\>...\],
-    /// "on_error":"continue"}. Статус и результаты по строкам — POST /v1/batch/info.
+    /// An asynchronous batch of internal transfers: {"transfers":\[\<as in
+    /// /v1/transfer/to-user\>...\], "on_error":"continue"}. Status and per-row results — POST
+    /// /v1/batch/info.
+    ///
+    /// Requires role: Finance when called with a CLI key.
     ///
     /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
     /// `batch.bad_on_error`, `batch.bad_recipient`, `batch.disabled`, `batch.duplicate_order_id`,
     /// `batch.duplicate_reference`, `batch.empty`, `batch.invoice_required`,
     /// `batch.order_id_required`, `batch.reference_required`, `batch.too_large`,
-    /// `batch.unsupported_kind`, `idempotency.bad_key`, `idempotency.in_progress`,
-    /// `idempotency.key_reused`, `idempotency.unavailable`, `internal`, `merchant.bad_signature`,
-    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
-    /// `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`, `request.body_read`,
-    /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
-    /// `request.rate_limited`, `request.too_deep`.
+    /// `batch.unsupported_kind`, `cli.permission_denied`, `idempotency.bad_key`,
+    /// `idempotency.in_progress`, `idempotency.key_reused`, `idempotency.unavailable`, `internal`,
+    /// `merchant.bad_signature`, `merchant.key_expired`, `merchant.key_mode_mismatch`,
+    /// `merchant.rate_limited`, `merchant.secret_decrypt`, `merchant.suspended`,
+    /// `merchant.unknown_key`, `request.bad_json`, `request.body_read`, `request.control_char`,
+    /// `request.duplicate_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
+    /// `request.too_deep`.
     ///
     /// `POST /v1/transfer/batch` (`createTransferBatch`).
     pub fn create_transfer_batch(
@@ -1379,7 +1472,7 @@ impl<Tr: Clone> Payouts<Tr> {
     }
 }
 
-/// Выплата без адреса: получатель сам вводит адрес по секретной ссылке.
+/// Payouts without an address: the recipient enters their own address via a secret link.
 #[derive(Clone, Debug)]
 pub struct PayoutLinks<Tr> {
     transport: Tr,
@@ -1390,25 +1483,29 @@ impl<Tr: Clone> PayoutLinks<Tr> {
         Self { transport }
     }
 
-    /// Создать выплатную ссылку
+    /// Create a payout link
     ///
-    /// Резервирует сумму с баланса и выпускает ссылку, по которой получатель сам вводит адрес и
-    /// забирает деньги. Адрес получателя знать не нужно. `email` — отправим письмо со ссылкой;
-    /// `expires_in_seconds` — окно на получение, 3600–2592000 (час–30 суток). ⚠ Без поля или при
-    /// `0` ссылка живёт ОДИН ЧАС, а не максимум — задавайте срок явно. Идемпотентность: `reference`
-    /// (или заголовок `Idempotency-Key`).
+    /// Reserves the amount from the balance and issues a link through which the recipient enters
+    /// their own address and claims the money. You do not need to know the recipient's address.
+    /// `email` — we will send an email with the link; `expires_in_seconds` — the claim window,
+    /// 3600–2592000 (an hour to 30 days). ⚠ If the field is omitted or `0`, the link lives ONE
+    /// HOUR, not the maximum — set the lifetime explicitly. Idempotency: `reference` (or the
+    /// `Idempotency-Key` header).
+    ///
+    /// Requires role: Finance when called with a CLI key.
     ///
     /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
-    /// `email.bad_recipient`, `idempotency.bad_key`, `idempotency.in_progress`,
-    /// `idempotency.key_reused`, `idempotency.unavailable`, `internal`, `ledger.account_not_found`,
-    /// `ledger.asset_mismatch`, `ledger.bad_direction`, `ledger.duplicate_posting`,
-    /// `ledger.fiat_asset`, `ledger.idempotency_conflict`, `ledger.missing_idempotency_key`,
-    /// `ledger.no_lines`, `ledger.non_positive_amount`, `ledger.sandbox_live_mix`,
-    /// `ledger.unbalanced`, `merchant.bad_signature`, `merchant.key_mode_mismatch`,
-    /// `merchant.rate_limited`, `merchant.secret_decrypt`, `merchant.suspended`,
-    /// `merchant.unknown_key`, `payout.freeze_unknown`, `payout.frozen`, `payout.merchant_frozen`,
-    /// `payoutlink.bad_amount`, `payoutlink.bad_fee_bearer`, `payoutlink.bad_passcode`,
-    /// `payoutlink.disabled`, `payoutlink.duplicate_reference`, `payoutlink.funds_maturing`,
+    /// `cli.permission_denied`, `email.bad_recipient`, `idempotency.bad_key`,
+    /// `idempotency.in_progress`, `idempotency.key_reused`, `idempotency.unavailable`, `internal`,
+    /// `ledger.account_not_found`, `ledger.asset_mismatch`, `ledger.bad_direction`,
+    /// `ledger.duplicate_posting`, `ledger.fiat_asset`, `ledger.idempotency_conflict`,
+    /// `ledger.missing_idempotency_key`, `ledger.no_lines`, `ledger.non_positive_amount`,
+    /// `ledger.sandbox_live_mix`, `ledger.unbalanced`, `merchant.bad_signature`,
+    /// `merchant.key_expired`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
+    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`,
+    /// `payout.freeze_unknown`, `payout.frozen`, `payout.merchant_frozen`, `payoutlink.bad_amount`,
+    /// `payoutlink.bad_fee_bearer`, `payoutlink.bad_passcode`, `payoutlink.disabled`,
+    /// `payoutlink.duplicate_reference`, `payoutlink.funds_maturing`,
     /// `payoutlink.idempotency_required`, `payoutlink.insufficient_funds`, `payoutlink.passcode`,
     /// `payoutlink.token`, `payoutlink.unsupported_network`, `rates.deviation`, `rates.no_source`,
     /// `rates.non_positive`, `request.bad_json`, `request.body_read`, `request.control_char`,
@@ -1423,29 +1520,31 @@ impl<Tr: Clone> PayoutLinks<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Создать выплатные ссылки пачкой
+    /// Create payout links in bulk
     ///
-    /// До 500 ссылок за вызов; каждая проходит или падает независимо, ответ выровнен по индексам
-    /// запроса. Повтор с теми же `reference` безопасен.
+    /// Up to 500 links per call; each succeeds or fails independently, the response is aligned with
+    /// the request indices. Retrying with the same `reference` values is safe.
+    ///
+    /// Requires role: Finance when called with a CLI key.
     ///
     /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
-    /// `email.bad_recipient`, `idempotency.bad_key`, `idempotency.in_progress`,
-    /// `idempotency.key_reused`, `idempotency.unavailable`, `internal`, `ledger.account_not_found`,
-    /// `ledger.asset_mismatch`, `ledger.bad_direction`, `ledger.duplicate_posting`,
-    /// `ledger.fiat_asset`, `ledger.idempotency_conflict`, `ledger.missing_idempotency_key`,
-    /// `ledger.no_lines`, `ledger.non_positive_amount`, `ledger.sandbox_live_mix`,
-    /// `ledger.unbalanced`, `merchant.bad_signature`, `merchant.key_mode_mismatch`,
-    /// `merchant.rate_limited`, `merchant.secret_decrypt`, `merchant.suspended`,
-    /// `merchant.unknown_key`, `payout.freeze_unknown`, `payout.frozen`, `payout.merchant_frozen`,
-    /// `payoutlink.bad_amount`, `payoutlink.bad_fee_bearer`, `payoutlink.bad_passcode`,
-    /// `payoutlink.batch_too_large`, `payoutlink.disabled`, `payoutlink.duplicate_reference`,
-    /// `payoutlink.empty_batch`, `payoutlink.funds_maturing`, `payoutlink.insufficient_funds`,
-    /// `payoutlink.passcode`, `payoutlink.reference_required`, `payoutlink.token`,
-    /// `payoutlink.unsupported_network`, `rates.deviation`, `rates.no_source`,
-    /// `rates.non_positive`, `request.bad_json`, `request.body_read`, `request.control_char`,
-    /// `request.duplicate_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
-    /// `request.reference_invalid`, `request.reference_too_long`, `request.too_deep`,
-    /// `request.unknown_currency`.
+    /// `cli.permission_denied`, `email.bad_recipient`, `idempotency.bad_key`,
+    /// `idempotency.in_progress`, `idempotency.key_reused`, `idempotency.unavailable`, `internal`,
+    /// `ledger.account_not_found`, `ledger.asset_mismatch`, `ledger.bad_direction`,
+    /// `ledger.duplicate_posting`, `ledger.fiat_asset`, `ledger.idempotency_conflict`,
+    /// `ledger.missing_idempotency_key`, `ledger.no_lines`, `ledger.non_positive_amount`,
+    /// `ledger.sandbox_live_mix`, `ledger.unbalanced`, `merchant.bad_signature`,
+    /// `merchant.key_expired`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
+    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`,
+    /// `payout.freeze_unknown`, `payout.frozen`, `payout.merchant_frozen`, `payoutlink.bad_amount`,
+    /// `payoutlink.bad_fee_bearer`, `payoutlink.bad_passcode`, `payoutlink.batch_too_large`,
+    /// `payoutlink.disabled`, `payoutlink.duplicate_reference`, `payoutlink.empty_batch`,
+    /// `payoutlink.funds_maturing`, `payoutlink.insufficient_funds`, `payoutlink.passcode`,
+    /// `payoutlink.reference_required`, `payoutlink.token`, `payoutlink.unsupported_network`,
+    /// `rates.deviation`, `rates.no_source`, `rates.non_positive`, `request.bad_json`,
+    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
+    /// `request.overloaded`, `request.rate_limited`, `request.reference_invalid`,
+    /// `request.reference_too_long`, `request.too_deep`, `request.unknown_currency`.
     ///
     /// `POST /v1/payout/link/batch` (`createPayoutLinkBatch`).
     pub fn create_batch(
@@ -1457,14 +1556,17 @@ impl<Tr: Clone> PayoutLinks<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Список выплатных ссылок
+    /// List payout links
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`,
-    /// `payoutlink.disabled`, `rates.deviation`, `rates.no_source`, `rates.non_positive`,
-    /// `request.bad_json`, `request.body_read`, `request.control_char`, `request.duplicate_field`,
-    /// `request.nul_byte`, `request.overloaded`, `request.rate_limited`, `request.too_deep`.
+    /// Requires role: Viewer when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `payoutlink.disabled`, `rates.deviation`,
+    /// `rates.no_source`, `rates.non_positive`, `request.bad_json`, `request.body_read`,
+    /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
+    /// `request.rate_limited`, `request.too_deep`.
     ///
     /// `POST /v1/payout/link/list` (`listPayoutLinks`).
     pub fn list(&self, params: PageRequest) -> Pager<Tr, PayoutLinkView> {
@@ -1473,15 +1575,17 @@ impl<Tr: Clone> PayoutLinks<Tr> {
         Pager::new(self.transport.clone(), call)
     }
 
-    /// Статус выплатной ссылки
+    /// Payout link status
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`,
-    /// `payoutlink.bad_id`, `payoutlink.disabled`, `payoutlink.not_found`, `rates.deviation`,
-    /// `rates.no_source`, `rates.non_positive`, `request.body_read`, `request.control_char`,
-    /// `request.duplicate_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
-    /// `request.too_deep`.
+    /// Requires role: Viewer when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `payoutlink.bad_id`, `payoutlink.disabled`,
+    /// `payoutlink.not_found`, `rates.deviation`, `rates.no_source`, `rates.non_positive`,
+    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
+    /// `request.overloaded`, `request.rate_limited`, `request.too_deep`.
     ///
     /// `POST /v1/payout/link/info` (`getPayoutLink`).
     pub fn get(&self, params: PayoutLinkIDRequest) -> Request<Tr, PayoutLinkView> {
@@ -1490,19 +1594,22 @@ impl<Tr: Clone> PayoutLinks<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Отменить выплатную ссылку
+    /// Cancel a payout link
     ///
-    /// Непогашенная ссылка отменяется, резерв возвращается на баланс.
+    /// An unclaimed link is cancelled and the reserve is returned to the balance.
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `ledger.account_not_found`, `ledger.asset_mismatch`, `ledger.bad_direction`,
-    /// `ledger.duplicate_posting`, `ledger.fiat_asset`, `ledger.idempotency_conflict`,
-    /// `ledger.missing_idempotency_key`, `ledger.no_lines`, `ledger.non_positive_amount`,
-    /// `ledger.sandbox_live_mix`, `ledger.unbalanced`, `merchant.bad_signature`,
-    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
-    /// `merchant.suspended`, `merchant.unknown_key`, `payout.not_found`, `payoutlink.bad_id`,
-    /// `payoutlink.disabled`, `payoutlink.not_found`, `payoutlink.not_funded`, `rates.deviation`,
-    /// `rates.no_source`, `rates.non_positive`, `request.body_read`, `request.control_char`,
+    /// Requires role: Finance when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `ledger.account_not_found`, `ledger.asset_mismatch`,
+    /// `ledger.bad_direction`, `ledger.duplicate_posting`, `ledger.fiat_asset`,
+    /// `ledger.idempotency_conflict`, `ledger.missing_idempotency_key`, `ledger.no_lines`,
+    /// `ledger.non_positive_amount`, `ledger.sandbox_live_mix`, `ledger.unbalanced`,
+    /// `merchant.bad_signature`, `merchant.key_expired`, `merchant.key_mode_mismatch`,
+    /// `merchant.rate_limited`, `merchant.secret_decrypt`, `merchant.suspended`,
+    /// `merchant.unknown_key`, `payout.not_found`, `payoutlink.bad_id`, `payoutlink.disabled`,
+    /// `payoutlink.not_found`, `payoutlink.not_funded`, `rates.deviation`, `rates.no_source`,
+    /// `rates.non_positive`, `request.body_read`, `request.control_char`,
     /// `request.duplicate_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
     /// `request.too_deep`.
     ///
@@ -1513,13 +1620,14 @@ impl<Tr: Clone> PayoutLinks<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Страница получения: что внутри ссылки (без ключа)
+    /// Claim page: what the link holds (no key)
     ///
-    /// Публичный просмотр для получателя: валюта, сумма, заметка, срок. Токен — секрет из URL. У
-    /// ссылки с кодом получения код передаётся заголовком `X-Claim-Passcode` (не query — второй
-    /// фактор не должен оседать в логах); без кода отдаётся минимум (`passcode_required: true`,
-    /// статус, срок) — суммы видны только после верного кода; неверные коды считаются и после 10
-    /// запирают ссылку (429 `payoutlink.passcode_locked`).
+    /// A public view for the recipient: currency, amount, note, expiry. The token is the secret
+    /// from the URL. For a link with a claim passcode, the passcode is sent in the
+    /// `X-Claim-Passcode` header (not the query — a second factor must not end up in logs); without
+    /// the passcode only a minimum is returned (`passcode_required: true`, status, expiry) —
+    /// amounts are visible only after a correct passcode; wrong passcodes are counted and after 10
+    /// the link is locked (429 `payoutlink.passcode_locked`).
     ///
     /// Errors: `internal`, `payoutlink.disabled`, `payoutlink.not_found`,
     /// `payoutlink.passcode_locked`, `payoutlink.passcode_required`, `payoutlink.passcode_wrong`,
@@ -1533,12 +1641,13 @@ impl<Tr: Clone> PayoutLinks<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Получить выплату по ссылке (без ключа)
+    /// Claim a payout via a link (no key)
     ///
-    /// Получатель вводит свой `address` (и `memo`, если сеть требует) — из резерва рождается
-    /// обычная выплата. Ссылка с кодом получения требует `passcode`: без него — 403
-    /// `payoutlink.passcode_required`, неверный — 403 `payoutlink.passcode_wrong`, после 10
-    /// неверных — 429 `payoutlink.passcode_locked` (мерчант отменяет ссылку и выпускает новую).
+    /// The recipient enters their `address` (and `memo`, if the network requires one) — a regular
+    /// payout is created from the reserve. A link with a claim passcode requires `passcode`:
+    /// without it — 403 `payoutlink.passcode_required`, a wrong one — 403
+    /// `payoutlink.passcode_wrong`, after 10 wrong ones — 429 `payoutlink.passcode_locked` (the
+    /// merchant cancels the link and issues a new one).
     ///
     /// Errors: `compliance.blocked`, `compliance.blocked_address`,
     /// `compliance.blocklist_unavailable`, `compliance.no_destination`, `compliance.no_network`,
@@ -1577,7 +1686,7 @@ impl<Tr: Clone> PayoutLinks<Tr> {
     }
 }
 
-/// Асинхронные батчи: платежи, возвраты, выплаты, переводы пачками.
+/// Asynchronous batches of payments, refunds, payouts and transfers.
 #[derive(Clone, Debug)]
 pub struct Batches<Tr> {
     transport: Tr,
@@ -1588,28 +1697,31 @@ impl<Tr: Clone> Batches<Tr> {
         Self { transport }
     }
 
-    /// Массовое создание платежей
+    /// Create payments in bulk
     ///
-    /// До 5000 платежей за ОДИН запрос (одна отметка rate-limit). Каждый элемент — обычный объект
-    /// `/v1/payment` (разные валюты/сети допустимы). В ответ сразу приходит `batch_id`; обработка
-    /// идёт в фоне. Статус и результаты (включая `uuid` и ссылку оплаты каждого платежа) — через
-    /// `/v1/batch/info`.
+    /// Up to 5000 payments in ONE request (one rate-limit hit). Each item is a regular
+    /// `/v1/payment` object (different currencies/networks are allowed). The response immediately
+    /// returns `batch_id`; processing runs in the background. Status and results (including each
+    /// payment's `uuid` and payment link) — via `/v1/batch/info`.
     ///
-    /// `on_error`: `continue` (по умолчанию — ошибка одного не мешает остальным) или `stop` (после
-    /// первой ошибки оставшиеся отменяются); регистр не важен, любое другое значение — отказ
-    /// `batch.bad_on_error`. Каждый элемент идемпотентен по своему `order_id`; вся пачка — по
-    /// заголовку `Idempotency-Key`.
+    /// `on_error`: `continue` (default — one item's error does not affect the rest) or `stop`
+    /// (after the first error the remaining items are cancelled); case-insensitive, any other value
+    /// is rejected with `batch.bad_on_error`. Each item is idempotent on its own `order_id`; the
+    /// whole batch — on the `Idempotency-Key` header.
+    ///
+    /// Requires role: Finance when called with a CLI key.
     ///
     /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
     /// `batch.bad_on_error`, `batch.bad_recipient`, `batch.disabled`, `batch.duplicate_order_id`,
     /// `batch.duplicate_reference`, `batch.empty`, `batch.invoice_required`,
     /// `batch.order_id_required`, `batch.reference_required`, `batch.too_large`,
-    /// `batch.unsupported_kind`, `idempotency.bad_key`, `idempotency.in_progress`,
-    /// `idempotency.key_reused`, `idempotency.unavailable`, `internal`, `merchant.bad_signature`,
-    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
-    /// `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`, `request.body_read`,
-    /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
-    /// `request.rate_limited`, `request.too_deep`.
+    /// `batch.unsupported_kind`, `cli.permission_denied`, `idempotency.bad_key`,
+    /// `idempotency.in_progress`, `idempotency.key_reused`, `idempotency.unavailable`, `internal`,
+    /// `merchant.bad_signature`, `merchant.key_expired`, `merchant.key_mode_mismatch`,
+    /// `merchant.rate_limited`, `merchant.secret_decrypt`, `merchant.suspended`,
+    /// `merchant.unknown_key`, `request.bad_json`, `request.body_read`, `request.control_char`,
+    /// `request.duplicate_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
+    /// `request.too_deep`.
     ///
     /// `POST /v1/payment/batch` (`createPaymentBatch`).
     pub fn create_payment(&self, params: PaymentBatchRequest) -> Request<Tr, BatchSubmitResponse> {
@@ -1618,24 +1730,28 @@ impl<Tr: Clone> Batches<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Массовые возвраты
+    /// Bulk refunds
     ///
-    /// До 5000 возвратов за один запрос. Каждый элемент — обычный объект `/v1/payment/refund`, но
-    /// `reference` ОБЯЗАТЕЛЕН на каждом элементе и уникален внутри батча: это ключ идемпотентности
-    /// именно этого возврата (не путать с `order_id`, который указывает на счёт). Без него два
-    /// разных возврата одной суммы одному плательщику молча схлопнулись бы в один. Возвращает
-    /// `batch_id`; статус по каждому — через `/v1/batch/info`. `on_error`: `continue`/`stop`.
+    /// Up to 5000 refunds in one request. Each item is a regular `/v1/payment/refund` object, but
+    /// `reference` is REQUIRED on every item and must be unique within the batch: it is the
+    /// idempotency key of that particular refund (not to be confused with `order_id`, which points
+    /// to the invoice). Without it, two different refunds of the same amount to the same payer
+    /// would silently collapse into one. Returns `batch_id`; per-item status via `/v1/batch/info`.
+    /// `on_error`: `continue`/`stop`.
+    ///
+    /// Requires role: Finance when called with a CLI key.
     ///
     /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
     /// `batch.bad_on_error`, `batch.bad_recipient`, `batch.disabled`, `batch.duplicate_order_id`,
     /// `batch.duplicate_reference`, `batch.empty`, `batch.invoice_required`,
     /// `batch.order_id_required`, `batch.reference_required`, `batch.too_large`,
-    /// `batch.unsupported_kind`, `idempotency.bad_key`, `idempotency.in_progress`,
-    /// `idempotency.key_reused`, `idempotency.unavailable`, `internal`, `merchant.bad_signature`,
-    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
-    /// `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`, `request.body_read`,
-    /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
-    /// `request.rate_limited`, `request.too_deep`.
+    /// `batch.unsupported_kind`, `cli.permission_denied`, `idempotency.bad_key`,
+    /// `idempotency.in_progress`, `idempotency.key_reused`, `idempotency.unavailable`, `internal`,
+    /// `merchant.bad_signature`, `merchant.key_expired`, `merchant.key_mode_mismatch`,
+    /// `merchant.rate_limited`, `merchant.secret_decrypt`, `merchant.suspended`,
+    /// `merchant.unknown_key`, `request.bad_json`, `request.body_read`, `request.control_char`,
+    /// `request.duplicate_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
+    /// `request.too_deep`.
     ///
     /// `POST /v1/refund/batch` (`createRefundBatch`).
     pub fn create_refund(&self, params: RefundBatchRequest) -> Request<Tr, BatchSubmitResponse> {
@@ -1644,22 +1760,25 @@ impl<Tr: Clone> Batches<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Массовые выплаты (async, без лимита 100)
+    /// Bulk payouts (async, no 100 limit)
     ///
-    /// Асинхронный аналог `/v1/payout/mass` без ограничения в 100: до 5000 выплат, обработка в
-    /// фоне, статус через `/v1/batch/info`. Каждый элемент — обычный объект `/v1/payout`,
-    /// идемпотентен по `order_id`.
+    /// Asynchronous counterpart of `/v1/payout/mass` without the 100-item limit: up to 5000
+    /// payouts, processed in the background, status via `/v1/batch/info`. Each item is a regular
+    /// `/v1/payout` object, idempotent on `order_id`.
+    ///
+    /// Requires role: Finance when called with a CLI key.
     ///
     /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
     /// `batch.bad_on_error`, `batch.bad_recipient`, `batch.disabled`, `batch.duplicate_order_id`,
     /// `batch.duplicate_reference`, `batch.empty`, `batch.invoice_required`,
     /// `batch.order_id_required`, `batch.reference_required`, `batch.too_large`,
-    /// `batch.unsupported_kind`, `idempotency.bad_key`, `idempotency.in_progress`,
-    /// `idempotency.key_reused`, `idempotency.unavailable`, `internal`, `merchant.bad_signature`,
-    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
-    /// `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`, `request.body_read`,
-    /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
-    /// `request.rate_limited`, `request.too_deep`.
+    /// `batch.unsupported_kind`, `cli.permission_denied`, `idempotency.bad_key`,
+    /// `idempotency.in_progress`, `idempotency.key_reused`, `idempotency.unavailable`, `internal`,
+    /// `merchant.bad_signature`, `merchant.key_expired`, `merchant.key_mode_mismatch`,
+    /// `merchant.rate_limited`, `merchant.secret_decrypt`, `merchant.suspended`,
+    /// `merchant.unknown_key`, `request.bad_json`, `request.body_read`, `request.control_char`,
+    /// `request.duplicate_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
+    /// `request.too_deep`.
     ///
     /// `POST /v1/payout/batch` (`createPayoutBatch`).
     pub fn create_payout(&self, params: PayoutBatchRequest) -> Request<Tr, BatchSubmitResponse> {
@@ -1668,17 +1787,20 @@ impl<Tr: Clone> Batches<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Статус пачки
+    /// Batch status
     ///
-    /// Прогресс пачки (`total`/`succeeded`/`failed`/`status`) и постранично её элементы с
-    /// результатом или ошибкой по каждому. `status`: `pending` → `processing` → `completed`.
+    /// Batch progress (`total`/`succeeded`/`failed`/`status`) and its items, paginated, with the
+    /// result or error for each. `status`: `pending` → `processing` → `completed`.
+    ///
+    /// Requires role: Viewer when called with a CLI key.
     ///
     /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `batch.bad_id`,
-    /// `batch.disabled`, `batch.not_found`, `internal`, `merchant.bad_signature`,
-    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
-    /// `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`, `request.body_read`,
-    /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
-    /// `request.rate_limited`, `request.too_deep`.
+    /// `batch.disabled`, `batch.not_found`, `cli.permission_denied`, `internal`,
+    /// `merchant.bad_signature`, `merchant.key_expired`, `merchant.key_mode_mismatch`,
+    /// `merchant.rate_limited`, `merchant.secret_decrypt`, `merchant.suspended`,
+    /// `merchant.unknown_key`, `request.bad_json`, `request.body_read`, `request.control_char`,
+    /// `request.duplicate_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
+    /// `request.too_deep`.
     ///
     /// `POST /v1/batch/info` (`getBatchInfo`).
     pub fn get_info(&self, params: BatchInfoRequest) -> Request<Tr, BatchInfoResponse> {
@@ -1688,7 +1810,7 @@ impl<Tr: Clone> Batches<Tr> {
     }
 }
 
-/// Автоматическое разделение поступлений между получателями.
+/// Automatic splitting of incoming funds between recipients.
 #[derive(Clone, Debug)]
 pub struct Splits<Tr> {
     transport: Tr,
@@ -1699,38 +1821,42 @@ impl<Tr: Clone> Splits<Tr> {
         Self { transport }
     }
 
-    /// Правило сплита (отчисление партнёру)
+    /// Split rule (partner share)
     ///
-    /// Автоматически отправлять долю КАЖДОГО входящего платежа партнёру. Укажите ровно одного
-    /// получателя:
+    /// Automatically send a share of EVERY incoming payment to a partner. Specify exactly one
+    /// recipient:
     ///
-    /// • `address` + `network` — внешний крипто-адрес. Уходит он-чейн выплатой, **необратимо**.
-    /// • `merchant_id` — аккаунт на Oblodai. Уходит проводкой по балансу: **обратимо** (возврат
-    /// отзовёт долю обратно).
+    /// • `address` + `network` — an external crypto address. Sent as an on-chain payout,
+    /// **irreversibly**.
+    /// • `merchant_id` — an Oblodai account. Sent as a balance posting: **reversible** (a refund
+    /// claws the share back).
     ///
-    /// `percent` — доля от платежа (напр. `10` или `2.5`). Сумма всех активных правил проекта не
-    /// может превышать 100%.
+    /// `percent` — the share of the payment (e.g. `10` or `2.5`). The sum of all active rules of a
+    /// project cannot exceed 100%.
     ///
-    /// ⚠️ **Возвраты.** Возврат списывается с ВАШЕГО баланса на всю сумму, что прислал плательщик.
-    /// Поэтому отправка партнёрам не происходит сразу: она откладывается на `refund_hold_seconds`
-    /// (см. `/v1/split/config/set`), и в момент отправки база пересчитывается как «оплачено −
-    /// возвращено». Возврат внутри окна автоматически уменьшает (или отменяет) отчисление, и вам
-    /// всегда есть чем вернуть деньги. Возврат ПОСЛЕ отправки: внешнюю долю вернуть нельзя
-    /// (пополняйте баланс), долю on-platform партнёра мы отзовём автоматически.
+    /// ⚠️ **Refunds.** A refund is debited from YOUR balance for the full amount the payer sent.
+    /// That is why partner shares are not sent immediately: sending is deferred by
+    /// `refund_hold_seconds` (see `/v1/split/config/set`), and at send time the base is
+    /// recalculated as "paid − refunded". A refund within the window automatically reduces (or
+    /// cancels) the share, so you always have the funds to refund. A refund AFTER sending: an
+    /// external share cannot be recovered (top up your balance); an on-platform partner's share is
+    /// clawed back automatically.
+    ///
+    /// Requires role: Finance when called with a CLI key.
     ///
     /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
-    /// `idempotency.bad_key`, `idempotency.in_progress`, `idempotency.key_reused`,
-    /// `idempotency.unavailable`, `internal`, `merchant.bad_signature`,
-    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
-    /// `merchant.suspended`, `merchant.unknown_key`, `payout.address_network_mismatch`,
-    /// `payout.bad_address`, `payout.bad_memo`, `payout.memo_conflict`, `payout.memo_required`,
-    /// `payout.memo_too_long`, `request.bad_json`, `request.body_read`, `request.control_char`,
-    /// `request.duplicate_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
-    /// `request.too_deep`, `split.bad_destination`, `split.bad_merchant`, `split.bad_percent`,
-    /// `split.consent_check_failed`, `split.dest_check_failed`, `split.dest_not_found`,
-    /// `split.disabled`, `split.duplicate_destination`, `split.exceeds_100`,
-    /// `split.network_required`, `split.recipient_not_opted_in`, `split.self_destination`,
-    /// `split.unsupported_network`.
+    /// `cli.permission_denied`, `idempotency.bad_key`, `idempotency.in_progress`,
+    /// `idempotency.key_reused`, `idempotency.unavailable`, `internal`, `merchant.bad_signature`,
+    /// `merchant.key_expired`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
+    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`,
+    /// `payout.address_network_mismatch`, `payout.bad_address`, `payout.bad_memo`,
+    /// `payout.memo_conflict`, `payout.memo_required`, `payout.memo_too_long`, `request.bad_json`,
+    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
+    /// `request.overloaded`, `request.rate_limited`, `request.too_deep`, `split.bad_destination`,
+    /// `split.bad_merchant`, `split.bad_percent`, `split.consent_check_failed`,
+    /// `split.dest_check_failed`, `split.dest_not_found`, `split.disabled`,
+    /// `split.duplicate_destination`, `split.exceeds_100`, `split.network_required`,
+    /// `split.recipient_not_opted_in`, `split.self_destination`, `split.unsupported_network`.
     ///
     /// `POST /v1/split/rule` (`createSplitRule`).
     pub fn create_rule(&self, params: SplitRuleRequest) -> Request<Tr, SplitRuleCreated> {
@@ -1739,16 +1865,19 @@ impl<Tr: Clone> Splits<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Список правил
+    /// List rules
     ///
-    /// Ваши правила сплита. `reversible: true` — партнёр на платформе (долю можно отозвать при
-    /// возврате).
+    /// Your split rules. `reversible: true` — an on-platform partner (the share can be clawed back
+    /// on refund).
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`,
-    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
-    /// `request.overloaded`, `request.rate_limited`, `request.too_deep`, `split.disabled`.
+    /// Requires role: Viewer when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`, `request.body_read`,
+    /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
+    /// `request.rate_limited`, `request.too_deep`, `split.disabled`.
     ///
     /// `POST /v1/split/rule/list` (`listSplitRules`).
     pub fn list_rules(&self, params: PageRequest) -> Pager<Tr, SplitRuleView> {
@@ -1757,16 +1886,19 @@ impl<Tr: Clone> Splits<Tr> {
         Pager::new(self.transport.clone(), call)
     }
 
-    /// Удалить правило
+    /// Delete a rule
     ///
-    /// `{rule_id}`. На уже отправленные доли не влияет.
+    /// `{rule_id}`. Does not affect shares already sent.
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`,
-    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
-    /// `request.overloaded`, `request.rate_limited`, `request.too_deep`, `split.bad_id`,
-    /// `split.disabled`, `split.not_found`.
+    /// Requires role: Finance when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`, `request.body_read`,
+    /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
+    /// `request.rate_limited`, `request.too_deep`, `split.bad_id`, `split.disabled`,
+    /// `split.not_found`.
     ///
     /// `POST /v1/split/rule/delete` (`deleteSplitRule`).
     pub fn delete_rule(&self, params: SplitRuleDeleteRequest) -> Request<Tr, SplitRuleDeleted> {
@@ -1775,22 +1907,25 @@ impl<Tr: Clone> Splits<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Окно удержания под возвраты
+    /// Refund hold window
     ///
-    /// `refund_hold_seconds` — на сколько СЕКУНД откладывается ВСЯ исходящая маршрутизация платежа
-    /// (сплиты партнёрам, авто-вывод, авто-конвертация в USDT) после его зачисления.
+    /// `refund_hold_seconds` — how many SECONDS ALL outgoing routing of a payment (partner splits,
+    /// auto-withdrawal, auto-conversion to USDT) is deferred after the payment is credited.
     ///
-    /// Смысл: пока окно не истекло, деньги лежат на вашем балансе, и любой возврат проходит без
-    /// проблем. `0` = отправлять сразу, тогда риск возврата после отправки вы берёте на себя.
-    /// Диапазон 0–7776000 (до 90 суток); поле обязательное — пришлите `0` явно, если доли нужно
-    /// отправлять сразу.
+    /// The point: until the window expires the money stays on your balance, and any refund goes
+    /// through without trouble. `0` = send immediately, in which case you bear the risk of a refund
+    /// after sending. Range 0–7776000 (up to 90 days); the field is required — send `0` explicitly
+    /// if shares should be sent immediately.
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`,
-    /// `request.body_read`, `request.control_char`, `request.duplicate_field`,
-    /// `request.missing_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
-    /// `request.too_deep`, `split.bad_hold`, `split.disabled`.
+    /// Requires role: Finance when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`, `request.body_read`,
+    /// `request.control_char`, `request.duplicate_field`, `request.missing_field`,
+    /// `request.nul_byte`, `request.overloaded`, `request.rate_limited`, `request.too_deep`,
+    /// `split.bad_hold`, `split.disabled`.
     ///
     /// `POST /v1/split/config/set` (`setSplitConfig`).
     pub fn set_config(&self, params: SplitConfigRequest) -> Request<Tr, SplitConfigView> {
@@ -1799,15 +1934,18 @@ impl<Tr: Clone> Splits<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Текущее окно удержания
+    /// Current hold window
     ///
-    /// Возвращает `refund_hold_seconds` проекта.
+    /// Returns the project's `refund_hold_seconds`.
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`,
-    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
-    /// `request.overloaded`, `request.rate_limited`, `request.too_deep`, `split.disabled`.
+    /// Requires role: Viewer when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `request.body_read`, `request.control_char`,
+    /// `request.duplicate_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
+    /// `request.too_deep`, `split.disabled`.
     ///
     /// `POST /v1/split/config/get` (`getSplitConfig`).
     pub fn get_config(&self) -> Request<Tr, SplitConfigView> {
@@ -1815,18 +1953,21 @@ impl<Tr: Clone> Splits<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Согласие принимать сплиты
+    /// Consent to receive splits
     ///
-    /// `{enabled}` — разрешить другим мерчантам направлять доли своих платежей на ВАШ баланс. Пока
-    /// выключено, никто не может создать внутреннее правило сплита с получателем-вами. Выключение
-    /// не отзывает уже созданные правила (деньги по ним продолжают поступать), но блокирует новые.
+    /// `{enabled}` — allow other merchants to route shares of their payments to YOUR balance. While
+    /// disabled, nobody can create an internal split rule with you as the recipient. Disabling does
+    /// not revoke rules already created (money keeps arriving under them), but blocks new ones.
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`,
-    /// `request.body_read`, `request.control_char`, `request.duplicate_field`,
-    /// `request.missing_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
-    /// `request.too_deep`, `split.disabled`.
+    /// Requires role: Finance when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`, `request.body_read`,
+    /// `request.control_char`, `request.duplicate_field`, `request.missing_field`,
+    /// `request.nul_byte`, `request.overloaded`, `request.rate_limited`, `request.too_deep`,
+    /// `split.disabled`.
     ///
     /// `POST /v1/split/recipient/optin` (`setSplitRecipientOptIn`).
     pub fn set_recipient_opt_in(
@@ -1838,15 +1979,18 @@ impl<Tr: Clone> Splits<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Текущее согласие на приём сплитов
+    /// Current consent to receive splits
     ///
-    /// Возвращает `enabled` — включён ли приём внутренних сплитов на ваш баланс.
+    /// Returns `enabled` — whether receiving internal splits to your balance is enabled.
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`,
-    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
-    /// `request.overloaded`, `request.rate_limited`, `request.too_deep`, `split.disabled`.
+    /// Requires role: Viewer when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `request.body_read`, `request.control_char`,
+    /// `request.duplicate_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
+    /// `request.too_deep`, `split.disabled`.
     ///
     /// `POST /v1/split/recipient/optin/get` (`getSplitRecipientOptIn`).
     pub fn get_recipient_opt_in(&self) -> Request<Tr, SplitRecipientOptInView> {
@@ -1855,7 +1999,7 @@ impl<Tr: Clone> Splits<Tr> {
     }
 }
 
-/// Постоянные (статические) адреса пополнения под клиента.
+/// Permanent (static) deposit addresses assigned to a customer.
 #[derive(Clone, Debug)]
 pub struct Wallets<Tr> {
     transport: Tr,
@@ -1866,23 +2010,27 @@ impl<Tr: Clone> Wallets<Tr> {
         Self { transport }
     }
 
-    /// Создать (или получить) статический кошелёк
+    /// Create (or get) a static wallet
     ///
-    /// Постоянный адрес пополнения, закреплённый за мерчантом (и, по желанию, за одним клиентом
-    /// через `order_id`). Любое пополнение на него сразу падает вам на баланс + шлёт вебхук.
+    /// A permanent deposit address assigned to the merchant (and, optionally, to one customer via
+    /// `order_id`). Any deposit to it is credited to your balance immediately and triggers a
+    /// webhook.
     ///
-    /// Идемпотентно по `(currency, network, order_id)`: тот же `order_id` вернёт тот же адрес —
-    /// удобно закрепить адрес за каждым клиентом.
+    /// Idempotent on `(currency, network, order_id)`: the same `order_id` returns the same address
+    /// — handy for assigning an address to each customer.
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `invoice.daily_quota`, `merchant.acceptance_blocked`, `merchant.bad_signature`,
-    /// `merchant.key_mode_mismatch`, `merchant.not_found`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`,
-    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
-    /// `request.overloaded`, `request.rate_limited`, `request.too_deep`,
-    /// `request.unknown_currency`, `wallet.abandoned`, `wallet.deposits_unavailable`,
-    /// `wallet.no_network`, `wallet.sandbox_unsupported`, `wallet.static_disabled`,
-    /// `wallet.static_exists`, `wallet.static_not_found`, `wallet.unsupported_network`.
+    /// Requires role: Finance when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `invoice.daily_quota`, `merchant.acceptance_blocked`,
+    /// `merchant.bad_signature`, `merchant.key_expired`, `merchant.key_mode_mismatch`,
+    /// `merchant.not_found`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`, `request.body_read`,
+    /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
+    /// `request.rate_limited`, `request.too_deep`, `request.unknown_currency`, `wallet.abandoned`,
+    /// `wallet.deposits_unavailable`, `wallet.no_network`, `wallet.sandbox_unsupported`,
+    /// `wallet.static_disabled`, `wallet.static_exists`, `wallet.static_not_found`,
+    /// `wallet.unsupported_network`.
     ///
     /// `POST /v1/wallet` (`createWallet`).
     pub fn create(&self, params: CreateWalletRequest) -> Request<Tr, StaticWalletView> {
@@ -1891,17 +2039,20 @@ impl<Tr: Clone> Wallets<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Заблокировать / разблокировать кошелёк
+    /// Block / unblock a wallet
     ///
-    /// Заблокированный кошелёк перестаёт зачислять новые пополнения. `is_force_block` по умолчанию
-    /// true (блокировать); передайте false, чтобы снять блокировку.
+    /// A blocked wallet stops crediting new deposits. `is_force_block` defaults to true (block);
+    /// pass false to lift the block.
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`,
-    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
-    /// `request.overloaded`, `request.rate_limited`, `request.too_deep`, `wallet.no_address`,
-    /// `wallet.static_disabled`, `wallet.static_not_found`.
+    /// Requires role: Finance when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`, `request.body_read`,
+    /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
+    /// `request.rate_limited`, `request.too_deep`, `wallet.no_address`, `wallet.static_disabled`,
+    /// `wallet.static_not_found`.
     ///
     /// `POST /v1/wallet/block` (`blockWallet`).
     pub fn block(&self, params: BlockWalletRequest) -> Request<Tr, BlockWalletResult> {
@@ -1910,15 +2061,18 @@ impl<Tr: Clone> Wallets<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// QR-код адреса
+    /// Address QR code
     ///
-    /// Возвращает PNG data:-URI по полю `address` — для `<img src>`.
+    /// Returns a PNG data: URI for the `address` field — for `<img src>`.
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`, `qr.no_address`,
-    /// `request.bad_json`, `request.body_read`, `request.control_char`, `request.duplicate_field`,
-    /// `request.nul_byte`, `request.overloaded`, `request.rate_limited`, `request.too_deep`.
+    /// Requires role: Viewer when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `qr.no_address`, `request.bad_json`,
+    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
+    /// `request.overloaded`, `request.rate_limited`, `request.too_deep`.
     ///
     /// `POST /v1/wallet/qr` (`getWalletQr`).
     pub fn get_qr(&self, params: QrRequest) -> Request<Tr, WalletQRResult> {
@@ -1928,7 +2082,7 @@ impl<Tr: Clone> Wallets<Tr> {
     }
 }
 
-/// Балансы мерчанта и курсы обмена.
+/// Merchant balances and exchange rates.
 #[derive(Clone, Debug)]
 pub struct Account<Tr> {
     transport: Tr,
@@ -1939,16 +2093,18 @@ impl<Tr: Clone> Account<Tr> {
         Self { transport }
     }
 
-    /// Баланс мерчанта
+    /// Merchant balance
     ///
-    /// Ваши доступные балансы по каждой валюте. Тело — пустой `{}`.
+    /// Your available balances per currency. The body is an empty `{}`.
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`,
-    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
-    /// `request.overloaded`, `request.rate_limited`, `request.too_deep`,
-    /// `request.unknown_currency`.
+    /// Requires role: Viewer when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `request.body_read`, `request.control_char`,
+    /// `request.duplicate_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
+    /// `request.too_deep`, `request.unknown_currency`.
     ///
     /// `POST /v1/balance` (`getBalance`).
     pub fn get_balance(&self) -> Request<Tr, BalanceResult> {
@@ -1956,18 +2112,20 @@ impl<Tr: Clone> Account<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Итоги за период
+    /// Period totals
     ///
-    /// Оборот окна `[from, to)` по монете оплаты (оплаченное по счетам в `paid`/`paid_over`,
-    /// созданным в окне) и число выплат в работе прямо сейчас (без возвратов). Считается по всем
-    /// записям, а не по странице истории.
+    /// Turnover for the `[from, to)` window per payment coin (amounts paid on invoices in
+    /// `paid`/`paid_over` created within the window) and the number of payouts in progress right
+    /// now (excluding refunds). Computed over all records, not over a history page.
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `invoice.corrupt_pay_asset`, `merchant.bad_signature`, `merchant.key_mode_mismatch`,
-    /// `merchant.rate_limited`, `merchant.secret_decrypt`, `merchant.suspended`,
-    /// `merchant.unknown_key`, `request.bad_json`, `request.body_read`, `request.control_char`,
-    /// `request.duplicate_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
-    /// `request.too_deep`, `summary.bad_window`.
+    /// Requires role: Viewer when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `invoice.corrupt_pay_asset`, `merchant.bad_signature`,
+    /// `merchant.key_expired`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
+    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`,
+    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
+    /// `request.overloaded`, `request.rate_limited`, `request.too_deep`, `summary.bad_window`.
     ///
     /// `POST /v1/summary` (`getSummary`).
     pub fn get_summary(&self, params: SummaryRequest) -> Request<Tr, SummaryResult> {
@@ -1976,9 +2134,9 @@ impl<Tr: Clone> Account<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Курсы обмена к USDT
+    /// Exchange rates to USDT
     ///
-    /// Список курсов. Необязательный `currency_from` фильтрует по исходной валюте.
+    /// List of rates. The optional `currency_from` filters by source currency.
     ///
     /// Errors: `convert.economy_unavailable`, `internal`, `personal.amount_invalid`,
     /// `personal.bad_amount`, `rates.deviation`, `rates.no_source`, `rates.non_positive`,
@@ -1995,7 +2153,7 @@ impl<Tr: Clone> Account<Tr> {
     }
 }
 
-/// Регистрация endpoint'а для коллбэков, тест и переотправка.
+/// Registering the callback endpoint, test deliveries and resends.
 #[derive(Clone, Debug)]
 pub struct Webhooks<Tr> {
     transport: Tr,
@@ -2006,18 +2164,21 @@ impl<Tr: Clone> Webhooks<Tr> {
         Self { transport }
     }
 
-    /// Переотправить вебхук по платежу
+    /// Resend the payment webhook
     ///
-    /// Заново поставит в очередь коллбэк по платежу (по `uuid`/`order_id`). Полезно, если ваш
-    /// сервер был недоступен.
+    /// Re-queues the payment callback (by `uuid`/`order_id`). Useful if your server was
+    /// unavailable.
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `invoice.corrupt_pay_asset`, `merchant.bad_signature`, `merchant.key_mode_mismatch`,
-    /// `merchant.rate_limited`, `merchant.secret_decrypt`, `merchant.suspended`,
-    /// `merchant.unknown_key`, `onramp.suppresses`, `payment.bad_uuid`, `payment.no_lookup`,
-    /// `payment.not_found`, `request.bad_json`, `request.body_read`, `request.control_char`,
-    /// `request.duplicate_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
-    /// `request.too_deep`, `webhook.no_endpoint`.
+    /// Requires role: Finance when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `invoice.corrupt_pay_asset`, `merchant.bad_signature`,
+    /// `merchant.key_expired`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
+    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`,
+    /// `onramp.suppresses`, `payment.bad_uuid`, `payment.no_lookup`, `payment.not_found`,
+    /// `request.bad_json`, `request.body_read`, `request.control_char`, `request.duplicate_field`,
+    /// `request.nul_byte`, `request.overloaded`, `request.rate_limited`, `request.too_deep`,
+    /// `webhook.no_endpoint`.
     ///
     /// `POST /v1/payment/resend` (`resendPaymentWebhook`).
     pub fn resend_payment(&self, params: LookupRequest) -> Request<Tr, WebhookResendResult> {
@@ -2026,18 +2187,20 @@ impl<Tr: Clone> Webhooks<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Зарегистрировать endpoint для коллбэков
+    /// Register the callback endpoint
     ///
-    /// Задаёт URL проекта, куда слать вебхуки, и возвращает `secret` (показывается один раз) для
-    /// проверки подписи `X-Webhook-Signature`. Проверив подпись, обработчик ОБЯЗАН отбросить тело с
-    /// `test: true` — это репетиция с тестовой ручки, а не событие.
+    /// Sets the project URL to send webhooks to and returns the `secret` (shown once) for verifying
+    /// the `X-Webhook-Signature`. After verifying the signature, your handler MUST discard a body
+    /// with `test: true` — it is a rehearsal from the test endpoint, not an event.
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`,
-    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
-    /// `request.overloaded`, `request.rate_limited`, `request.too_deep`, `webhook.bad_url`,
-    /// `webhook.no_url`.
+    /// Requires role: Finance when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`, `request.body_read`,
+    /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
+    /// `request.rate_limited`, `request.too_deep`, `webhook.bad_url`, `webhook.no_url`.
     ///
     /// `POST /v1/webhooks` (`registerWebhook`).
     pub fn register(&self, params: RegisterWebhookRequest) -> Request<Tr, RegisterWebhookResult> {
@@ -2046,17 +2209,21 @@ impl<Tr: Clone> Webhooks<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Журнал доставок вебхуков
+    /// Webhook delivery log
     ///
-    /// Последние доставки: URL, статус, число попыток, последняя ошибка — для отладки. Статусы:
-    /// `pending` (в очереди или ждёт ретрая), `delivered`, `dead` (ретраи исчерпаны), `cancelled`
-    /// (эндпоинт выключили, пока доставка ждала в очереди; причина — в `cancel_reason`).
+    /// Recent deliveries: URL, status, attempt count, last error — for debugging. Statuses:
+    /// `pending` (queued or waiting for a retry), `delivered`, `dead` (retries exhausted),
+    /// `cancelled` (the endpoint was disabled while the delivery was waiting in the queue; the
+    /// reason is in `cancel_reason`).
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`,
-    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
-    /// `request.overloaded`, `request.rate_limited`, `request.too_deep`.
+    /// Requires role: Viewer when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`, `request.body_read`,
+    /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
+    /// `request.rate_limited`, `request.too_deep`.
     ///
     /// `POST /v1/webhooks/deliveries` (`listWebhookDeliveries`).
     pub fn list_deliveries(&self, params: PageRequest) -> Pager<Tr, WebhookDeliveryLogItem> {
@@ -2065,21 +2232,23 @@ impl<Tr: Clone> Webhooks<Tr> {
         Pager::new(self.transport.clone(), call)
     }
 
-    /// Переотправить доставку из журнала
+    /// Resend a delivery from the log
     ///
-    /// Возвращает в очередь вашу доставку в статусе `dead` (ретраи исчерпаны) или `cancelled`
-    /// (эндпоинт выключали): новая лестница ретраев, подпись текущим секретом. Тело доставки то же,
-    /// что было в журнале, — для отправки ТЕКУЩЕГО состояния платежа есть `POST
-    /// /v1/payment/resend`. Повтор вызова безопасен: доставка, уже стоящая в очереди или
-    /// доставленная, возвращается как есть с `ok: false`. Чужая доставка — 404
-    /// `webhook.delivery_not_found`; выключенный эндпоинт — 409 `webhook.endpoint_disabled`
-    /// (сначала включите его).
+    /// Re-queues your delivery in status `dead` (retries exhausted) or `cancelled` (the endpoint
+    /// was disabled): a fresh retry schedule, signed with the current secret. The delivery body is
+    /// the same as in the log — to send the CURRENT state of a payment use `POST
+    /// /v1/payment/resend`. Repeating the call is safe: a delivery already queued or delivered is
+    /// returned as is with `ok: false`. Someone else's delivery — 404 `webhook.delivery_not_found`;
+    /// a disabled endpoint — 409 `webhook.endpoint_disabled` (enable it first).
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`, `request.bad_id`,
-    /// `request.bad_json`, `request.body_read`, `request.control_char`, `request.duplicate_field`,
-    /// `request.nul_byte`, `request.overloaded`, `request.rate_limited`, `request.too_deep`,
+    /// Requires role: Finance when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `request.bad_id`, `request.bad_json`,
+    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
+    /// `request.overloaded`, `request.rate_limited`, `request.too_deep`,
     /// `webhook.delivery_not_found`, `webhook.endpoint_disabled`.
     ///
     /// `POST /v1/webhooks/deliveries/requeue` (`requeueWebhookDelivery`).
@@ -2092,19 +2261,22 @@ impl<Tr: Clone> Webhooks<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Тестовый вебхук на URL (старый вариант)
+    /// Test webhook to a URL (legacy)
     ///
-    /// Шлёт пробное тело на указанный `url` — проверить, что ваш обработчик работает. Тело
-    /// репетиции несёт `"test": true` (внутри подписи) и заголовок `X-Webhook-Test: true`, а
-    /// `sequence` в нём всегда 0. Боевое событие этих признаков НЕ несёт никогда: обработчик обязан
-    /// игнорировать тело с `test: true`, даже если подпись верна.
+    /// Sends a sample body to the given `url` — to check that your handler works. The rehearsal
+    /// body carries `"test": true` (inside the signature) and the `X-Webhook-Test: true` header,
+    /// and its `sequence` is always 0. A live event NEVER carries these markers: your handler must
+    /// ignore a body with `test: true` even if the signature is valid.
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`,
-    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
-    /// `request.overloaded`, `request.rate_limited`, `request.too_deep`, `webhook.bad_currency`,
-    /// `webhook.bad_status`, `webhook.bad_url`, `webhook.bad_uuid`, `webhook.no_endpoint`.
+    /// Requires role: Finance when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`, `request.body_read`,
+    /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
+    /// `request.rate_limited`, `request.too_deep`, `webhook.bad_currency`, `webhook.bad_status`,
+    /// `webhook.bad_url`, `webhook.bad_uuid`, `webhook.no_endpoint`.
     ///
     /// `POST /v1/payment/testing-webhook` (`sendLegacyTestWebhook`).
     pub fn send_legacy_test(&self, params: TestWebhookRequest) -> Request<Tr, TestWebhookResult> {
@@ -2113,20 +2285,22 @@ impl<Tr: Clone> Webhooks<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Тестовый вебхук ПЛАТЕЖА
+    /// Test PAYMENT webhook
     ///
-    /// Доставит пробный вебхук типа payment на `url_callback`. Тело репетиции несёт `"test": true`
-    /// (внутри подписи) и заголовок `X-Webhook-Test: true`, а `sequence` в нём всегда 0. Боевое
-    /// событие этих признаков НЕ несёт никогда: обработчик обязан игнорировать тело с `test: true`,
-    /// даже если подпись верна.
+    /// Delivers a sample webhook of type payment to `url_callback`. The rehearsal body carries
+    /// `"test": true` (inside the signature) and the `X-Webhook-Test: true` header, and its
+    /// `sequence` is always 0. A live event NEVER carries these markers: your handler must ignore a
+    /// body with `test: true` even if the signature is valid.
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`,
-    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
-    /// `request.overloaded`, `request.rate_limited`, `request.too_deep`, `webhook.bad_currency`,
-    /// `webhook.bad_status`, `webhook.bad_url`, `webhook.bad_uuid`, `webhook.no_url`,
-    /// `webhook.test_failed`.
+    /// Requires role: Finance when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`, `request.body_read`,
+    /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
+    /// `request.rate_limited`, `request.too_deep`, `webhook.bad_currency`, `webhook.bad_status`,
+    /// `webhook.bad_url`, `webhook.bad_uuid`, `webhook.no_url`, `webhook.test_failed`.
     ///
     /// `POST /v1/test-webhook/payment` (`sendTestPaymentWebhook`).
     pub fn send_test_payment(
@@ -2138,20 +2312,22 @@ impl<Tr: Clone> Webhooks<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Тестовый вебхук КОШЕЛЬКА
+    /// Test WALLET webhook
     ///
-    /// Доставит пробный вебхук типа wallet (пополнение статик-кошелька). Тело репетиции несёт
-    /// `"test": true` (внутри подписи) и заголовок `X-Webhook-Test: true`, а `sequence` в нём
-    /// всегда 0. Боевое событие этих признаков НЕ несёт никогда: обработчик обязан игнорировать
-    /// тело с `test: true`, даже если подпись верна.
+    /// Delivers a sample webhook of type wallet (a static wallet deposit). The rehearsal body
+    /// carries `"test": true` (inside the signature) and the `X-Webhook-Test: true` header, and its
+    /// `sequence` is always 0. A live event NEVER carries these markers: your handler must ignore a
+    /// body with `test: true` even if the signature is valid.
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`,
-    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
-    /// `request.overloaded`, `request.rate_limited`, `request.too_deep`, `webhook.bad_currency`,
-    /// `webhook.bad_status`, `webhook.bad_url`, `webhook.bad_uuid`, `webhook.no_url`,
-    /// `webhook.test_failed`.
+    /// Requires role: Finance when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`, `request.body_read`,
+    /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
+    /// `request.rate_limited`, `request.too_deep`, `webhook.bad_currency`, `webhook.bad_status`,
+    /// `webhook.bad_url`, `webhook.bad_uuid`, `webhook.no_url`, `webhook.test_failed`.
     ///
     /// `POST /v1/test-webhook/wallet` (`sendTestWalletWebhook`).
     pub fn send_test_wallet(
@@ -2163,20 +2339,22 @@ impl<Tr: Clone> Webhooks<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Тестовый вебхук ВЫПЛАТЫ
+    /// Test PAYOUT webhook
     ///
-    /// Доставит пробный вебхук типа payout. Тело репетиции несёт `"test": true` (внутри подписи) и
-    /// заголовок `X-Webhook-Test: true`, а `sequence` в нём всегда 0. Боевое событие этих признаков
-    /// НЕ несёт никогда: обработчик обязан игнорировать тело с `test: true`, даже если подпись
-    /// верна.
+    /// Delivers a sample webhook of type payout. The rehearsal body carries `"test": true` (inside
+    /// the signature) and the `X-Webhook-Test: true` header, and its `sequence` is always 0. A live
+    /// event NEVER carries these markers: your handler must ignore a body with `test: true` even if
+    /// the signature is valid.
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`,
-    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
-    /// `request.overloaded`, `request.rate_limited`, `request.too_deep`, `webhook.bad_currency`,
-    /// `webhook.bad_status`, `webhook.bad_url`, `webhook.bad_uuid`, `webhook.no_url`,
-    /// `webhook.test_failed`.
+    /// Requires role: Finance when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`, `request.body_read`,
+    /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
+    /// `request.rate_limited`, `request.too_deep`, `webhook.bad_currency`, `webhook.bad_status`,
+    /// `webhook.bad_url`, `webhook.bad_uuid`, `webhook.no_url`, `webhook.test_failed`.
     ///
     /// `POST /v1/test-webhook/payout` (`sendTestPayoutWebhook`).
     pub fn send_test_payout(
@@ -2188,21 +2366,24 @@ impl<Tr: Clone> Webhooks<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Тестовый вебхук КОНВЕРТАЦИИ
+    /// Test CONVERSION webhook
     ///
-    /// Доставит пробный вебхук типа conversion (события `conversion.completed` /
-    /// `conversion.refunded` по заявкам режима economy; `status` — completed или refunded, по
-    /// умолчанию completed). Тело репетиции несёт `"test": true` (внутри подписи) и заголовок
-    /// `X-Webhook-Test: true`, а `sequence` в нём всегда 0. Боевое событие этих признаков НЕ несёт
-    /// никогда: обработчик обязан игнорировать тело с `test: true`, даже если подпись верна.
+    /// Delivers a sample webhook of type conversion (the `conversion.completed` /
+    /// `conversion.refunded` events for economy-mode orders; `status` — completed or refunded,
+    /// default completed). The rehearsal body carries `"test": true` (inside the signature) and the
+    /// `X-Webhook-Test: true` header, and its `sequence` is always 0. A live event NEVER carries
+    /// these markers: your handler must ignore a body with `test: true` even if the signature is
+    /// valid.
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`,
-    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
-    /// `request.overloaded`, `request.rate_limited`, `request.too_deep`, `webhook.bad_currency`,
-    /// `webhook.bad_status`, `webhook.bad_url`, `webhook.bad_uuid`, `webhook.no_url`,
-    /// `webhook.test_failed`.
+    /// Requires role: Finance when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`, `request.body_read`,
+    /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
+    /// `request.rate_limited`, `request.too_deep`, `webhook.bad_currency`, `webhook.bad_status`,
+    /// `webhook.bad_url`, `webhook.bad_uuid`, `webhook.no_url`, `webhook.test_failed`.
     ///
     /// `POST /v1/test-webhook/conversion` (`sendTestConversionWebhook`).
     pub fn send_test_conversion(
@@ -2214,18 +2395,20 @@ impl<Tr: Clone> Webhooks<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Перевыпустить секрет подписи вебхуков
+    /// Rotate the webhook signing secret
     ///
-    /// Единственный момент, когда новый секрет показывается. До `previous_secret_valid_until`
-    /// доставки дополнительно несут `X-Webhook-Signature-Prev` со старым секретом — время докатить
-    /// замену без потери проверки.
+    /// The only time the new secret is shown. Until `previous_secret_valid_until`, deliveries
+    /// additionally carry `X-Webhook-Signature-Prev` signed with the old secret — time to roll out
+    /// the change without losing verification.
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`,
-    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
-    /// `request.overloaded`, `request.rate_limited`, `request.too_deep`, `webhook.no_endpoint`,
-    /// `webhook.rotation_in_overlap`.
+    /// Requires role: Finance when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `request.body_read`, `request.control_char`,
+    /// `request.duplicate_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
+    /// `request.too_deep`, `webhook.no_endpoint`, `webhook.rotation_in_overlap`.
     ///
     /// `POST /v1/webhooks/rotate-secret` (`rotateWebhookSecret`).
     pub fn rotate_secret(&self) -> Request<Tr, RotateWebhookSecretResult> {
@@ -2233,22 +2416,24 @@ impl<Tr: Clone> Webhooks<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Включить или выключить доставку вебхуков
+    /// Enable or disable webhook delivery
     ///
-    /// Выключенный эндпоинт перестаёт получать доставки: новые события по этому проекту в очередь
-    /// не ставятся, а уже стоящие в очереди отменяются (статус `cancelled`) и после включения сами
-    /// не уходят. Нужен, когда приёмник выведен из эксплуатации, — иначе каждое событие ретраилось
-    /// бы ~3 суток и уходило в dead-letter бессрочно. Секрет и URL сохраняются: включение
-    /// возвращает всё как было. Эндпоинт, у которого 3 суток подряд не прошла ни одна попытка,
-    /// выключается автоматически — очередь отменяется, владельцу магазина уходит письмо; после
-    /// починки приёмника включите его этой ручкой.
+    /// A disabled endpoint stops receiving deliveries: new events for this project are not queued,
+    /// and those already queued are cancelled (status `cancelled`) and are not sent automatically
+    /// after re-enabling. Needed when a receiver is decommissioned — otherwise every event would be
+    /// retried for ~3 days and end up in the dead-letter queue indefinitely. The secret and URL are
+    /// kept: enabling restores everything as it was. An endpoint for which not a single attempt has
+    /// succeeded for 3 days in a row is disabled automatically — its queue is cancelled and the
+    /// store owner gets an email; after fixing the receiver, enable it with this endpoint.
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`,
-    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
-    /// `request.overloaded`, `request.rate_limited`, `request.too_deep`, `webhook.no_active`,
-    /// `webhook.no_endpoint`.
+    /// Requires role: Finance when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`, `request.body_read`,
+    /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
+    /// `request.rate_limited`, `request.too_deep`, `webhook.no_active`, `webhook.no_endpoint`.
     ///
     /// `POST /v1/webhooks/active` (`setWebhookActive`).
     pub fn set_active(
@@ -2261,7 +2446,7 @@ impl<Tr: Clone> Webhooks<Tr> {
     }
 }
 
-/// Настройки магазина: допуск сумм, скидки, автовозвраты, валюты, авто-вывод.
+/// Store settings: amount tolerance, discounts, auto-refunds, currencies, auto-withdrawal.
 #[derive(Clone, Debug)]
 pub struct Settings<Tr> {
     transport: Tr,
@@ -2272,17 +2457,19 @@ impl<Tr: Clone> Settings<Tr> {
         Self { transport }
     }
 
-    /// Настроить допуск недо/переплаты
+    /// Configure underpayment/overpayment tolerance
     ///
-    /// «Точность платежей»: `enabled` + `accuracy_percent` 1–5. В пределах допуска платёж считается
-    /// оплаченным. Выключено — нужна точная сумма.
+    /// "Payment accuracy": `enabled` + `accuracy_percent` 1–5. Within the tolerance a payment
+    /// counts as paid. Disabled — the exact amount is required.
+    ///
+    /// Requires role: Finance when called with a CLI key.
     ///
     /// Errors: `accuracy.out_of_range`, `auth.bad_timestamp`, `auth.body_too_large`,
-    /// `auth.ip_not_allowed`, `internal`, `merchant.bad_signature`, `merchant.key_mode_mismatch`,
-    /// `merchant.rate_limited`, `merchant.secret_decrypt`, `merchant.suspended`,
-    /// `merchant.unknown_key`, `request.bad_json`, `request.body_read`, `request.control_char`,
-    /// `request.duplicate_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
-    /// `request.too_deep`.
+    /// `auth.ip_not_allowed`, `cli.permission_denied`, `internal`, `merchant.bad_signature`,
+    /// `merchant.key_expired`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
+    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`,
+    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
+    /// `request.overloaded`, `request.rate_limited`, `request.too_deep`.
     ///
     /// `POST /v1/payment/accuracy/set` (`setAccuracy`).
     pub fn set_accuracy(&self, params: SetAccuracyRequest) -> Request<Tr, AccuracyResult> {
@@ -2291,13 +2478,16 @@ impl<Tr: Clone> Settings<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Прочитать допуск сумм
+    /// Read the amount tolerance
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`,
-    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
-    /// `request.overloaded`, `request.rate_limited`, `request.too_deep`.
+    /// Requires role: Viewer when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `request.body_read`, `request.control_char`,
+    /// `request.duplicate_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
+    /// `request.too_deep`.
     ///
     /// `POST /v1/payment/accuracy/get` (`getAccuracy`).
     pub fn get_accuracy(&self) -> Request<Tr, AccuracyResult> {
@@ -2305,17 +2495,20 @@ impl<Tr: Clone> Settings<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Настроить автовозвраты
+    /// Configure auto-refunds
     ///
-    /// `overpay` — авто-возврат излишка переплаты; `underpay` — авто-возврат при истёкшей
-    /// недоплате. Оба по умолчанию ВКЛ. Возврат идёт на адрес плательщика (EVM/Tron/TON/Solana; на
-    /// Bitcoin/UTXO — вручную).
+    /// `overpay` — auto-refund of the overpaid excess; `underpay` — auto-refund of an expired
+    /// underpayment. Both are ON by default. The refund goes to the payer's address
+    /// (EVM/Tron/TON/Solana; on Bitcoin/UTXO — manually).
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`,
-    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
-    /// `request.overloaded`, `request.rate_limited`, `request.too_deep`.
+    /// Requires role: Finance when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`, `request.body_read`,
+    /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
+    /// `request.rate_limited`, `request.too_deep`.
     ///
     /// `POST /v1/payment/autorefund/set` (`setAutoRefund`).
     pub fn set_auto_refund(
@@ -2327,13 +2520,16 @@ impl<Tr: Clone> Settings<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Прочитать настройку автовозвратов
+    /// Read the auto-refund settings
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`,
-    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
-    /// `request.overloaded`, `request.rate_limited`, `request.too_deep`.
+    /// Requires role: Viewer when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `request.body_read`, `request.control_char`,
+    /// `request.duplicate_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
+    /// `request.too_deep`.
     ///
     /// `POST /v1/payment/autorefund/get` (`getAutoRefund`).
     pub fn get_auto_refund(&self) -> Request<Tr, AutoRefundPolicyResult> {
@@ -2341,16 +2537,19 @@ impl<Tr: Clone> Settings<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Скидка/наценка на способ оплаты
+    /// Discount/surcharge for a payment method
     ///
-    /// Положительный `discount_percent` — скидка плательщику за оплату этой монетой; отрицательный
-    /// — наценка. Пустая `currency` задаёт правило по умолчанию для всех монет, пустая `network` —
-    /// для любой сети выбранной монеты. В ответе — сохранённое правило в КАНОНИЧЕСКОМ виде (символ
-    /// монеты в верхнем регистре, сеть в нижнем).
+    /// A positive `discount_percent` is a discount to the payer for paying with this coin; a
+    /// negative one is a surcharge. An empty `currency` sets the default rule for all coins, an
+    /// empty `network` — for any network of the chosen coin. The response contains the saved rule
+    /// in CANONICAL form (coin symbol uppercase, network lowercase).
+    ///
+    /// Requires role: Finance when called with a CLI key.
     ///
     /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
-    /// `discount.network_required`, `discount.out_of_range`, `discount.unsupported_network`,
-    /// `internal`, `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
+    /// `cli.permission_denied`, `discount.network_required`, `discount.out_of_range`,
+    /// `discount.unsupported_network`, `internal`, `merchant.bad_signature`,
+    /// `merchant.key_expired`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
     /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`,
     /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
     /// `request.overloaded`, `request.rate_limited`, `request.too_deep`,
@@ -2363,17 +2562,20 @@ impl<Tr: Clone> Settings<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Список скидок/наценок
+    /// List discounts/surcharges
     ///
-    /// Настроенные правила: `items` (по одному на пару «монета+сеть») + блок `paginate` (`total`,
-    /// `per_page`, `offset`, `has_pages`). Поля правила — те же, что отдаёт
+    /// Configured rules: `items` (one per coin+network pair) plus a `paginate` block (`total`,
+    /// `per_page`, `offset`, `has_pages`). Rule fields are the same as returned by
     /// `/v1/payment/discount/set`.
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`,
-    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
-    /// `request.overloaded`, `request.rate_limited`, `request.too_deep`.
+    /// Requires role: Viewer when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`, `request.body_read`,
+    /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
+    /// `request.rate_limited`, `request.too_deep`.
     ///
     /// `POST /v1/payment/discount/list` (`listDiscounts`).
     pub fn list_discounts(&self, params: PageRequest) -> Pager<Tr, PaymentDiscountRule> {
@@ -2382,19 +2584,22 @@ impl<Tr: Clone> Settings<Tr> {
         Pager::new(self.transport.clone(), call)
     }
 
-    /// Лог запросов вашего ключа
+    /// Request log for your key
     ///
-    /// Дата, метод с путём, код ответа, длительность и IP — по вашему мерчанту и только по нему.
-    /// Строки живут 90 дней (`retention_days` в ответе). Строка запроса (query) НЕ хранится: в ней
-    /// ездят идентификаторы того, что фильтровали, а вторая копия чужих платёжных идентификаторов —
-    /// это обязательство, а не удобство. `to` включает день целиком.
+    /// Date, method with path, response code, duration and IP — for your merchant and only for it.
+    /// Rows are kept for 90 days (`retention_days` in the response). The query string is NOT
+    /// stored: it carries identifiers of what was filtered, and a second copy of someone else's
+    /// payment identifiers is a liability, not a convenience. `to` includes the whole day.
+    ///
+    /// Requires role: Viewer when called with a CLI key.
     ///
     /// Errors: `apilog.bad_date`, `apilog.bad_status`, `apilog.count`, `apilog.disabled`,
     /// `apilog.list`, `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
-    /// `internal`, `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`,
-    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
-    /// `request.overloaded`, `request.rate_limited`, `request.too_deep`.
+    /// `cli.permission_denied`, `internal`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`, `request.body_read`,
+    /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
+    /// `request.rate_limited`, `request.too_deep`.
     ///
     /// `POST /v1/payment/api-log` (`listApiLog`).
     pub fn list_api_log(&self, params: APILogRequest) -> Request<Tr, APILogResult> {
@@ -2403,15 +2608,19 @@ impl<Tr: Clone> Settings<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Авто-конвертация выручки: текущий приказ
+    /// Revenue auto-conversion: current order
     ///
-    /// `configured:false` — приказа нет, остальные поля тогда пустые/умолчания. `min_usd_cents` —
-    /// пол одной конвертации: ниже него спред стоит дороже, чем сводить.
+    /// `configured:false` — there is no order; the other fields are then empty/defaults.
+    /// `min_usd_cents` — the floor for a single conversion: below it the spread costs more than the
+    /// conversion is worth.
+    ///
+    /// Requires role: Viewer when called with a CLI key.
     ///
     /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
-    /// `autoconvert.disabled`, `autoconvert.scan`, `internal`, `merchant.bad_signature`,
-    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
-    /// `merchant.suspended`, `merchant.unknown_key`, `request.body_read`, `request.control_char`,
+    /// `autoconvert.disabled`, `autoconvert.scan`, `cli.permission_denied`, `internal`,
+    /// `merchant.bad_signature`, `merchant.key_expired`, `merchant.key_mode_mismatch`,
+    /// `merchant.rate_limited`, `merchant.secret_decrypt`, `merchant.suspended`,
+    /// `merchant.unknown_key`, `request.body_read`, `request.control_char`,
     /// `request.duplicate_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
     /// `request.too_deep`.
     ///
@@ -2421,25 +2630,29 @@ impl<Tr: Clone> Settings<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Авто-конвертация выручки: задать приказ
+    /// Revenue auto-conversion: set the order
     ///
-    /// Сводит перечисленные монеты в `target` фоновым сводом, не в момент зачисления депозита. ⚠
-    /// ИСТОЧНИКИ — ПО МОНЕТЕ, А НЕ ПО ПАРЕ «МОНЕТА+СЕТЬ»: обязательства мерчанта ведутся по активу,
-    /// и у принимающего USDT в Tron и в BSC баланс USDT ОДИН — включить свод для одной пары и не
-    /// включить для второй нечего. Целевая монета проверяется на возможность ликвидации ЗДЕСЬ, при
-    /// сохранении: отказ в момент выбора можно исправить, отказ через неделю в фоне — это выручка,
-    /// которая молча не сводилась. В ответе — СОХРАНЁННЫЙ приказ: монеты, которые свод не примет
-    /// (сама цель, дубли), из него убраны.
+    /// Converts the listed coins into `target` in a background sweep, not at the moment a deposit
+    /// is credited. ⚠ SOURCES ARE PER COIN, NOT PER COIN+NETWORK PAIR: merchant liabilities are
+    /// tracked per asset, and a merchant accepting USDT on Tron and on BSC has ONE USDT balance —
+    /// there is nothing to enable the sweep for one pair and not the other. The target coin is
+    /// checked for liquidity HERE, on save: a rejection at selection time can be fixed, a rejection
+    /// a week later in the background is revenue that silently was not converted. The response
+    /// contains the SAVED order: coins the sweep will not accept (the target itself, duplicates)
+    /// are removed from it.
+    ///
+    /// Requires role: Finance when called with a CLI key.
     ///
     /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
     /// `autoconvert.bad_floor`, `autoconvert.disabled`, `autoconvert.no_target`,
     /// `autoconvert.scan`, `autoconvert.source_unsupported`, `autoconvert.target_unsupported`,
-    /// `autoconvert.upsert`, `autoconvert.vanished`, `internal`, `merchant.bad_signature`,
-    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
-    /// `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`, `request.body_read`,
-    /// `request.control_char`, `request.duplicate_field`, `request.invalid_mode`,
-    /// `request.nul_byte`, `request.overloaded`, `request.rate_limited`, `request.too_deep`,
-    /// `request.unknown_currency`, `treasury.no_ccy_map`.
+    /// `autoconvert.upsert`, `autoconvert.vanished`, `cli.permission_denied`, `internal`,
+    /// `merchant.bad_signature`, `merchant.key_expired`, `merchant.key_mode_mismatch`,
+    /// `merchant.rate_limited`, `merchant.secret_decrypt`, `merchant.suspended`,
+    /// `merchant.unknown_key`, `request.bad_json`, `request.body_read`, `request.control_char`,
+    /// `request.duplicate_field`, `request.invalid_mode`, `request.nul_byte`, `request.overloaded`,
+    /// `request.rate_limited`, `request.too_deep`, `request.unknown_currency`,
+    /// `treasury.no_ccy_map`.
     ///
     /// `POST /v1/payment/autoconvert/set` (`setAutoConvert`).
     pub fn set_auto_convert(
@@ -2451,16 +2664,19 @@ impl<Tr: Clone> Settings<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Настроить принимаемые валюты магазина
+    /// Configure the store's accepted currencies
     ///
-    /// Задаёт, какие валюты/сети магазин принимает.
+    /// Sets which currencies/networks the store accepts.
+    ///
+    /// Requires role: Finance when called with a CLI key.
     ///
     /// Errors: `accepted.no_network`, `accepted.unknown_method`, `auth.bad_timestamp`,
-    /// `auth.body_too_large`, `auth.ip_not_allowed`, `internal`, `merchant.bad_signature`,
-    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
-    /// `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`, `request.body_read`,
-    /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
-    /// `request.rate_limited`, `request.too_deep`, `request.unknown_currency`.
+    /// `auth.body_too_large`, `auth.ip_not_allowed`, `cli.permission_denied`, `internal`,
+    /// `merchant.bad_signature`, `merchant.key_expired`, `merchant.key_mode_mismatch`,
+    /// `merchant.rate_limited`, `merchant.secret_decrypt`, `merchant.suspended`,
+    /// `merchant.unknown_key`, `request.bad_json`, `request.body_read`, `request.control_char`,
+    /// `request.duplicate_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
+    /// `request.too_deep`, `request.unknown_currency`.
     ///
     /// `POST /v1/payment/accepted/set` (`setAcceptedCurrencies`).
     pub fn set_accepted_currencies(
@@ -2472,13 +2688,16 @@ impl<Tr: Clone> Settings<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Список принимаемых валют
+    /// List accepted currencies
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`,
-    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
-    /// `request.overloaded`, `request.rate_limited`, `request.too_deep`.
+    /// Requires role: Viewer when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`, `request.body_read`,
+    /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
+    /// `request.rate_limited`, `request.too_deep`.
     ///
     /// `POST /v1/payment/accepted/list` (`listAcceptedCurrencies`).
     pub fn list_accepted_currencies(
@@ -2490,16 +2709,19 @@ impl<Tr: Clone> Settings<Tr> {
         Pager::new(self.transport.clone(), call)
     }
 
-    /// Кто платит сетевую комиссию выплаты
+    /// Who pays the payout network fee
     ///
-    /// `fee_on_recipient: true` — комиссию сети платит получатель (ему приходит сумма минус
-    /// комиссия).
+    /// `fee_on_recipient: true` — the network fee is paid by the recipient (they receive the amount
+    /// minus the fee).
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`,
-    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
-    /// `request.overloaded`, `request.rate_limited`, `request.too_deep`.
+    /// Requires role: Finance when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`, `request.body_read`,
+    /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
+    /// `request.rate_limited`, `request.too_deep`.
     ///
     /// `POST /v1/payout/fee-config/set` (`setPayoutFeeConfig`).
     pub fn set_payout_fee_config(
@@ -2511,13 +2733,16 @@ impl<Tr: Clone> Settings<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Прочитать настройку комиссии выплат
+    /// Read the payout fee setting
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`,
-    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
-    /// `request.overloaded`, `request.rate_limited`, `request.too_deep`.
+    /// Requires role: Viewer when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `request.body_read`, `request.control_char`,
+    /// `request.duplicate_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
+    /// `request.too_deep`.
     ///
     /// `POST /v1/payout/fee-config/get` (`getPayoutFeeConfig`).
     pub fn get_payout_fee_config(&self) -> Request<Tr, PayoutFeeResult> {
@@ -2525,16 +2750,19 @@ impl<Tr: Clone> Settings<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Кто платит нашу комиссию при возврате
+    /// Who pays our fee on a refund
     ///
-    /// `fee_on_customer: true` — при возврате нашу комиссию несёт клиент (возврат за вычетом
-    /// комиссии); false — несёт мерчант.
+    /// `fee_on_customer: true` — on a refund our fee is borne by the customer (refund minus the
+    /// fee); false — borne by the merchant.
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`,
-    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
-    /// `request.overloaded`, `request.rate_limited`, `request.too_deep`.
+    /// Requires role: Finance when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`, `request.body_read`,
+    /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
+    /// `request.rate_limited`, `request.too_deep`.
     ///
     /// `POST /v1/payout/refund-fee-config/set` (`setRefundFeeConfig`).
     pub fn set_refund_fee_config(
@@ -2546,13 +2774,16 @@ impl<Tr: Clone> Settings<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Прочитать настройку комиссии возврата
+    /// Read the refund fee setting
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`,
-    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
-    /// `request.overloaded`, `request.rate_limited`, `request.too_deep`.
+    /// Requires role: Viewer when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `request.body_read`, `request.control_char`,
+    /// `request.duplicate_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
+    /// `request.too_deep`.
     ///
     /// `POST /v1/payout/refund-fee-config/get` (`getRefundFeeConfig`).
     pub fn get_refund_fee_config(&self) -> Request<Tr, RefundFeeResult> {
@@ -2560,19 +2791,21 @@ impl<Tr: Clone> Settings<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Кто платит нашу комиссию при приёме платежа
+    /// Who pays our fee when accepting a payment
     ///
-    /// `payer_pays_percent: 0` — комиссию платит мерчант (по умолчанию); `100` — платит покупатель:
-    /// счёт выставляется с наценкой, и мерчант получает ровно ту сумму, которую назвал.
-    /// Промежуточные значения делят комиссию. Действует на счета, созданные ПОСЛЕ изменения;
-    /// параметр `subtract` в самом счёте перекрывает эту настройку.
+    /// `payer_pays_percent: 0` — the fee is paid by the merchant (default); `100` — paid by the
+    /// buyer: the invoice is issued with a markup, and the merchant receives exactly the amount
+    /// they specified. Intermediate values split the fee. Applies to invoices created AFTER the
+    /// change; the `subtract` parameter of an invoice overrides this setting.
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `merchant.bad_fee_bearer`, `merchant.bad_signature`, `merchant.key_mode_mismatch`,
-    /// `merchant.rate_limited`, `merchant.secret_decrypt`, `merchant.suspended`,
-    /// `merchant.unknown_key`, `request.bad_json`, `request.body_read`, `request.control_char`,
-    /// `request.duplicate_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
-    /// `request.too_deep`.
+    /// Requires role: Finance when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `merchant.bad_fee_bearer`, `merchant.bad_signature`,
+    /// `merchant.key_expired`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
+    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`,
+    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
+    /// `request.overloaded`, `request.rate_limited`, `request.too_deep`.
     ///
     /// `POST /v1/payment/fee-config/set` (`setPaymentFeeConfig`).
     pub fn set_payment_fee_config(
@@ -2584,19 +2817,21 @@ impl<Tr: Clone> Settings<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Прочитать, кто платит комиссию за приём
+    /// Read who pays the acceptance fee
     ///
-    /// Также возвращает ваш тариф: `fee_percent` — ставка, которую зафиксирует СЛЕДУЮЩИЙ созданный
-    /// счёт; `fee_fixed_usd` — фиксированный сбор с платежа, USD строкой ("0.30"; прежнее
-    /// `fee_fixed_usd_cents` — то же в центах числом, устарело); `fee_individual: true` — тариф
-    /// назначен вам индивидуально, false — действует тариф платформы.
+    /// Also returns your pricing: `fee_percent` — the rate the NEXT created invoice will lock in;
+    /// `fee_fixed_usd` — the fixed per-payment fee, USD as a string ("0.30"; the former
+    /// `fee_fixed_usd_cents` is the same in cents as a number, deprecated); `fee_individual: true`
+    /// — the pricing is assigned to you individually, false — the platform pricing applies.
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.not_found`,
-    /// `merchant.rate_limited`, `merchant.secret_decrypt`, `merchant.suspended`,
-    /// `merchant.unknown_key`, `request.body_read`, `request.control_char`,
-    /// `request.duplicate_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
-    /// `request.too_deep`.
+    /// Requires role: Finance when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.not_found`, `merchant.rate_limited`,
+    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`,
+    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
+    /// `request.overloaded`, `request.rate_limited`, `request.too_deep`.
     ///
     /// `POST /v1/payment/fee-config/get` (`getPaymentFeeConfig`).
     pub fn get_payment_fee_config(&self) -> Request<Tr, PaymentFeeResult> {
@@ -2604,19 +2839,22 @@ impl<Tr: Clone> Settings<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Настроить авто-вывод
+    /// Configure auto-withdrawal
     ///
-    /// Автоматически выводить поступления на заданный адрес.
+    /// Automatically withdraw incoming funds to a given address.
+    ///
+    /// Requires role: Finance when called with a CLI key.
     ///
     /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
     /// `autowithdraw.bad_min`, `autowithdraw.missing`, `autowithdraw.network_required`,
-    /// `autowithdraw.unsupported_network`, `internal`, `merchant.bad_signature`,
-    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
-    /// `merchant.suspended`, `merchant.unknown_key`, `payout.address_network_mismatch`,
-    /// `payout.bad_address`, `payout.bad_memo`, `payout.memo_conflict`, `payout.memo_required`,
-    /// `payout.memo_too_long`, `request.bad_json`, `request.body_read`, `request.control_char`,
-    /// `request.duplicate_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
-    /// `request.too_deep`, `request.unknown_currency`.
+    /// `autowithdraw.unsupported_network`, `cli.permission_denied`, `internal`,
+    /// `merchant.bad_signature`, `merchant.key_expired`, `merchant.key_mode_mismatch`,
+    /// `merchant.rate_limited`, `merchant.secret_decrypt`, `merchant.suspended`,
+    /// `merchant.unknown_key`, `payout.address_network_mismatch`, `payout.bad_address`,
+    /// `payout.bad_memo`, `payout.memo_conflict`, `payout.memo_required`, `payout.memo_too_long`,
+    /// `request.bad_json`, `request.body_read`, `request.control_char`, `request.duplicate_field`,
+    /// `request.nul_byte`, `request.overloaded`, `request.rate_limited`, `request.too_deep`,
+    /// `request.unknown_currency`.
     ///
     /// `POST /v1/auto-withdraw/set` (`setAutoWithdrawRule`).
     pub fn set_auto_withdraw_rule(
@@ -2628,13 +2866,16 @@ impl<Tr: Clone> Settings<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Список правил авто-вывода
+    /// List auto-withdrawal rules
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`,
-    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
-    /// `request.overloaded`, `request.rate_limited`, `request.too_deep`.
+    /// Requires role: Viewer when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `request.body_read`, `request.control_char`,
+    /// `request.duplicate_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
+    /// `request.too_deep`.
     ///
     /// `POST /v1/auto-withdraw/list` (`listAutoWithdrawRules`).
     pub fn list_auto_withdraw_rules(&self) -> Request<Tr, AutoWithdrawListResult> {
@@ -2642,13 +2883,16 @@ impl<Tr: Clone> Settings<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Удалить правило авто-вывода
+    /// Delete an auto-withdrawal rule
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`,
-    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
-    /// `request.overloaded`, `request.rate_limited`, `request.too_deep`.
+    /// Requires role: Finance when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`, `request.body_read`,
+    /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
+    /// `request.rate_limited`, `request.too_deep`.
     ///
     /// `POST /v1/auto-withdraw/delete` (`deleteAutoWithdrawRule`).
     pub fn delete_auto_withdraw_rule(
@@ -2660,15 +2904,18 @@ impl<Tr: Clone> Settings<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Авто-конверт волатильных монет в USDT (VRCS)
+    /// Auto-convert volatile coins to USDT (VRCS)
     ///
-    /// Включает автоматическую конвертацию поступающих волатильных монет в стейбл USDT.
+    /// Enables automatic conversion of incoming volatile coins into the USDT stablecoin.
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`,
-    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
-    /// `request.overloaded`, `request.rate_limited`, `request.too_deep`, `vrcs.read`.
+    /// Requires role: Finance when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`, `request.body_read`,
+    /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
+    /// `request.rate_limited`, `request.too_deep`, `vrcs.read`.
     ///
     /// `POST /v1/vrcs` (`configureVrcs`).
     pub fn configure_vrcs(&self, params: VRCSRequest) -> Request<Tr, VRCSResult> {
@@ -2678,7 +2925,7 @@ impl<Tr: Clone> Settings<Tr> {
     }
 }
 
-/// Ротация ключей и IP-allowlist API.
+/// Key rotation and the API IP allowlist.
 #[derive(Clone, Debug)]
 pub struct ApiAllowlist<Tr> {
     transport: Tr,
@@ -2689,13 +2936,16 @@ impl<Tr: Clone> ApiAllowlist<Tr> {
         Self { transport }
     }
 
-    /// Список разрешённых IP
+    /// List allowed IPs
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`,
-    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
-    /// `request.overloaded`, `request.rate_limited`, `request.too_deep`.
+    /// Requires role: Viewer when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `request.body_read`, `request.control_char`,
+    /// `request.duplicate_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
+    /// `request.too_deep`.
     ///
     /// `POST /v1/api-allowlist/list` (`listApiAllowlist`).
     pub fn list(&self) -> Request<Tr, APIAllowListResult> {
@@ -2703,14 +2953,17 @@ impl<Tr: Clone> ApiAllowlist<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Добавить IP в allowlist
+    /// Add an IP to the allowlist
+    ///
+    /// Not available to CLI keys: call it with the integration key.
     ///
     /// Errors: `apiallow.bad_cidr`, `apiallow.too_many`, `auth.bad_timestamp`,
-    /// `auth.body_too_large`, `auth.ip_not_allowed`, `internal`, `merchant.bad_signature`,
-    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
-    /// `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`, `request.body_read`,
-    /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
-    /// `request.rate_limited`, `request.too_deep`.
+    /// `auth.body_too_large`, `auth.ip_not_allowed`, `cli.permission_denied`, `internal`,
+    /// `merchant.bad_signature`, `merchant.key_expired`, `merchant.key_mode_mismatch`,
+    /// `merchant.rate_limited`, `merchant.secret_decrypt`, `merchant.suspended`,
+    /// `merchant.unknown_key`, `request.bad_json`, `request.body_read`, `request.control_char`,
+    /// `request.duplicate_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
+    /// `request.too_deep`.
     ///
     /// `POST /v1/api-allowlist/add` (`addApiAllowlistEntry`).
     pub fn add_entry(&self, params: APIAllowEntryRequest) -> Request<Tr, APIAllowListResult> {
@@ -2719,14 +2972,17 @@ impl<Tr: Clone> ApiAllowlist<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Удалить IP из allowlist
+    /// Remove an IP from the allowlist
+    ///
+    /// Not available to CLI keys: call it with the integration key.
     ///
     /// Errors: `apiallow.last_entry`, `auth.bad_timestamp`, `auth.body_too_large`,
-    /// `auth.ip_not_allowed`, `internal`, `merchant.bad_signature`, `merchant.key_mode_mismatch`,
-    /// `merchant.rate_limited`, `merchant.secret_decrypt`, `merchant.suspended`,
-    /// `merchant.unknown_key`, `postgres.lock_pool_busy`, `request.bad_json`, `request.body_read`,
-    /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
-    /// `request.rate_limited`, `request.too_deep`.
+    /// `auth.ip_not_allowed`, `cli.permission_denied`, `internal`, `merchant.bad_signature`,
+    /// `merchant.key_expired`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
+    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`,
+    /// `postgres.lock_pool_busy`, `request.bad_json`, `request.body_read`, `request.control_char`,
+    /// `request.duplicate_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
+    /// `request.too_deep`.
     ///
     /// `POST /v1/api-allowlist/remove` (`removeApiAllowlistEntry`).
     pub fn remove_entry(&self, params: APIAllowEntryRequest) -> Request<Tr, APIAllowListResult> {
@@ -2735,16 +2991,19 @@ impl<Tr: Clone> ApiAllowlist<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Вкл/выкл IP-allowlist
+    /// Enable/disable the IP allowlist
     ///
-    /// Когда включён — запросы с IP не из списка отклоняются.
+    /// When enabled, requests from IPs not on the list are rejected.
+    ///
+    /// Not available to CLI keys: call it with the integration key.
     ///
     /// Errors: `apiallow.empty`, `apiallow.platform_unidentifiable`, `auth.bad_timestamp`,
-    /// `auth.body_too_large`, `auth.ip_not_allowed`, `internal`, `merchant.bad_signature`,
-    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
-    /// `merchant.suspended`, `merchant.unknown_key`, `postgres.lock_pool_busy`, `request.bad_json`,
-    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
-    /// `request.overloaded`, `request.rate_limited`, `request.too_deep`.
+    /// `auth.body_too_large`, `auth.ip_not_allowed`, `cli.permission_denied`, `internal`,
+    /// `merchant.bad_signature`, `merchant.key_expired`, `merchant.key_mode_mismatch`,
+    /// `merchant.rate_limited`, `merchant.secret_decrypt`, `merchant.suspended`,
+    /// `merchant.unknown_key`, `postgres.lock_pool_busy`, `request.bad_json`, `request.body_read`,
+    /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
+    /// `request.rate_limited`, `request.too_deep`.
     ///
     /// `POST /v1/api-allowlist/enable` (`setApiAllowlistEnabled`).
     pub fn set_enabled(&self, params: APIAllowEnableRequest) -> Request<Tr, APIAllowListResult> {
@@ -2754,7 +3013,7 @@ impl<Tr: Clone> ApiAllowlist<Tr> {
     }
 }
 
-/// Реферальная программа.
+/// Referral program.
 #[derive(Clone, Debug)]
 pub struct Referrals<Tr> {
     transport: Tr,
@@ -2765,15 +3024,18 @@ impl<Tr: Clone> Referrals<Tr> {
         Self { transport }
     }
 
-    /// Реферальная информация
+    /// Referral information
     ///
-    /// Ваш реферальный код, приглашённые и начисления.
+    /// Your referral code, invitees and earnings.
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`,
-    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
-    /// `request.overloaded`, `request.rate_limited`, `request.too_deep`.
+    /// Requires role: Viewer when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `request.body_read`, `request.control_char`,
+    /// `request.duplicate_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
+    /// `request.too_deep`.
     ///
     /// `POST /v1/referral/info` (`getReferralInfo`).
     pub fn get_info(&self) -> Request<Tr, ReferralInfoResult> {
@@ -2782,7 +3044,7 @@ impl<Tr: Clone> Referrals<Tr> {
     }
 }
 
-/// PDF-документы операций: чеки, счета, отчёты за период.
+/// PDF documents for operations: receipts, invoices, period reports.
 #[derive(Clone, Debug)]
 pub struct Documents<Tr> {
     transport: Tr,
@@ -2793,19 +3055,20 @@ impl<Tr: Clone> Documents<Tr> {
         Self { transport }
     }
 
-    /// PDF-документ операции (по подписанной ссылке)
+    /// Operation PDF document (via a signed link)
     ///
-    /// Отдаёт фирменный PDF: чек платежа (`kind=payment`), чек выплаты или возврата
-    /// (`kind=payout`), счёт (`kind=invoice`), плакат ссылки (`kind=paylink`), справку о реквизитах
-    /// (`kind=wallet`), сплит-расчёт (`kind=split`), чек перевода (`kind=transfer`), чек
-    /// конвертации (`kind=conversion`). Ссылку НЕ нужно строить самим: готовая приходит в
-    /// `document_url` соответствующих ответов — подпись в `sig` и есть доступ, API-ключ не нужен. ⚠
-    /// Ссылка ЖИВЁТ ОГРАНИЧЕННО (`exp` в query, по умолчанию 30 суток): скачанный PDF-файл —
-    /// документ навсегда, а просроченная ссылка отвечает 403 `document.link_expired` — возьмите
-    /// свежую из любого свежего ответа info/history той же операции. `?lang=` — один из 41 языка
-    /// (en по умолчанию; полный список — в ошибке `document.unknown_lang`). Ответ —
-    /// `application/pdf`; документ отражает текущий статус операции. На самом PDF ссылок нет —
-    /// документы не раскрывают путь к себе при пересылке.
+    /// Returns a branded PDF: payment receipt (`kind=payment`), payout or refund receipt
+    /// (`kind=payout`), invoice (`kind=invoice`), link poster (`kind=paylink`), payment details
+    /// certificate (`kind=wallet`), split settlement (`kind=split`), transfer receipt
+    /// (`kind=transfer`), conversion receipt (`kind=conversion`). You do NOT need to build the link
+    /// yourself: a ready one comes in `document_url` of the corresponding responses — the signature
+    /// in `sig` is the access grant, no API key needed. ⚠ The link has A LIMITED LIFETIME (`exp` in
+    /// the query, 30 days by default): a downloaded PDF file is a document forever, while an
+    /// expired link responds 403 `document.link_expired` — take a fresh one from any fresh
+    /// info/history response for the same operation. `?lang=` — one of 41 languages (en by default;
+    /// the full list is in the `document.unknown_lang` error). The response is `application/pdf`;
+    /// the document reflects the current status of the operation. The PDF itself contains no links
+    /// — documents do not reveal their own URL when forwarded.
     ///
     /// Errors: `document.bad_id`, `document.bad_signature`, `document.disabled`,
     /// `document.encode_failed`, `document.link_expired`, `document.not_found`,
@@ -2830,16 +3093,19 @@ impl<Tr: Clone> Documents<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Справка о балансе (PDF)
+    /// Balance certificate (PDF)
     ///
-    /// Фирменная PDF-справка: available-балансы мерчанта по валютам на момент формирования, со
-    /// штампом. Для контрагентов и бухгалтерии. `?lang=` — 41 язык (en по умолчанию). Ответ —
-    /// `application/pdf`.
+    /// A branded PDF certificate: the merchant's available balances per currency at the time of
+    /// generation, with a stamp. For counterparties and accounting. `?lang=` — 41 languages (en by
+    /// default). The response is `application/pdf`.
+    ///
+    /// Requires role: Viewer when called with a CLI key.
     ///
     /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
-    /// `document.balance_unavailable`, `document.disabled`, `document.encode_failed`,
-    /// `document.render_failed`, `document.render_rejected`, `document.render_unavailable`,
-    /// `document.unknown_lang`, `internal`, `merchant.bad_signature`, `merchant.key_mode_mismatch`,
+    /// `cli.permission_denied`, `document.balance_unavailable`, `document.disabled`,
+    /// `document.encode_failed`, `document.render_failed`, `document.render_rejected`,
+    /// `document.render_unavailable`, `document.unknown_lang`, `internal`,
+    /// `merchant.bad_signature`, `merchant.key_expired`, `merchant.key_mode_mismatch`,
     /// `merchant.not_found`, `merchant.rate_limited`, `merchant.secret_decrypt`,
     /// `merchant.suspended`, `merchant.unknown_key`, `report.too_large`, `request.body_read`,
     /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
@@ -2852,17 +3118,20 @@ impl<Tr: Clone> Documents<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Отчёт о комиссиях за период (PDF)
+    /// Fee report for a period (PDF)
     ///
-    /// Сколько удержано за период: комиссия сервиса с каждого зачтённого платежа и сетевые комиссии
-    /// выплат/возвратов, с итогами по валютам. `?from=YYYY-MM-DD&to=YYYY-MM-DD` (включительно,
-    /// максимум год; по умолчанию — текущий месяц), `?lang=` — 41 язык (en по умолчанию). Ответ —
-    /// `application/pdf`.
+    /// How much was withheld over the period: the service fee on each credited payment and the
+    /// network fees of payouts/refunds, with totals per currency. `?from=YYYY-MM-DD&to=YYYY-MM-DD`
+    /// (inclusive, at most one year; defaults to the current month), `?lang=` — 41 languages (en by
+    /// default). The response is `application/pdf`.
+    ///
+    /// Requires role: Viewer when called with a CLI key.
     ///
     /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
-    /// `document.disabled`, `document.encode_failed`, `document.fees_unavailable`,
-    /// `document.render_failed`, `document.render_rejected`, `document.render_unavailable`,
-    /// `document.unknown_lang`, `internal`, `invoice.corrupt_pay_asset`, `merchant.bad_signature`,
+    /// `cli.permission_denied`, `document.disabled`, `document.encode_failed`,
+    /// `document.fees_unavailable`, `document.render_failed`, `document.render_rejected`,
+    /// `document.render_unavailable`, `document.unknown_lang`, `internal`,
+    /// `invoice.corrupt_pay_asset`, `merchant.bad_signature`, `merchant.key_expired`,
     /// `merchant.key_mode_mismatch`, `merchant.not_found`, `merchant.rate_limited`,
     /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`,
     /// `payment.not_found`, `payout.not_found`, `report.too_large`, `request.body_read`,
@@ -2877,19 +3146,23 @@ impl<Tr: Clone> Documents<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Выписка по счёту (PDF)
+    /// Account statement (PDF)
     ///
-    /// ВСЕ движения available-баланса за период — включая комиссии, доли сплитов и внутренние
-    /// переводы, которых нет в отчёте по операциям. Приход/расход помечены, итоги по валютам. Нужен
-    /// АКТ СВЕРКИ (с сальдо на начало и конец периода)? Закажите тот же отчёт фоном — `POST
-    /// /v1/documents/jobs` с `kind=ledger`: сальдо требует агрегата по всей истории и потому
-    /// считается только в фоновой задаче, не в синхронной ручке. `?from&to` как у отчёта, `?lang=`
-    /// — 41 язык (en по умолчанию). Ответ — `application/pdf`.
+    /// ALL movements of the available balance over the period — including fees, split shares and
+    /// internal transfers that are not in the operations report. Credits/debits are marked, with
+    /// totals per currency. Need a RECONCILIATION STATEMENT (with opening and closing balances for
+    /// the period)? Order the same report in the background — `POST /v1/documents/jobs` with
+    /// `kind=ledger`: the balances require an aggregate over the whole history and are therefore
+    /// computed only in a background job, not in a synchronous endpoint. `?from&to` as in the
+    /// report, `?lang=` — 41 languages (en by default). The response is `application/pdf`.
+    ///
+    /// Requires role: Viewer when called with a CLI key.
     ///
     /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
-    /// `document.disabled`, `document.encode_failed`, `document.ledger_unavailable`,
-    /// `document.render_failed`, `document.render_rejected`, `document.render_unavailable`,
-    /// `document.unknown_lang`, `internal`, `merchant.bad_signature`, `merchant.key_mode_mismatch`,
+    /// `cli.permission_denied`, `document.disabled`, `document.encode_failed`,
+    /// `document.ledger_unavailable`, `document.render_failed`, `document.render_rejected`,
+    /// `document.render_unavailable`, `document.unknown_lang`, `internal`,
+    /// `merchant.bad_signature`, `merchant.key_expired`, `merchant.key_mode_mismatch`,
     /// `merchant.not_found`, `merchant.rate_limited`, `merchant.secret_decrypt`,
     /// `merchant.suspended`, `merchant.unknown_key`, `report.too_large`, `request.body_read`,
     /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
@@ -2903,17 +3176,20 @@ impl<Tr: Clone> Documents<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Справка о сплит-расчёте платежа (PDF)
+    /// Payment split settlement certificate (PDF)
     ///
-    /// Как распределился конкретный платёж между получателями: доли, суммы, статусы. `?uuid=<UUID
-    /// платежа>`, `?lang=` — 41 язык (en по умолчанию). На самом документе напечатана подписанная
-    /// публичная ссылка — её можно переслать партнёру. 404 `document.no_split`, если платёж ничего
-    /// не разводил.
+    /// How a specific payment was distributed between recipients: shares, amounts, statuses.
+    /// `?uuid=<payment UUID>`, `?lang=` — 41 languages (en by default). A signed public link is
+    /// printed on the document itself — it can be forwarded to a partner. 404 `document.no_split`
+    /// if the payment was not split.
+    ///
+    /// Requires role: Viewer when called with a CLI key.
     ///
     /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
-    /// `document.bad_id`, `document.disabled`, `document.encode_failed`, `document.no_split`,
-    /// `document.render_failed`, `document.render_rejected`, `document.render_unavailable`,
-    /// `document.unknown_lang`, `internal`, `invoice.corrupt_pay_asset`, `merchant.bad_signature`,
+    /// `cli.permission_denied`, `document.bad_id`, `document.disabled`, `document.encode_failed`,
+    /// `document.no_split`, `document.render_failed`, `document.render_rejected`,
+    /// `document.render_unavailable`, `document.unknown_lang`, `internal`,
+    /// `invoice.corrupt_pay_asset`, `merchant.bad_signature`, `merchant.key_expired`,
     /// `merchant.key_mode_mismatch`, `merchant.not_found`, `merchant.rate_limited`,
     /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`,
     /// `payment.not_found`, `payout.not_found`, `report.too_large`, `request.body_read`,
@@ -2927,17 +3203,20 @@ impl<Tr: Clone> Documents<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Крипточек (PDF, на предъявителя)
+    /// Crypto cheque (PDF, bearer)
     ///
-    /// Печатный чек выплатной ссылки: сумма, срок и QR получения. Передайте `claim_token` из ответа
-    /// создания ссылки — он хранится только хешем и повторно НЕ выдаётся, поэтому чек можно
-    /// напечатать только пока токен у вас. ⚠ Документ — деньги: любой, у кого он есть, может
-    /// получить средства. Ответ — `application/pdf`.
+    /// A printable cheque for a payout link: the amount, the expiry and the claim QR code. Pass the
+    /// `claim_token` from the link creation response — it is stored only as a hash and is NOT
+    /// issued again, so the cheque can only be printed while you still have the token. ⚠ The
+    /// document is money: anyone who has it can claim the funds. The response is `application/pdf`.
+    ///
+    /// Requires role: Finance when called with a CLI key.
     ///
     /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
-    /// `cheque.token_required`, `document.disabled`, `document.encode_failed`,
-    /// `document.render_failed`, `document.render_rejected`, `document.render_unavailable`,
-    /// `document.unknown_lang`, `internal`, `merchant.bad_signature`, `merchant.key_mode_mismatch`,
+    /// `cheque.token_required`, `cli.permission_denied`, `document.disabled`,
+    /// `document.encode_failed`, `document.render_failed`, `document.render_rejected`,
+    /// `document.render_unavailable`, `document.unknown_lang`, `internal`,
+    /// `merchant.bad_signature`, `merchant.key_expired`, `merchant.key_mode_mismatch`,
     /// `merchant.not_found`, `merchant.rate_limited`, `merchant.secret_decrypt`,
     /// `merchant.suspended`, `merchant.unknown_key`, `payoutlink.disabled`, `payoutlink.not_found`,
     /// `report.too_large`, `request.bad_json`, `request.body_read`, `request.control_char`,
@@ -2954,22 +3233,26 @@ impl<Tr: Clone> Documents<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Отчёт по операциям за период (PDF)
+    /// Operations report for a period (PDF)
     ///
-    /// Фирменный PDF-отчёт: платежи, выплаты и возвраты мерчанта за период, с итогами по валютам.
-    /// `?from=YYYY-MM-DD&to=YYYY-MM-DD` (включительно, максимум год; по умолчанию — текущий месяц),
-    /// `?lang=` — 41 язык (en по умолчанию). Ответ — `application/pdf`.
+    /// A branded PDF report: the merchant's payments, payouts and refunds for the period, with
+    /// totals per currency. `?from=YYYY-MM-DD&to=YYYY-MM-DD` (inclusive, at most one year; defaults
+    /// to the current month), `?lang=` — 41 languages (en by default). The response is
+    /// `application/pdf`.
+    ///
+    /// Requires role: Viewer when called with a CLI key.
     ///
     /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
-    /// `document.disabled`, `document.encode_failed`, `document.render_failed`,
-    /// `document.render_rejected`, `document.render_unavailable`, `document.unknown_lang`,
-    /// `internal`, `invoice.corrupt_pay_asset`, `merchant.bad_signature`,
-    /// `merchant.key_mode_mismatch`, `merchant.not_found`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`,
-    /// `payment.not_found`, `payout.not_found`, `report.too_large`, `request.body_read`,
-    /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
-    /// `request.rate_limited`, `request.too_deep`, `statement.bad_from`, `statement.bad_range`,
-    /// `statement.bad_to`, `statement.range_too_long`, `statement.unavailable`.
+    /// `cli.permission_denied`, `document.disabled`, `document.encode_failed`,
+    /// `document.render_failed`, `document.render_rejected`, `document.render_unavailable`,
+    /// `document.unknown_lang`, `internal`, `invoice.corrupt_pay_asset`, `merchant.bad_signature`,
+    /// `merchant.key_expired`, `merchant.key_mode_mismatch`, `merchant.not_found`,
+    /// `merchant.rate_limited`, `merchant.secret_decrypt`, `merchant.suspended`,
+    /// `merchant.unknown_key`, `payment.not_found`, `payout.not_found`, `report.too_large`,
+    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
+    /// `request.overloaded`, `request.rate_limited`, `request.too_deep`, `statement.bad_from`,
+    /// `statement.bad_range`, `statement.bad_to`, `statement.range_too_long`,
+    /// `statement.unavailable`.
     ///
     /// `GET /v1/documents/statement` (`getStatementDocument`).
     pub fn get_statement(&self, query: GetStatementDocumentQuery) -> Request<Tr, FileResult> {
@@ -2978,21 +3261,24 @@ impl<Tr: Clone> Documents<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Ведомость массовой операции (PDF)
+    /// Batch operation register (PDF)
     ///
-    /// Итоги батча (`/v1/*/batch`) одним документом: сколько строк, сколько прошло и упало, каждая
-    /// строка с получателем, суммой, статусом и машинным кодом причины отказа — тем же, что вернул
-    /// бы одиночный вызов. `?uuid=<UUID батча>`, `?lang=` — 41 язык. Ответ — `application/pdf`.
+    /// The results of a batch (`/v1/*/batch`) in one document: how many rows, how many succeeded
+    /// and failed, each row with the recipient, amount, status and the machine code of the
+    /// rejection reason — the same one a single call would return. `?uuid=<batch UUID>`, `?lang=` —
+    /// 41 languages. The response is `application/pdf`.
+    ///
+    /// Requires role: Viewer when called with a CLI key.
     ///
     /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
-    /// `batch.disabled`, `batch.not_found`, `document.bad_id`, `document.batch_unavailable`,
-    /// `document.disabled`, `document.encode_failed`, `document.render_failed`,
-    /// `document.render_rejected`, `document.render_unavailable`, `document.unknown_lang`,
-    /// `internal`, `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.not_found`,
-    /// `merchant.rate_limited`, `merchant.secret_decrypt`, `merchant.suspended`,
-    /// `merchant.unknown_key`, `report.too_large`, `request.body_read`, `request.control_char`,
-    /// `request.duplicate_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
-    /// `request.too_deep`.
+    /// `batch.disabled`, `batch.not_found`, `cli.permission_denied`, `document.bad_id`,
+    /// `document.batch_unavailable`, `document.disabled`, `document.encode_failed`,
+    /// `document.render_failed`, `document.render_rejected`, `document.render_unavailable`,
+    /// `document.unknown_lang`, `internal`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.not_found`, `merchant.rate_limited`,
+    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`, `report.too_large`,
+    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
+    /// `request.overloaded`, `request.rate_limited`, `request.too_deep`.
     ///
     /// `GET /v1/documents/batch` (`getBatchDocument`).
     pub fn get_batch(&self, query: GetBatchDocumentQuery) -> Request<Tr, FileResult> {
@@ -3001,22 +3287,25 @@ impl<Tr: Clone> Documents<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Отчёт о сборах платёжной ссылки (PDF)
+    /// Payment link collections report (PDF)
     ///
-    /// Сколько собрала конкретная платёжная ссылка: каждый порождённый платёж строкой, итог по
-    /// валютам (только зачтённые). Для донатов и сборов. `?uuid=<UUID ссылки>`, `?from&to`
-    /// (включительно, максимум год; по умолчанию — текущий месяц), `?lang=`. Ответ —
+    /// How much a specific payment link has collected: each resulting payment as a row, totals per
+    /// currency (credited only). For donations and fundraising. `?uuid=<link UUID>`, `?from&to`
+    /// (inclusive, at most one year; defaults to the current month), `?lang=`. The response is
     /// `application/pdf`.
     ///
+    /// Requires role: Viewer when called with a CLI key.
+    ///
     /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
-    /// `document.bad_id`, `document.disabled`, `document.encode_failed`, `document.render_failed`,
-    /// `document.render_rejected`, `document.render_unavailable`, `document.unknown_lang`,
-    /// `internal`, `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.not_found`,
-    /// `merchant.rate_limited`, `merchant.secret_decrypt`, `merchant.suspended`,
-    /// `merchant.unknown_key`, `paylink.disabled`, `paylink.not_found`, `report.too_large`,
-    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
-    /// `request.overloaded`, `request.rate_limited`, `request.too_deep`, `statement.bad_from`,
-    /// `statement.bad_range`, `statement.bad_to`, `statement.range_too_long`.
+    /// `cli.permission_denied`, `document.bad_id`, `document.disabled`, `document.encode_failed`,
+    /// `document.render_failed`, `document.render_rejected`, `document.render_unavailable`,
+    /// `document.unknown_lang`, `internal`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.not_found`, `merchant.rate_limited`,
+    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`, `paylink.disabled`,
+    /// `paylink.not_found`, `report.too_large`, `request.body_read`, `request.control_char`,
+    /// `request.duplicate_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
+    /// `request.too_deep`, `statement.bad_from`, `statement.bad_range`, `statement.bad_to`,
+    /// `statement.range_too_long`.
     ///
     /// `GET /v1/documents/link` (`getPaymentLinkDocument`).
     pub fn get_payment_link(&self, query: GetPaymentLinkDocumentQuery) -> Request<Tr, FileResult> {
@@ -3025,22 +3314,25 @@ impl<Tr: Clone> Documents<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Выписка по статическому кошельку (PDF)
+    /// Static wallet statement (PDF)
     ///
-    /// Движения, порождённые конкретным статик-кошельком (депозиты клиента на постоянный адрес), с
-    /// реквизитами кошелька в шапке и итогами по валютам. `?uuid=<UUID кошелька>`, `?from&to`,
-    /// `?lang=`. Ответ — `application/pdf`.
+    /// Movements produced by a specific static wallet (customer deposits to a permanent address),
+    /// with the wallet details in the header and totals per currency. `?uuid=<wallet UUID>`,
+    /// `?from&to`, `?lang=`. The response is `application/pdf`.
+    ///
+    /// Requires role: Viewer when called with a CLI key.
     ///
     /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
-    /// `document.bad_id`, `document.disabled`, `document.encode_failed`,
+    /// `cli.permission_denied`, `document.bad_id`, `document.disabled`, `document.encode_failed`,
     /// `document.ledger_unavailable`, `document.render_failed`, `document.render_rejected`,
     /// `document.render_unavailable`, `document.unknown_lang`, `internal`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.not_found`,
-    /// `merchant.rate_limited`, `merchant.secret_decrypt`, `merchant.suspended`,
-    /// `merchant.unknown_key`, `report.too_large`, `request.body_read`, `request.control_char`,
-    /// `request.duplicate_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
-    /// `request.too_deep`, `statement.bad_from`, `statement.bad_range`, `statement.bad_to`,
-    /// `statement.range_too_long`, `wallet.static_disabled`, `wallet.static_not_found`.
+    /// `merchant.bad_signature`, `merchant.key_expired`, `merchant.key_mode_mismatch`,
+    /// `merchant.not_found`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `report.too_large`, `request.body_read`,
+    /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
+    /// `request.rate_limited`, `request.too_deep`, `statement.bad_from`, `statement.bad_range`,
+    /// `statement.bad_to`, `statement.range_too_long`, `wallet.static_disabled`,
+    /// `wallet.static_not_found`.
     ///
     /// `GET /v1/documents/wallet/statement` (`getWalletStatementDocument`).
     pub fn get_wallet_statement(
@@ -3052,20 +3344,23 @@ impl<Tr: Clone> Documents<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Отчёт о реферальных начислениях (PDF)
+    /// Referral earnings report (PDF)
     ///
-    /// Начисления реферальной программы за период: каждая награда строкой (когда, за кого,
-    /// сколько), итог по валютам. `?from&to`, `?lang=`. Ответ — `application/pdf`.
+    /// Referral program earnings for the period: each reward as a row (when, for whom, how much),
+    /// totals per currency. `?from&to`, `?lang=`. The response is `application/pdf`.
+    ///
+    /// Requires role: Viewer when called with a CLI key.
     ///
     /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
-    /// `document.disabled`, `document.encode_failed`, `document.render_failed`,
-    /// `document.render_rejected`, `document.render_unavailable`, `document.unknown_lang`,
-    /// `internal`, `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.not_found`,
-    /// `merchant.rate_limited`, `merchant.secret_decrypt`, `merchant.suspended`,
-    /// `merchant.unknown_key`, `referral.disabled`, `report.too_large`, `request.body_read`,
-    /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
-    /// `request.rate_limited`, `request.too_deep`, `statement.bad_from`, `statement.bad_range`,
-    /// `statement.bad_to`, `statement.range_too_long`.
+    /// `cli.permission_denied`, `document.disabled`, `document.encode_failed`,
+    /// `document.render_failed`, `document.render_rejected`, `document.render_unavailable`,
+    /// `document.unknown_lang`, `internal`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.not_found`, `merchant.rate_limited`,
+    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`,
+    /// `referral.disabled`, `report.too_large`, `request.body_read`, `request.control_char`,
+    /// `request.duplicate_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
+    /// `request.too_deep`, `statement.bad_from`, `statement.bad_range`, `statement.bad_to`,
+    /// `statement.range_too_long`.
     ///
     /// `GET /v1/documents/referrals` (`getReferralsDocument`).
     pub fn get_referrals(&self, query: GetReferralsDocumentQuery) -> Request<Tr, FileResult> {
@@ -3074,26 +3369,28 @@ impl<Tr: Clone> Documents<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Заказать тяжёлый отчёт (фоновая генерация)
+    /// Order a heavy report (background generation)
     ///
-    /// Синхронные отчётные ручки ограничены по объёму; отчёт за большой период закажите фоном:
-    /// `kind` — `statement`/`fees`/`ledger`, период — до двух лет. Задача попадает в очередь и
-    /// собирается в течение суток (обычно — минуты); статус — `POST /v1/documents/jobs/info`,
-    /// готовый файл — `GET /v1/documents/jobs/file`. Повторный заказ с теми же параметрами при
-    /// живой задаче возвращает её же. `format` — `pdf` (по умолчанию) или `csv`: CSV собирается БЕЗ
-    /// вёрстки (для тяжёлой квартальной выписки — ноль нагрузки на рендер, грузится в Excel/1С).
-    /// Квоты: не больше 3 задач в работе и 20 за сутки. Готовый отчёт хранится 7 суток, затем
-    /// удаляется — скачайте и храните файл у себя.
+    /// Synchronous report endpoints are limited in volume; order a report for a long period in the
+    /// background: `kind` — `statement`/`fees`/`ledger`, period — up to two years. The job is
+    /// queued and built within a day (usually minutes); status — `POST /v1/documents/jobs/info`,
+    /// the finished file — `GET /v1/documents/jobs/file`. Ordering again with the same parameters
+    /// while a job is alive returns that job. `format` — `pdf` (default) or `csv`: CSV is built
+    /// WITHOUT layout (for a heavy quarterly statement — zero rendering load, imports into
+    /// Excel/1C). Quotas: at most 3 jobs in progress and 20 per day. A finished report is kept for
+    /// 7 days and then deleted — download it and keep the file yourself.
+    ///
+    /// Requires role: Viewer when called with a CLI key.
     ///
     /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
-    /// `document.bad_format`, `document.bad_kind`, `document.daily_quota`,
+    /// `cli.permission_denied`, `document.bad_format`, `document.bad_kind`, `document.daily_quota`,
     /// `document.jobs_disabled`, `document.too_many_jobs`, `document.unknown_lang`, `internal`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`, `report.crashed`,
-    /// `report.expired`, `report.too_large`, `request.bad_json`, `request.body_read`,
-    /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
-    /// `request.rate_limited`, `request.too_deep`, `statement.bad_from`, `statement.bad_range`,
-    /// `statement.bad_to`, `statement.range_too_long`.
+    /// `merchant.bad_signature`, `merchant.key_expired`, `merchant.key_mode_mismatch`,
+    /// `merchant.rate_limited`, `merchant.secret_decrypt`, `merchant.suspended`,
+    /// `merchant.unknown_key`, `report.crashed`, `report.expired`, `report.too_large`,
+    /// `request.bad_json`, `request.body_read`, `request.control_char`, `request.duplicate_field`,
+    /// `request.nul_byte`, `request.overloaded`, `request.rate_limited`, `request.too_deep`,
+    /// `statement.bad_from`, `statement.bad_range`, `statement.bad_to`, `statement.range_too_long`.
     ///
     /// `POST /v1/documents/jobs` (`createDocumentJob`).
     pub fn create_job(&self, params: DocumentJobRequest) -> Request<Tr, DocumentJobAccepted> {
@@ -3102,20 +3399,23 @@ impl<Tr: Clone> Documents<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Статус фонового отчёта
+    /// Background report status
     ///
-    /// Статусы: `queued` → `processing` → `done` (в `file` — ссылка скачивания, размер, число строк
-    /// и срок хранения) или `failed` (в `error` — машинный `code` и человекочитаемый `message`;
-    /// например `report.too_large` — период надо разбить). `expired` — срок хранения вышел,
-    /// закажите отчёт заново.
+    /// Statuses: `queued` → `processing` → `done` (`file` contains the download link, size, row
+    /// count and retention period) or `failed` (`error` contains a machine `code` and a
+    /// human-readable `message`; e.g. `report.too_large` — the period must be split). `expired` —
+    /// the retention period is over, order the report again.
+    ///
+    /// Requires role: Viewer when called with a CLI key.
     ///
     /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
-    /// `document.bad_job_id`, `document.job_not_found`, `document.jobs_disabled`, `internal`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`, `report.crashed`,
-    /// `report.expired`, `report.too_large`, `request.bad_json`, `request.body_read`,
-    /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
-    /// `request.rate_limited`, `request.too_deep`.
+    /// `cli.permission_denied`, `document.bad_job_id`, `document.job_not_found`,
+    /// `document.jobs_disabled`, `internal`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `report.crashed`, `report.expired`,
+    /// `report.too_large`, `request.bad_json`, `request.body_read`, `request.control_char`,
+    /// `request.duplicate_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
+    /// `request.too_deep`.
     ///
     /// `POST /v1/documents/jobs/info` (`getDocumentJob`).
     pub fn get_job(&self, params: DocumentJobInfoRequest) -> Request<Tr, DocumentJobView> {
@@ -3124,20 +3424,23 @@ impl<Tr: Clone> Documents<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Скачать готовый фоновый отчёт (PDF)
+    /// Download a finished background report (PDF)
     ///
-    /// `?job_id=<UUID задачи>`. Отдаёт `application/pdf` под тем же ключом мерчанта — публичных
-    /// ссылок на файл не существует. 409 `document.job_not_ready`, пока задача в работе; 404
-    /// `document.job_expired`, когда срок хранения вышел.
+    /// `?job_id=<job UUID>`. Returns `application/pdf` under the same merchant key — public links
+    /// to the file do not exist. 409 `document.job_not_ready` while the job is in progress; 404
+    /// `document.job_expired` once the retention period is over.
+    ///
+    /// Requires role: Viewer when called with a CLI key.
     ///
     /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
-    /// `document.bad_job_id`, `document.job_expired`, `document.job_failed`,
-    /// `document.job_not_found`, `document.job_not_ready`, `document.jobs_disabled`, `internal`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`, `report.crashed`,
-    /// `report.too_large`, `request.body_read`, `request.control_char`, `request.duplicate_field`,
-    /// `request.nul_byte`, `request.overloaded`, `request.rate_limited`, `request.too_deep`,
-    /// `s3.bad_endpoint`, `s3.not_found`, `s3.request`, `s3.unavailable`.
+    /// `cli.permission_denied`, `document.bad_job_id`, `document.job_expired`,
+    /// `document.job_failed`, `document.job_not_found`, `document.job_not_ready`,
+    /// `document.jobs_disabled`, `internal`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `report.crashed`, `report.too_large`,
+    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
+    /// `request.overloaded`, `request.rate_limited`, `request.too_deep`, `s3.bad_endpoint`,
+    /// `s3.not_found`, `s3.request`, `s3.unavailable`.
     ///
     /// `GET /v1/documents/jobs/file` (`downloadDocumentJobFile`).
     pub fn download_job_file(
@@ -3150,7 +3453,7 @@ impl<Tr: Clone> Documents<Tr> {
     }
 }
 
-/// Эндпоинты для страницы оплаты — работают без секрета.
+/// Endpoints for the payment page — they work without the secret.
 #[derive(Clone, Debug)]
 pub struct Checkout<Tr> {
     transport: Tr,
@@ -3161,9 +3464,10 @@ impl<Tr: Clone> Checkout<Tr> {
         Self { transport }
     }
 
-    /// Состояние анкеты (для плательщика)
+    /// Questionnaire status (for the payer)
     ///
-    /// Публично, по токену из ссылки. Возвращает только статус — ни причины, ни классификации.
+    /// Public, by the token from the link. Returns only the status — neither the reason nor the
+    /// classification.
     ///
     /// Errors: `aml.sof_not_found`, `internal`, `request.overloaded`, `request.rate_limited`.
     ///
@@ -3174,10 +3478,10 @@ impl<Tr: Clone> Checkout<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Плательщик присылает происхождение средств
+    /// The payer submits the source of funds
     ///
-    /// Публично, по токену из ссылки. Приём анкеты **не гарантирует** разблокировку средств: она
-    /// даёт основание пересмотреть решение, и только.
+    /// Public, by the token from the link. Accepting the questionnaire **does not guarantee** that
+    /// the funds are unblocked: it provides grounds to reconsider the decision, nothing more.
     ///
     /// Errors: `aml.sof_closed`, `aml.sof_empty`, `aml.sof_not_found`, `aml.sof_too_large`,
     /// `aml.sof_unavailable`, `internal`, `request.bad_json`, `request.body_read`,
@@ -3196,9 +3500,9 @@ impl<Tr: Clone> Checkout<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Конфиг платёжной ссылки (для страницы)
+    /// Payment link configuration (for the page)
     ///
-    /// Публично: заголовок/описание/режим суммы/валюта — чтобы отрисовать страницу доната.
+    /// Public: title/description/amount mode/currency — to render the donation page.
     ///
     /// Errors: `internal`, `paylink.bad_id`, `paylink.disabled`, `paylink.not_found`,
     /// `request.overloaded`, `request.rate_limited`.
@@ -3213,11 +3517,11 @@ impl<Tr: Clone> Checkout<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Оплатить по ссылке (создать платёж)
+    /// Pay via a link (create a payment)
     ///
-    /// Публично: клиент вводит сумму (для open/range) и, если валюта не закреплена, выбирает
-    /// валюту/сеть. Создаётся свежий инвойс — в ответе обычный объект платежа с `uuid` и `url`
-    /// страницы оплаты.
+    /// Public: the customer enters an amount (for open/range) and, if the currency is not pinned,
+    /// picks the currency/network. A fresh invoice is created — the response is a regular payment
+    /// object with `uuid` and the payment page `url`.
     ///
     /// Errors: `internal`, `merchant.not_found`, `paylink.above_max`, `paylink.amount_required`,
     /// `paylink.bad_bounds`, `paylink.bad_id`, `paylink.bad_mode`, `paylink.below_min`,
@@ -3239,23 +3543,23 @@ impl<Tr: Clone> Checkout<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Список валют и сетей
+    /// List currencies and networks
     ///
-    /// Публичный справочник. Возвращает два списка, и путать их не надо:
+    /// A public reference. It returns two lists, and they must not be confused:
     ///
-    /// - `currencies` — в чём можно **получать**: монеты и их сети (плюс флаги доступности приёма и
-    ///   выплаты).
-    /// - `pricing_currencies` — в чём можно **назначать цену** (`currency` при создании платежа):
-    ///   те же монеты **плюс 45 фиатных валют** (`{"symbol":"EUR","decimals":2,"fiat":true}`) —
-    ///   USD, EUR, GBP, RUB, UAH, PLN, CZK, TRY, CNY, INR, BRL, CAD, AUD, CHF, AED, ZAR, MXN, IDR,
-    ///   THB, VND, NGN, JPY, KRW, SGD, HKD, NZD, SEK, NOK, DKK, ILS, SAR, PHP, MYR, TWD, PKR, LKR,
-    ///   MMK, BDT, ARS, GEL, HUF, BMD, BHD, KWD, CLP. Число знаков после запятой у каждой в поле
-    ///   `decimals` (обычно 2; у JPY/KRW/VND/CLP — 0, у BHD/KWD — 3) — берите его из ответа, не
-    ///   хардкодьте. У фиата нет сетей и никогда не будет: в нём можно оценить счёт, но нельзя его
-    ///   получить.
+    /// - `currencies` — what you can **receive**: coins and their networks (plus flags for whether
+    ///   accepting and payouts are available).
+    /// - `pricing_currencies` — what you can **set a price in** (`currency` when creating a
+    ///   payment): the same coins **plus 45 fiat currencies**
+    ///   (`{"symbol":"EUR","decimals":2,"fiat":true}`) — USD, EUR, GBP, RUB, UAH, PLN, CZK, TRY,
+    ///   CNY, INR, BRL, CAD, AUD, CHF, AED, ZAR, MXN, IDR, THB, VND, NGN, JPY, KRW, SGD, HKD, NZD,
+    ///   SEK, NOK, DKK, ILS, SAR, PHP, MYR, TWD, PKR, LKR, MMK, BDT, ARS, GEL, HUF, BMD, BHD, KWD,
+    ///   CLP. The number of decimal places of each is in the `decimals` field (usually 2;
+    ///   JPY/KRW/VND/CLP — 0, BHD/KWD — 3) — take it from the response, do not hardcode it. Fiat
+    ///   has no networks and never will: you can price an invoice in it, but you cannot receive it.
     ///
-    /// Тенге, сом и сум пока не поддерживаются — источник курсов не котирует в них крипту напрямую,
-    /// а выводить курс перемножением двух других мы не будем.
+    /// The tenge, som and sum are not supported yet — the rate source does not quote crypto in them
+    /// directly, and we will not derive a rate by multiplying two others.
     ///
     /// Errors: `internal`, `request.overloaded`, `request.rate_limited`.
     ///
@@ -3265,10 +3569,10 @@ impl<Tr: Clone> Checkout<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Публичный статус платежа (страница оплаты)
+    /// Public payment status (payment page)
     ///
-    /// Без секрета — можно опрашивать прямо из браузера. Содержит `amount_remaining` для подсказки
-    /// «доплатите X».
+    /// No secret — can be polled directly from the browser. Contains `amount_remaining` for a "pay
+    /// X more" hint.
     ///
     /// Errors: `internal`, `invoice.corrupt_pay_asset`, `onramp.bad_json`, `onramp.in_flight`,
     /// `onramp.no_assets`, `onramp.no_live_key`, `onramp.no_test_key`, `onramp.read`,
@@ -3284,9 +3588,10 @@ impl<Tr: Clone> Checkout<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Выбрать валюту и сеть для валюто-агностичной ссылки
+    /// Choose the currency and network for a currency-agnostic link
     ///
-    /// Клиент выбирает `currency` + `network`; после этого фиксируется курс и выделяется адрес.
+    /// The customer picks `currency` + `network`; after that the rate is locked in and an address
+    /// is allocated.
     ///
     /// Errors: `internal`, `invoice.address_failed`, `invoice.address_taken`,
     /// `invoice.corrupt_pay_asset`, `invoice.expired`, `invoice.fiat_pay_asset`,
@@ -3313,15 +3618,16 @@ impl<Tr: Clone> Checkout<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Оплатить фиатом: открыть покупку криптовалюты картой
+    /// Pay with fiat: open a card purchase of crypto
     ///
-    /// Покупатель без криптовалюты платит картой стороннему рампу, а тот шлёт монеты прямо на
-    /// депозитный адрес этого счёта. Ответ — ПОДПИСАННАЯ ссылка на виджет: подпись покрывает адрес
-    /// получения и тег, поэтому переписать их в браузере нельзя. `url` пустой, когда покупка уже
-    /// идёт (смотрите `status`) — второй виджет означал бы второе списание по одному заказу.
-    /// `fiat_amount` — оценка: у рампов нет режима «зафиксировать сумму получения», сумму фиата мы
-    /// считаем обратным ходом из их котировки и с запасом. Кнопку показывать только когда `GET
-    /// /v1/pay/{id}` вернул `fiat_purchase_available: true`.
+    /// A buyer without crypto pays by card to a third-party on-ramp, which sends the coins straight
+    /// to this invoice's deposit address. The response is a SIGNED widget link: the signature
+    /// covers the receiving address and tag, so they cannot be rewritten in the browser. `url` is
+    /// empty when a purchase is already in progress (see `status`) — a second widget would mean a
+    /// second charge for one order. `fiat_amount` is an estimate: on-ramps have no "fix the
+    /// received amount" mode, so we compute the fiat amount backwards from their quote, with a
+    /// margin. Show the button only when `GET /v1/pay/{id}` returned `fiat_purchase_available:
+    /// true`.
     ///
     /// Errors: `internal`, `invoice.corrupt_pay_asset`, `onramp.admit`, `onramp.advance`,
     /// `onramp.asset_unsupported`, `onramp.bad_ed25519`, `onramp.bad_invoice`, `onramp.bad_json`,
@@ -3343,11 +3649,12 @@ impl<Tr: Clone> Checkout<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Статус карточной покупки по счёту
+    /// Status of the card purchase for an invoice
     ///
-    /// Что стало с покупкой: `new`, `pending`, `paid`, `completed`, `failed`, `canceled`, плюс
-    /// `reason` — дословная причина отказа провайдера, когда она есть. Пустой `status` = живой
-    /// покупки нет. Счёт при этом закрывают ДЕНЬГИ В ЦЕПОЧКЕ, а не этот статус.
+    /// What happened to the purchase: `new`, `pending`, `paid`, `completed`, `failed`, `canceled`,
+    /// plus `reason` — the provider's verbatim rejection reason, when there is one. An empty
+    /// `status` = no live purchase. The invoice, however, is closed by the MONEY ON CHAIN, not by
+    /// this status.
     ///
     /// Errors: `internal`, `invoice.corrupt_pay_asset`, `onramp.status_reason`, `pay.bad_uuid`,
     /// `payment.not_found`, `request.overloaded`, `request.rate_limited`.
@@ -3359,10 +3666,10 @@ impl<Tr: Clone> Checkout<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// QR-код адреса оплаты
+    /// Payment address QR code
     ///
-    /// PNG-картинка с QR того адреса (и суммы), которые уже вернул `GET /v1/pay/{id}`. Без ключа —
-    /// её грузит браузер покупателя.
+    /// A PNG image with the QR code of the address (and amount) already returned by `GET
+    /// /v1/pay/{id}`. No key — the buyer's browser loads it.
     ///
     /// Errors: `internal`, `invoice.corrupt_pay_asset`, `pay.bad_uuid`, `payment.not_found`,
     /// `request.overloaded`, `request.rate_limited`.
@@ -3375,7 +3682,7 @@ impl<Tr: Clone> Checkout<Tr> {
     }
 }
 
-/// Dev-store: тестовые деньги, симуляция депозитов и повтор вебхуков.
+/// Dev store: test money, simulated deposits and webhook replay.
 #[derive(Clone, Debug)]
 pub struct Sandbox<Tr> {
     transport: Tr,
@@ -3386,11 +3693,11 @@ impl<Tr: Clone> Sandbox<Tr> {
         Self { transport }
     }
 
-    /// Создать (или вернуть) dev-store мерчанта
+    /// Create (or return) the merchant's dev store
     ///
-    /// Идемпотентно: у мерчанта максимум один dev-store, повторный вызов возвращает существующий.
-    /// Тестовый ключ возвращается каждый раз — он не защищает ничего, кроме тестовых денег.
-    /// Вызывается под онбординг-гейтом кабинета, не HMAC-ключом.
+    /// Idempotent: a merchant has at most one dev store, a repeated call returns the existing one.
+    /// The test key is returned every time — it protects nothing but test money. Called behind the
+    /// dashboard onboarding gate, not with the HMAC key.
     ///
     /// Errors: `admin.bad_nonce`, `admin.bad_operator`, `admin.bad_signature`,
     /// `admin.bad_timestamp`, `admin.disabled`, `admin.journal_unavailable`, `admin.replayed`,
@@ -3407,21 +3714,24 @@ impl<Tr: Clone> Sandbox<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Кран: пополнить тестовый баланс
+    /// Faucet: top up the test balance
     ///
-    /// Только для тестового ключа dev-store. Начисляет тестовые деньги, чтобы гонять
-    /// выплаты/возвраты, а не только приём.
+    /// Dev-store test key only. Credits test money so you can exercise payouts/refunds, not just
+    /// accepting payments.
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `ledger.account_not_found`, `ledger.asset_mismatch`, `ledger.bad_direction`,
-    /// `ledger.duplicate_posting`, `ledger.fiat_asset`, `ledger.idempotency_conflict`,
-    /// `ledger.missing_idempotency_key`, `ledger.no_lines`, `ledger.non_positive_amount`,
-    /// `ledger.sandbox_live_mix`, `ledger.unbalanced`, `merchant.bad_signature`,
-    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
-    /// `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`, `request.body_read`,
-    /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
-    /// `request.rate_limited`, `request.too_deep`, `sandbox.amount_too_large`,
-    /// `sandbox.bad_amount`, `sandbox.bad_asset`, `sandbox.live_key`.
+    /// Requires role: Admin when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `ledger.account_not_found`, `ledger.asset_mismatch`,
+    /// `ledger.bad_direction`, `ledger.duplicate_posting`, `ledger.fiat_asset`,
+    /// `ledger.idempotency_conflict`, `ledger.missing_idempotency_key`, `ledger.no_lines`,
+    /// `ledger.non_positive_amount`, `ledger.sandbox_live_mix`, `ledger.unbalanced`,
+    /// `merchant.bad_signature`, `merchant.key_expired`, `merchant.key_mode_mismatch`,
+    /// `merchant.rate_limited`, `merchant.secret_decrypt`, `merchant.suspended`,
+    /// `merchant.unknown_key`, `request.bad_json`, `request.body_read`, `request.control_char`,
+    /// `request.duplicate_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
+    /// `request.too_deep`, `sandbox.amount_too_large`, `sandbox.bad_amount`, `sandbox.bad_asset`,
+    /// `sandbox.live_key`.
     ///
     /// `POST /v1/sandbox/faucet` (`sandboxFaucet`).
     pub fn faucet(&self, params: FaucetRequest) -> Request<Tr, FaucetResult> {
@@ -3431,25 +3741,28 @@ impl<Tr: Clone> Sandbox<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Симулировать он-чейн депозит
+    /// Simulate an on-chain deposit
     ///
-    /// Проводит синтетический платёж через настоящий пайплайн зачисления. `amount` пустой —
-    /// оплатить ровно сколько нужно; `confirmations` меньше требуемого — проверка перехода
-    /// pending→confirmed (повторите тот же `txid` с большим числом); тот же `txid` повторно —
-    /// проверка вашей идемпотентности.
+    /// Runs a synthetic payment through the real crediting pipeline. Empty `amount` — pay exactly
+    /// the amount due; `confirmations` below the required number — tests the pending→confirmed
+    /// transition (repeat the same `txid` with a higher number); the same `txid` again — tests your
+    /// idempotency.
+    ///
+    /// Requires role: Admin when called with a CLI key.
     ///
     /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
-    /// `compliance.blocked`, `compliance.blocked_address`, `compliance.blocklist_unavailable`,
-    /// `compliance.no_destination`, `compliance.no_network`, `compliance.sanctioned_address`,
-    /// `compliance.sanctions_unavailable`, `deposit.generation_stale`, `internal`,
-    /// `invoice.bad_deposit`, `invoice.corrupt_pay_asset`, `invoice.deposit_asset_mismatch`,
-    /// `invoice.generation_stale`, `ledger.account_not_found`, `ledger.asset_mismatch`,
-    /// `ledger.bad_direction`, `ledger.duplicate_posting`, `ledger.fiat_asset`,
-    /// `ledger.idempotency_conflict`, `ledger.missing_idempotency_key`, `ledger.no_lines`,
-    /// `ledger.non_positive_amount`, `ledger.sandbox_live_mix`, `ledger.unbalanced`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.not_found`,
-    /// `merchant.rate_limited`, `merchant.secret_decrypt`, `merchant.suspended`,
-    /// `merchant.unknown_key`, `onramp.suppresses`, `payment.not_found`, `payout.above_limit`,
+    /// `cli.permission_denied`, `compliance.blocked`, `compliance.blocked_address`,
+    /// `compliance.blocklist_unavailable`, `compliance.no_destination`, `compliance.no_network`,
+    /// `compliance.sanctioned_address`, `compliance.sanctions_unavailable`,
+    /// `deposit.generation_stale`, `internal`, `invoice.bad_deposit`, `invoice.corrupt_pay_asset`,
+    /// `invoice.deposit_asset_mismatch`, `invoice.generation_stale`, `ledger.account_not_found`,
+    /// `ledger.asset_mismatch`, `ledger.bad_direction`, `ledger.duplicate_posting`,
+    /// `ledger.fiat_asset`, `ledger.idempotency_conflict`, `ledger.missing_idempotency_key`,
+    /// `ledger.no_lines`, `ledger.non_positive_amount`, `ledger.sandbox_live_mix`,
+    /// `ledger.unbalanced`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.not_found`, `merchant.rate_limited`,
+    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`,
+    /// `onramp.suppresses`, `payment.not_found`, `payout.above_limit`,
     /// `payout.address_network_mismatch`, `payout.amount_below_fee`, `payout.approver_is_creator`,
     /// `payout.asset_mismatch`, `payout.bad_address`, `payout.bad_amount`, `payout.bad_memo`,
     /// `payout.bad_owner_kind`, `payout.cap_unpriceable`, `payout.convert_bad_amount`,
@@ -3482,19 +3795,22 @@ impl<Tr: Clone> Sandbox<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Сбросить dev-store к чистому состоянию
+    /// Reset the dev store to a clean state
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `invoice.already_paid`, `invoice.corrupt_pay_asset`, `invoice.deposit_pending`,
-    /// `ledger.account_not_found`, `ledger.asset_mismatch`, `ledger.bad_direction`,
-    /// `ledger.duplicate_posting`, `ledger.fiat_asset`, `ledger.idempotency_conflict`,
-    /// `ledger.missing_idempotency_key`, `ledger.no_lines`, `ledger.non_positive_amount`,
-    /// `ledger.sandbox_live_mix`, `ledger.unbalanced`, `merchant.bad_signature`,
-    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
-    /// `merchant.suspended`, `merchant.unknown_key`, `payment.not_found`, `payout.not_found`,
-    /// `payoutlink.not_found`, `payoutlink.not_funded`, `request.body_read`,
-    /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
-    /// `request.rate_limited`, `request.too_deep`, `sandbox.live_key`.
+    /// Requires role: Admin when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `invoice.already_paid`, `invoice.corrupt_pay_asset`,
+    /// `invoice.deposit_pending`, `ledger.account_not_found`, `ledger.asset_mismatch`,
+    /// `ledger.bad_direction`, `ledger.duplicate_posting`, `ledger.fiat_asset`,
+    /// `ledger.idempotency_conflict`, `ledger.missing_idempotency_key`, `ledger.no_lines`,
+    /// `ledger.non_positive_amount`, `ledger.sandbox_live_mix`, `ledger.unbalanced`,
+    /// `merchant.bad_signature`, `merchant.key_expired`, `merchant.key_mode_mismatch`,
+    /// `merchant.rate_limited`, `merchant.secret_decrypt`, `merchant.suspended`,
+    /// `merchant.unknown_key`, `payment.not_found`, `payout.not_found`, `payoutlink.not_found`,
+    /// `payoutlink.not_funded`, `request.body_read`, `request.control_char`,
+    /// `request.duplicate_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
+    /// `request.too_deep`, `sandbox.live_key`.
     ///
     /// `POST /v1/sandbox/reset` (`sandboxReset`).
     pub fn reset(&self) -> Request<Tr, ResetResult> {
@@ -3502,13 +3818,16 @@ impl<Tr: Clone> Sandbox<Tr> {
         Request::new(self.transport.clone(), call)
     }
 
-    /// Журнал доставок вебхуков dev-store
+    /// Dev-store webhook delivery log
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`,
-    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
-    /// `request.overloaded`, `request.rate_limited`, `request.too_deep`, `sandbox.live_key`.
+    /// Requires role: Viewer when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `request.body_read`, `request.control_char`,
+    /// `request.duplicate_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
+    /// `request.too_deep`, `sandbox.live_key`.
     ///
     /// `GET /v1/sandbox/webhooks` (`sandboxListWebhooks`).
     pub fn list_webhooks(&self, query: SandboxListWebhooksQuery) -> Pager<Tr, SandboxDelivery> {
@@ -3517,22 +3836,102 @@ impl<Tr: Clone> Sandbox<Tr> {
         Pager::new(self.transport.clone(), call)
     }
 
-    /// Переотправить доставку вебхука
+    /// Resend a webhook delivery
     ///
-    /// Ставит доставку заново в очередь настоящего диспетчера — с его ретраями и подписью, как в
-    /// проде.
+    /// Re-queues the delivery into the real dispatcher — with its retries and signature, as in
+    /// production.
     ///
-    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`, `internal`,
-    /// `merchant.bad_signature`, `merchant.key_mode_mismatch`, `merchant.rate_limited`,
-    /// `merchant.secret_decrypt`, `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`,
-    /// `request.body_read`, `request.control_char`, `request.duplicate_field`, `request.nul_byte`,
-    /// `request.overloaded`, `request.rate_limited`, `request.too_deep`, `sandbox.bad_delivery`,
+    /// Requires role: Admin when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.permission_denied`, `internal`, `merchant.bad_signature`, `merchant.key_expired`,
+    /// `merchant.key_mode_mismatch`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `request.bad_json`, `request.body_read`,
+    /// `request.control_char`, `request.duplicate_field`, `request.nul_byte`, `request.overloaded`,
+    /// `request.rate_limited`, `request.too_deep`, `sandbox.bad_delivery`,
     /// `sandbox.delivery_not_found`, `sandbox.live_key`.
     ///
     /// `POST /v1/sandbox/webhooks/replay` (`sandboxReplayWebhook`).
     pub fn replay_webhook(&self, params: ReplayRequest) -> Request<Tr, ReplayResult> {
         let mut call = Call::new(&routes::SANDBOX_REPLAY_WEBHOOK);
         call.body(params);
+        Request::new(self.transport.clone(), call)
+    }
+}
+
+/// Browser login of the `oblodai` CLI (OAuth 2.0 device authorization, RFC 8628) and logout of its
+/// key.
+#[derive(Clone, Debug)]
+pub struct CliLogin<Tr> {
+    transport: Tr,
+}
+
+impl<Tr: Clone> CliLogin<Tr> {
+    pub(crate) fn new(transport: Tr) -> Self {
+        Self { transport }
+    }
+
+    /// Start a CLI browser login
+    ///
+    /// No key: this is how the CLI gets one. Returns `device_code` (the CLI's polling secret —
+    /// never show it), `user_code` (`ABCD-EFGH`, shown to the user), `verification_uri` and
+    /// `verification_uri_complete` (open the latter in the browser), `expires_in` (600) and
+    /// `interval` (5). The user signs in to the cabinet, checks the device, picks a store and
+    /// approves; the key gets that member's team role. At most 10 requests per minute per address
+    /// (`cli.rate_limited`, Retry-After).
+    ///
+    /// Errors: `cli.bad_name`, `cli.rate_limited`, `cli.unavailable`, `internal`,
+    /// `request.bad_json`, `request.body_read`, `request.control_char`, `request.duplicate_field`,
+    /// `request.nul_byte`, `request.overloaded`, `request.rate_limited`, `request.too_deep`.
+    ///
+    /// `POST /v1/cli/device` (`startCliLogin`).
+    pub fn start(&self, params: CLIDeviceRequest) -> Request<Tr, CLIDeviceAuthorization> {
+        let mut call = Call::new(&routes::START_CLI_LOGIN);
+        call.body(params);
+        Request::new(self.transport.clone(), call)
+    }
+
+    /// Poll a CLI login for its key
+    ///
+    /// Poll with `device_code` every `interval` seconds until it succeeds or fails for good. Errors
+    /// (400 unless noted): `cli.authorization_pending` — keep polling; `cli.slow_down` — polled too
+    /// early, the interval grew by 5 seconds (`details.interval`); `cli.access_denied` (403) —
+    /// denied in the browser; `cli.expired_token` — start over; `cli.invalid_device_code` —
+    /// unknown, or the key was already handed out. Success returns the CLI key (`public_id`,
+    /// `secret`, store, `mode`, `role`, `expires_at`) exactly once: the secret is erased on the
+    /// server as it is handed out, and of two concurrent polls only one gets it.
+    ///
+    /// Errors: `cli.access_denied`, `cli.authorization_pending`, `cli.expired_token`,
+    /// `cli.invalid_device_code`, `cli.slow_down`, `cli.unavailable`, `internal`,
+    /// `merchant.secret_decrypt`, `request.bad_json`, `request.body_read`, `request.control_char`,
+    /// `request.duplicate_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
+    /// `request.too_deep`.
+    ///
+    /// `POST /v1/cli/token` (`pollCliLogin`).
+    pub fn poll(&self, params: CLITokenRequest) -> Request<Tr, CLIToken> {
+        let mut call = Call::new(&routes::POLL_CLI_LOGIN);
+        call.body(params);
+        Request::new(self.transport.clone(), call)
+    }
+
+    /// Log out: revoke this CLI key
+    ///
+    /// Revokes the CLI key that signs the request; any role may call it. The integration key gets
+    /// `cli.not_cli_key` (403) — it is rotated in the cabinet, never here.
+    ///
+    /// Requires role: Viewer when called with a CLI key.
+    ///
+    /// Errors: `auth.bad_timestamp`, `auth.body_too_large`, `auth.ip_not_allowed`,
+    /// `cli.not_cli_key`, `cli.permission_denied`, `cli.unavailable`, `internal`,
+    /// `merchant.bad_signature`, `merchant.key_expired`, `merchant.key_mode_mismatch`,
+    /// `merchant.key_not_found`, `merchant.rate_limited`, `merchant.secret_decrypt`,
+    /// `merchant.suspended`, `merchant.unknown_key`, `request.body_read`, `request.control_char`,
+    /// `request.duplicate_field`, `request.nul_byte`, `request.overloaded`, `request.rate_limited`,
+    /// `request.too_deep`.
+    ///
+    /// `POST /v1/cli/logout` (`logoutCli`).
+    pub fn logout_cli(&self) -> Request<Tr, CLILogoutResult> {
+        let call = Call::new(&routes::LOGOUT_CLI);
         Request::new(self.transport.clone(), call)
     }
 }
