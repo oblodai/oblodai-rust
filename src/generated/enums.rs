@@ -3508,6 +3508,8 @@ pub enum WebhookEventName {
     InvoiceCancelled,
     #[serde(rename = "invoice.under_review")]
     InvoiceUnderReview,
+    #[serde(rename = "invoice.reversed")]
+    InvoiceReversed,
     #[serde(rename = "payout.approved")]
     PayoutApproved,
     #[serde(rename = "payout.awaiting_cosign")]
@@ -3548,6 +3550,7 @@ impl WebhookEventName {
             Self::InvoiceExpired => "invoice.expired",
             Self::InvoiceCancelled => "invoice.cancelled",
             Self::InvoiceUnderReview => "invoice.under_review",
+            Self::InvoiceReversed => "invoice.reversed",
             Self::PayoutApproved => "payout.approved",
             Self::PayoutAwaitingCosign => "payout.awaiting_cosign",
             Self::PayoutBroadcasting => "payout.broadcasting",
@@ -3588,6 +3591,7 @@ impl From<&str> for WebhookEventName {
             "invoice.expired" => Self::InvoiceExpired,
             "invoice.cancelled" => Self::InvoiceCancelled,
             "invoice.under_review" => Self::InvoiceUnderReview,
+            "invoice.reversed" => Self::InvoiceReversed,
             "payout.approved" => Self::PayoutApproved,
             "payout.awaiting_cosign" => Self::PayoutAwaitingCosign,
             "payout.broadcasting" => Self::PayoutBroadcasting,

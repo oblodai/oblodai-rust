@@ -18,6 +18,7 @@ pub const WEBHOOK_EVENTS: &[(&str, &str)] = &[
     ("invoice.expired", "payment"),
     ("invoice.paid", "payment"),
     ("invoice.paid_over", "payment"),
+    ("invoice.reversed", "payment"),
     ("invoice.select", "payment"),
     ("invoice.under_review", "payment"),
     ("invoice.wrong_amount", "payment"),

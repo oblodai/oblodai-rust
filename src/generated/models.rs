@@ -3804,10 +3804,11 @@ impl std::fmt::Debug for PaymentViewList {
     }
 }
 
-/// Sent when a payment moves to paid, paid_over, wrong_amount, expired or under_review, and when it
-/// rolls back from them (a chain reorganization). The current status — any value from the
-/// vocabulary — can be requested again: POST /v1/payment/resend. Match it to the order by
-/// order_id/uuid and to the blockchain by txid and network.
+/// Sent when a payment moves to paid, paid_over, wrong_amount, expired, cancelled or under_review.
+/// A chain reorganization that removes a counted deposit is sent as invoice.reversed (reversal =
+/// true, txid empty) with the status after it. The current status — any value from the vocabulary —
+/// can be requested again: POST /v1/payment/resend. Match it to the order by order_id/uuid and to
+/// the blockchain by txid and network.
 #[derive(Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct PaymentWebhook {
     /// Your data passed when creating the payment, as is.
@@ -3855,6 +3856,11 @@ pub struct PaymentWebhook {
     /// the body.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub event_id: Option<String>,
+    /// true — a chain reorganization removed a previously counted deposit (event invoice.reversed);
+    /// status and payment_amount are the state after it, txid is empty. Absent = false: cores
+    /// before this version do not send the field; newer cores always send it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reversal: Option<bool>,
     /// Present only on a rehearsal (/v1/test-webhook/*, /v1/payment/testing-webhook) and always
     /// true — inside the signature. A live event never carries this field: your handler must ignore
     /// a body with test: true even if the signature is valid. This field, not the unsigned
@@ -3890,6 +3896,7 @@ impl std::fmt::Debug for PaymentWebhook {
         d.field("type", &self.r#type);
         d.field("uuid", &self.uuid);
         d.field("event_id", &self.event_id);
+        d.field("reversal", &self.reversal);
         d.field("test", &self.test);
         d.extra(&self.extra);
         d.finish()
@@ -5673,8 +5680,8 @@ impl std::fmt::Debug for ReferralWeek {
 #[derive(Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct RefundBatchItem {
     /// An optional refund idempotency key: distinguishes two different refunds with the same
-    /// (payment, address, amount); a retry with the same value is deduplicated. This is not
-    /// order_id.
+    /// (payment, address, amount); a retry with the same value returns the refund already made,
+    /// also when amount is omitted. This is not order_id.
     pub reference: String,
     /// Refund destination address. Defaults to the payment's payer_address; required only for
     /// Bitcoin/UTXO.
@@ -5771,8 +5778,11 @@ pub struct RefundCalculation {
     pub amount: Money,
     /// What the buyer paid in total, including the network surcharge.
     pub amount_paid: Money,
-    /// The Oblodai commission withheld from the refund: the payment's commission when
-    /// commission_bearer is customer, 0 when it is merchant (you then pay it from your balance).
+    /// What is withheld from the refund besides the surcharge: with commission_bearer customer, the
+    /// Oblodai commission as it was taken from each deposit (rounded up on each), plus the cost of
+    /// collecting a swept deposit when there was one — together, what the payment did not credit
+    /// you; 0 with merchant (you then pay the commission from your balance). amount_paid −
+    /// surcharge − commission = refundable.
     pub commission: Money,
     /// Who bears the Oblodai commission on this refund — the store's refund fee setting
     /// (getRefundFeeConfig): customer — it is deducted from the refund, and the refunds return at
@@ -5793,7 +5803,8 @@ pub struct RefundCalculation {
     /// refundable minus refunded: what can still be refunded before this refund.
     pub remaining: Money,
     /// The payer's network surcharge inside amount_paid: the cost of accepting the deposit, never
-    /// refunded from your balance.
+    /// refunded from your balance. Counted per deposit, as the deposits were credited (rounded up
+    /// on each), so amount_paid − surcharge − commission = refundable.
     pub surcharge: Money,
     /// The payment id.
     pub uuid: String,
@@ -5896,8 +5907,8 @@ pub struct RefundRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub order_id: Option<String>,
     /// An optional refund idempotency key: distinguishes two different refunds with the same
-    /// (payment, address, amount); a retry with the same value is deduplicated. This is not
-    /// order_id.
+    /// (payment, address, amount); a retry with the same value returns the refund already made,
+    /// also when amount is omitted. This is not order_id.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reference: Option<String>,
     /// Payment id. Either uuid or order_id is required.

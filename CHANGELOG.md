@@ -56,13 +56,20 @@ All notable changes to this crate are recorded here. The format follows
 
 ### Added
 
+- Webhooks: the `invoice.reversed` event — a chain reorganization removed a deposit that had been
+  counted; the payment is sent again with the status after it and an empty `txid`. It is a known
+  event name (`WebhookEventName::InvoiceReversed`) of the `payment` kind. `PaymentWebhook` gains the
+  optional `reversal` (`Option<bool>`; a struct literal of `PaymentWebhook` needs
+  `..Default::default()`): `true` on `invoice.reversed`; absent (an older core) means `false`.
 - `client.cli_login()` — `start`, `poll`, `logout`: the browser login of the `oblodai` CLI
   (OAuth 2.0 device authorization) and logout of its key.
 - `Error::details()`: the machine-readable facts of an error envelope's new `details` object (for
   example `cli.permission_denied` carries `required_role` and `role`); only string values are kept.
 - Every method's documentation names the minimum team role a CLI key needs to call it;
-  money-out operations (payouts, refunds, transfers, auto-withdrawal, split rules) take only the
-  store owner's own CLI key.
+  money-out operations (payouts, refunds, transfers, auto-withdrawal, split rules) and security
+  settings (webhook secret, payment links, fee configs and others) are not available to CLI keys
+  at any role — call them with the integration key; people use the dashboard, with 2FA per
+  operation.
 - `Client::invoke`, `invoke_list` and `invoke_file` (and the blocking mirrors): call any operation
   by its OpenAPI `operationId` with an `InvokeInput` (path, query, JSON body), through the same
   transport as the typed methods; the answer is raw JSON, a pager of raw JSON, or a `FileResult`.
@@ -78,6 +85,13 @@ All notable changes to this crate are recorded here. The format follows
 
 ### Changed
 
+- Regenerated from the contract. Documented refusals: payout validation adds `payout.frozen`,
+  `payout.freeze_unknown`, `payout.destination_not_activated`, `payout.no_destination`,
+  `payout.asset_mismatch` and `payout.fee_asset_mismatch` (and no longer lists
+  `compliance.blocked`); refund calculation adds `payout.amount_below_fee` and
+  `payout.destination_not_activated`. Refund and payout docs spell out these preflight checks (the
+  payout freeze, daily and per-payout limits, whether the destination can receive the amount) and
+  that a refund retried with the same `reference` returns the refund already made.
 - `PayoutValidateResult` (`payouts().validate(...)`) gains `address` (the destination), and, for
   a `from_currency` payout, `from_amount` and `rate` alongside the existing `funded_by`.
 - `PayoutRequest.memo` / `PayoutValidateRequest.memo` docs are now network-specific: the XRP

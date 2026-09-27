@@ -282,6 +282,33 @@ fn a_delivery_from_an_older_core_without_event_id_falls_back_to_type_id_sequence
     }
 }
 
+/// invoice.reversed is a payment event; reversal is optional (a core before it omits it).
+#[test]
+fn invoice_reversed_is_a_payment_event_and_reversal_is_optional() {
+    use oblodai::enums::WebhookEventName;
+    use oblodai::webhooks::WEBHOOK_EVENTS;
+    assert_eq!(
+        WebhookEventName::from("invoice.reversed"),
+        WebhookEventName::InvoiceReversed
+    );
+    assert!(WEBHOOK_EVENTS.contains(&("invoice.reversed", "payment")));
+
+    let raw = body();
+    assert!(!String::from_utf8_lossy(&raw).contains("reversal"));
+    match parse_webhook(&raw).unwrap() {
+        WebhookEvent::Payment(p) => assert_eq!(p.reversal, None),
+        other => panic!("not a payment: {other:?}"),
+    }
+    let mut reversed: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+    reversed["status"] = "expired".into();
+    reversed["reversal"] = true.into();
+    reversed["txid"] = "".into();
+    match parse_webhook(reversed.to_string().as_bytes()).unwrap() {
+        WebhookEvent::Payment(p) => assert_eq!(p.reversal, Some(true)),
+        other => panic!("not a payment: {other:?}"),
+    }
+}
+
 /// Ruling M3: the options' Debug output never prints either webhook secret.
 #[test]
 fn verify_options_debug_redacts_both_secrets() {
