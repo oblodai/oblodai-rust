@@ -384,8 +384,9 @@ fn normalize_signature(raw: &str) -> Result<String> {
 /// Parse a (previously verified) delivery body into a typed event, discriminated by `type`.
 ///
 /// A `type` this snapshot does not know yields [`WebhookEvent::Other`] rather than an error: a new
-/// event kind must never make a receiver reject an authentic delivery. A body that is not JSON, or
-/// that claims a known type with fields of the wrong shape, is `webhook.bad_payload`
+/// event kind must never make a receiver reject an authentic delivery. A body that is not JSON,
+/// that carries an empty or non-string `event_id`, or that claims a known type with fields of the
+/// wrong shape, is `webhook.bad_payload`
 /// ([`ErrorKind::Contract`](crate::ErrorKind::Contract)) — never a signature failure.
 pub fn parse_webhook(raw_body: &[u8]) -> Result<WebhookEvent> {
     let value: serde_json::Value = serde_json::from_slice(raw_body)
@@ -398,6 +399,15 @@ pub fn parse_webhook(raw_body: &[u8]) -> Result<WebhookEvent> {
             ))
         }
     };
+    // The dedupe key must be usable when present: an older core omits `event_id` (then the key falls
+    // back to `type:id:sequence`), but a present empty or non-string one is a malformed body.
+    if let Some(event_id) = value.get(WEBHOOK_EVENT_ID_FIELD) {
+        if !event_id.as_str().is_some_and(|id| !id.is_empty()) {
+            return Err(Error::bad_payload(format!(
+                "the body's {WEBHOOK_EVENT_ID_FIELD} is not a non-empty string"
+            )));
+        }
+    }
     if !KNOWN_EVENT_KINDS.contains(&kind.as_str()) {
         // Unknown to this snapshot: hand it over raw so the receiver can 200 it and move on.
         return Ok(WebhookEvent::Other(value));

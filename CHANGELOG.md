@@ -26,6 +26,7 @@ All notable changes to this crate are recorded here. The format follows
 - **Webhooks from an older core still verify.** `event_id` is optional in the webhook models
   (`Option<String>`, regenerated from the contract), so a delivery body without it is read, not
   rejected as `webhook.bad_payload`; `event_key` then falls back to `type:id:sequence`.
+  A present but empty or non-string `event_id` is `webhook.bad_payload` (any kind).
   `webhooks::WEBHOOK_EVENT_ID_FIELD` (generated from `x-oblodai-signing.webhook.event_id_field`)
   names the dedupe field.
 - **Recorded webhook fixtures carry no captured secret.** The samples are re-signed with a fake

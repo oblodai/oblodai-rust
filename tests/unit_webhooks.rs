@@ -246,6 +246,29 @@ fn a_resend_of_one_state_dedupes_on_event_id_though_its_sequence_grows() {
 }
 
 #[test]
+fn a_present_but_empty_or_non_string_event_id_is_a_bad_payload() {
+    let options = VerifyOptions::new("whsec").now(TS);
+    for bad in ["\"\"", "null", "42", "{}"] {
+        for kind in ["payment", "brand_new_kind"] {
+            let raw = String::from_utf8(body())
+                .unwrap()
+                .replace("\"payment\"", &format!("\"{kind}\""))
+                .replace(
+                    "\"sequence\":7",
+                    &format!("\"sequence\":7,\"{WEBHOOK_EVENT_ID_FIELD}\":{bad}"),
+                )
+                .into_bytes();
+            let err = verify_webhook_delivery(&raw, &signed(&raw), &options).unwrap_err();
+            assert_eq!(
+                err.code(),
+                "webhook.bad_payload",
+                "{kind} with event_id {bad}"
+            );
+        }
+    }
+}
+
+#[test]
 fn a_delivery_from_an_older_core_without_event_id_falls_back_to_type_id_sequence() {
     let raw = body();
     assert!(!String::from_utf8_lossy(&raw).contains(WEBHOOK_EVENT_ID_FIELD));
