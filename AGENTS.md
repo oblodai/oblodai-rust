@@ -80,7 +80,7 @@ let delivery = verify_webhook_delivery(raw_body, &Headers::from_pairs(headers),
 
 Verify over the **raw** bytes. `delivery.is_test` is true for rehearsal deliveries (`test: true` in
 the signed body) — always ignore them, never treat them as money. Deduplicate on
-`delivery.event_key` (the signed body's `event_id`, else `type:id:sequence`); the id/event/test headers are not
+`delivery.event_key` — dedupe on `event_id` (fallback `type:id:sequence`), from the signed body; the id/event/test headers are not
 signed and appear only as `delivery.unverified_*`. Drop out-of-order events with
 `is_stale_event(&delivery.event, last_sequence)`. During a rotation pass `.previous_secret(old)`.
 `WebhookEvent` is `Payment` / `Payout` / `Wallet` / `Conversion` (generated `*Webhook` models) or

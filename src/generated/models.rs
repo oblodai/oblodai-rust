@@ -1338,11 +1338,6 @@ pub struct ConversionWebhook {
     pub document_url: String,
     /// When the event happened, UTC with milliseconds (ISO 8601).
     pub event_at: String,
-    /// The id of the object state this body carries — signed, and the key to deduplicate on: the
-    /// same for every retry and every resend (/v1/payment/resend) of the same state, different as
-    /// soon as the state changes (sequence, by contrast, grows on a resend). Always equal to the
-    /// X-Webhook-Event-Id header, which is not signed — prefer this field.
-    pub event_id: String,
     /// Conversion fee, in percent.
     pub fee_percent: Money,
     /// Source currency.
@@ -1366,6 +1361,14 @@ pub struct ConversionWebhook {
     pub to: String,
     /// Event kind: payment | payout | wallet | conversion — which body arrived.
     pub r#type: String,
+    /// The id of the object state this body carries — signed, and the key to deduplicate on: the
+    /// same for every retry and every resend (/v1/payment/resend) of the same state, different as
+    /// soon as the state changes (sequence, by contrast, grows on a resend). Always equal to the
+    /// X-Webhook-Event-Id header, which is not signed — prefer this field. Always sent by current
+    /// cores; a delivery from an older core may lack it — then deduplicate on type:id:sequence from
+    /// the body.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_id: Option<String>,
     /// How much was credited, in the to currency. Present only for completed; refunded has no such
     /// field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1388,7 +1391,6 @@ impl std::fmt::Debug for ConversionWebhook {
         d.field("created_at", &self.created_at);
         d.field("document_url", &self.document_url);
         d.field("event_at", &self.event_at);
-        d.field("event_id", &self.event_id);
         d.field("fee_percent", &self.fee_percent);
         d.field("from", &self.from);
         d.field("id", &self.id);
@@ -1400,6 +1402,7 @@ impl std::fmt::Debug for ConversionWebhook {
         d.field("status", &self.status);
         d.field("to", &self.to);
         d.field("type", &self.r#type);
+        d.field("event_id", &self.event_id);
         d.field("received", &self.received);
         d.field("test", &self.test);
         d.extra(&self.extra);
@@ -3815,11 +3818,6 @@ pub struct PaymentWebhook {
     pub currency: String,
     /// When the event happened, UTC with milliseconds (ISO 8601).
     pub event_at: String,
-    /// The id of the object state this body carries — signed, and the key to deduplicate on: the
-    /// same for every retry and every resend (/v1/payment/resend) of the same state, different as
-    /// soon as the state changes (sequence, by contrast, grows on a resend). Always equal to the
-    /// X-Webhook-Event-Id header, which is not signed — prefer this field.
-    pub event_id: String,
     /// true — the status is final, the payment will not change any further.
     pub is_final: bool,
     /// The network the money arrived on.
@@ -3849,6 +3847,14 @@ pub struct PaymentWebhook {
     pub r#type: String,
     /// Payment id.
     pub uuid: String,
+    /// The id of the object state this body carries — signed, and the key to deduplicate on: the
+    /// same for every retry and every resend (/v1/payment/resend) of the same state, different as
+    /// soon as the state changes (sequence, by contrast, grows on a resend). Always equal to the
+    /// X-Webhook-Event-Id header, which is not signed — prefer this field. Always sent by current
+    /// cores; a delivery from an older core may lack it — then deduplicate on type:id:sequence from
+    /// the body.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_id: Option<String>,
     /// Present only on a rehearsal (/v1/test-webhook/*, /v1/payment/testing-webhook) and always
     /// true — inside the signature. A live event never carries this field: your handler must ignore
     /// a body with test: true even if the signature is valid. This field, not the unsigned
@@ -3867,7 +3873,6 @@ impl std::fmt::Debug for PaymentWebhook {
         d.field("amount", &self.amount);
         d.field("currency", &self.currency);
         d.field("event_at", &self.event_at);
-        d.field("event_id", &self.event_id);
         d.field("is_final", &self.is_final);
         d.field("network", &self.network);
         d.field("order_id", &self.order_id);
@@ -3884,6 +3889,7 @@ impl std::fmt::Debug for PaymentWebhook {
         d.field("txid", &self.txid);
         d.field("type", &self.r#type);
         d.field("uuid", &self.uuid);
+        d.field("event_id", &self.event_id);
         d.field("test", &self.test);
         d.extra(&self.extra);
         d.finish()
@@ -5178,11 +5184,6 @@ pub struct PayoutWebhook {
     pub document_url: String,
     /// When the event happened, UTC with milliseconds (ISO 8601).
     pub event_at: String,
-    /// The id of the object state this body carries — signed, and the key to deduplicate on: the
-    /// same for every retry and every resend (/v1/payment/resend) of the same state, different as
-    /// soon as the state changes (sequence, by contrast, grows on a resend). Always equal to the
-    /// X-Webhook-Event-Id header, which is not signed — prefer this field.
-    pub event_id: String,
     /// Who paid the network fee: gateway — the gateway absorbed it (commission = 0); merchant — the
     /// debit amount was increased by the fee, the recipient gets the full requested amount
     /// (is_subtract=true, a payout link with fee_bearer=merchant); recipient — the fee was withheld
@@ -5216,6 +5217,14 @@ pub struct PayoutWebhook {
     pub updated_at: String,
     /// Payout id.
     pub uuid: String,
+    /// The id of the object state this body carries — signed, and the key to deduplicate on: the
+    /// same for every retry and every resend (/v1/payment/resend) of the same state, different as
+    /// soon as the state changes (sequence, by contrast, grows on a resend). Always equal to the
+    /// X-Webhook-Event-Id header, which is not signed — prefer this field. Always sent by current
+    /// cores; a delivery from an older core may lack it — then deduplicate on type:id:sequence from
+    /// the body.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_id: Option<String>,
     /// Your payout number (reference). null for a refund: a refund has no identifier of yours, see
     /// payment_order_id.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -5249,7 +5258,6 @@ impl std::fmt::Debug for PayoutWebhook {
         d.field("currency", &self.currency);
         d.field("document_url", &self.document_url);
         d.field("event_at", &self.event_at);
-        d.field("event_id", &self.event_id);
         d.field("fee_bearer", &self.fee_bearer);
         d.field("is_final", &self.is_final);
         d.field("is_refund", &self.is_refund);
@@ -5263,6 +5271,7 @@ impl std::fmt::Debug for PayoutWebhook {
         d.field("type", &self.r#type);
         d.field("updated_at", &self.updated_at);
         d.field("uuid", &self.uuid);
+        d.field("event_id", &self.event_id);
         d.field("order_id", &self.order_id);
         d.field("payment_order_id", &self.payment_order_id);
         d.field("refund_for", &self.refund_for);
@@ -7675,11 +7684,6 @@ pub struct WalletWebhook {
     pub currency: String,
     /// When the event happened, UTC with milliseconds (ISO 8601).
     pub event_at: String,
-    /// The id of the object state this body carries — signed, and the key to deduplicate on: the
-    /// same for every retry and every resend (/v1/payment/resend) of the same state, different as
-    /// soon as the state changes (sequence, by contrast, grows on a resend). Always equal to the
-    /// X-Webhook-Event-Id header, which is not signed — prefer this field.
-    pub event_id: String,
     /// true — the status is final.
     pub is_final: bool,
     /// Blockchain network.
@@ -7701,6 +7705,14 @@ pub struct WalletWebhook {
     pub r#type: String,
     /// Static wallet id.
     pub uuid: String,
+    /// The id of the object state this body carries — signed, and the key to deduplicate on: the
+    /// same for every retry and every resend (/v1/payment/resend) of the same state, different as
+    /// soon as the state changes (sequence, by contrast, grows on a resend). Always equal to the
+    /// X-Webhook-Event-Id header, which is not signed — prefer this field. Always sent by current
+    /// cores; a delivery from an older core may lack it — then deduplicate on type:id:sequence from
+    /// the body.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_id: Option<String>,
     /// Present only on a rehearsal (/v1/test-webhook/*, /v1/payment/testing-webhook) and always
     /// true — inside the signature. A live event never carries this field: your handler must ignore
     /// a body with test: true even if the signature is valid. This field, not the unsigned
@@ -7718,7 +7730,6 @@ impl std::fmt::Debug for WalletWebhook {
         d.field("address", &self.address);
         d.field("currency", &self.currency);
         d.field("event_at", &self.event_at);
-        d.field("event_id", &self.event_id);
         d.field("is_final", &self.is_final);
         d.field("network", &self.network);
         d.field("order_id", &self.order_id);
@@ -7729,6 +7740,7 @@ impl std::fmt::Debug for WalletWebhook {
         d.field("txid", &self.txid);
         d.field("type", &self.r#type);
         d.field("uuid", &self.uuid);
+        d.field("event_id", &self.event_id);
         d.field("test", &self.test);
         d.extra(&self.extra);
         d.finish()

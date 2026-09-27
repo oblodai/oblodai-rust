@@ -85,6 +85,11 @@ pub const WEBHOOK_CANONICAL_ORDER: &[WebhookPart] = &[WebhookPart::Ts, WebhookPa
 /// What joins the parts of a webhook delivery's signed string.
 pub const WEBHOOK_CANONICAL_SEPARATOR: &str = ".";
 
+/// The signed body field carrying the id of the object state (x-oblodai-signing.webhook.event_id_field):
+/// deduplicate on it. Headers are not signed. A delivery from an older core may lack the field; then
+/// deduplicate on type:id:sequence from the body.
+pub const WEBHOOK_EVENT_ID_FIELD: &str = "event_id";
+
 /// Clock skew, in seconds, the core accepts on a signed request and a receiver accepts on a
 /// webhook delivery.
 pub const SKEW_SECONDS: i64 = 300;

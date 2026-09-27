@@ -13,15 +13,16 @@ use oblodai::webhooks::{
 use oblodai::webhooks::{
     DEFAULT_TOLERANCE_SECONDS, HEADER_WEBHOOK_EVENT, HEADER_WEBHOOK_EVENT_ID, HEADER_WEBHOOK_ID,
     HEADER_WEBHOOK_SIGNATURE, HEADER_WEBHOOK_SIGNATURE_PREV, HEADER_WEBHOOK_TEST,
-    HEADER_WEBHOOK_TIMESTAMP,
+    HEADER_WEBHOOK_TIMESTAMP, WEBHOOK_EVENT_ID_FIELD,
 };
 use oblodai::{sign_webhook, ErrorKind, WebhookEvent};
 use support::load_webhook_samples;
 
-/// The samples were delivered by the core's real dispatcher, signed with the endpoint secret in
-/// force at that moment — the one the recorded rotate-secret call returned.
+/// The samples were sent by the core's real dispatcher and captured byte for byte, then re-signed
+/// with this fake endpoint secret (and the Prev header with a fake previous secret, 64 "1"s) so
+/// that no captured secret is published.
 fn endpoint_secret() -> String {
-    "0000000000000000000000000000000000000000000000000000000000000000".to_string()
+    "0".repeat(64)
 }
 
 #[test]
@@ -112,12 +113,8 @@ fn verifies_every_recorded_delivery() {
 fn a_recorded_delivery_re_serialized_still_carries_every_field() {
     for sample in load_webhook_samples() {
         let event: WebhookEvent = parse_webhook(&sample.raw_bytes()).unwrap();
-        let mut round_tripped = serde_json::to_value(&event).unwrap();
-        // These deliveries come from a core that predates the signed `event_id`: it is read as empty.
-        if sample.body.get("event_id").is_none() {
-            let filled = round_tripped.as_object_mut().unwrap().remove("event_id");
-            assert_eq!(filled, Some(serde_json::json!("")));
-        }
+        // A delivery from a core that predates the signed `event_id` has none, and stays without.
+        let round_tripped = serde_json::to_value(&event).unwrap();
         // An optional field that arrived as `null` is absent after the round trip: the models
         // keep "not there" and "null" as one `None`.
         let mut body = sample.body.clone();
@@ -218,6 +215,48 @@ fn the_dedupe_key_comes_from_the_signed_body_not_the_headers() {
     headers.insert(HEADER_WEBHOOK_EVENT_ID, "e-forged");
     let delivery = verify_webhook_delivery(&raw, &headers, &options).unwrap();
     assert_eq!(delivery.event_key, "st-42");
+}
+
+fn signed(raw: &[u8]) -> Headers {
+    let mut headers = Headers::new();
+    headers.insert(HEADER_WEBHOOK_TIMESTAMP, TS.to_string());
+    headers.insert(HEADER_WEBHOOK_SIGNATURE, sign_webhook("whsec", TS, raw));
+    headers
+}
+
+#[test]
+fn a_resend_of_one_state_dedupes_on_event_id_though_its_sequence_grows() {
+    let options = VerifyOptions::new("whsec").now(TS);
+    let with = |sequence: u32| {
+        String::from_utf8(body())
+            .unwrap()
+            .replace(
+                "\"sequence\":7",
+                &format!("\"sequence\":{sequence},\"{WEBHOOK_EVENT_ID_FIELD}\":\"st-42\""),
+            )
+            .into_bytes()
+    };
+    let (first, resend) = (with(7), with(9));
+    let a = verify_webhook_delivery(&first, &signed(&first), &options).unwrap();
+    let b = verify_webhook_delivery(&resend, &signed(&resend), &options).unwrap();
+    assert_eq!(a.event.sequence(), Some(7));
+    assert_eq!(b.event.sequence(), Some(9));
+    assert_eq!(a.event_key, "st-42");
+    assert_eq!(a.event_key, b.event_key, "a resend is the same state");
+}
+
+#[test]
+fn a_delivery_from_an_older_core_without_event_id_falls_back_to_type_id_sequence() {
+    let raw = body();
+    assert!(!String::from_utf8_lossy(&raw).contains(WEBHOOK_EVENT_ID_FIELD));
+    let delivery =
+        verify_webhook_delivery(&raw, &signed(&raw), &VerifyOptions::new("whsec").now(TS)).unwrap();
+    let id = delivery.event.object_id().to_string();
+    assert_eq!(delivery.event_key, format!("payment:{id}:7"));
+    match &delivery.event {
+        WebhookEvent::Payment(p) => assert_eq!(p.event_id, None),
+        other => panic!("not a payment: {other:?}"),
+    }
 }
 
 /// Ruling M3: the options' Debug output never prints either webhook secret.

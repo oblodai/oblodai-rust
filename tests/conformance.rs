@@ -373,6 +373,31 @@ fn webhook_deliveries_parse_and_expose_every_header() {
     let (_, deliveries) = source(&dir, &suite);
     let names = header_names(&dir, &suite);
     let test_header = test_header(&dir, &suite);
+    // The dedupe key: the signed body field the spec names at `dedupe_key.field_pointer`, else the
+    // suite's fallback built from the body. Every `fields` value comes from unsigned headers.
+    let spec = read_json(&dir.join(suite["source"]["spec"].as_str().unwrap()));
+    let dedupe_field = spec
+        .pointer(
+            suite["dedupe_key"]["field_pointer"]
+                .as_str()
+                .expect("dedupe_key.field_pointer"),
+        )
+        .and_then(Value::as_str)
+        .expect("dedupe field name at dedupe_key.field_pointer")
+        .to_string();
+    assert_eq!(
+        dedupe_field,
+        oblodai::generated::signing::WEBHOOK_EVENT_ID_FIELD,
+        "the generated event_id_field constant names the spec's dedupe field"
+    );
+    assert_eq!(
+        suite["dedupe_key"]["fallback"], "type:id:sequence",
+        "unknown dedupe fallback"
+    );
+    assert_eq!(
+        suite["fields_unverified"], true,
+        "the header fields are mapped to the unverified_* delivery info"
+    );
     let mut events: Vec<&str> = deliveries
         .iter()
         .map(|d| d["event"].as_str().unwrap())
@@ -437,6 +462,21 @@ fn webhook_deliveries_parse_and_expose_every_header() {
                 delivery.event.is_test(),
                 "{name}: is_test comes from the signed body"
             );
+            assert!(
+                !delivery.is_test,
+                "{name}: a live body is never a rehearsal"
+            );
+            let body: Value = serde_json::from_str(d["payload"].as_str().unwrap()).unwrap();
+            let want_key = match body.get(&dedupe_field).and_then(Value::as_str) {
+                Some(id) if !id.is_empty() => id.to_string(),
+                _ => format!(
+                    "{}:{}:{}",
+                    body["type"].as_str().unwrap(),
+                    body["id"].as_str().unwrap(),
+                    body["sequence"]
+                ),
+            };
+            assert_eq!(delivery.event_key, want_key, "{name}: dedupe key");
             let fields = suite["fields"].as_object().expect("fields by role");
             assert_eq!(fields.len(), names.len(), "a field for every header role");
             for (role, field) in fields {

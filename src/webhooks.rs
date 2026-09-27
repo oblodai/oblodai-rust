@@ -17,7 +17,7 @@
 //! The signature covers only the timestamp and the body. The event, id, event-id, event-time and
 //! test headers are **not signed**: anyone replaying a captured delivery can change them. They are
 //! exposed only as `unverified_*` fields of [`WebhookDeliveryInfo`]. Deduplicate on
-//! [`WebhookDeliveryInfo::event_key`] (the signed body's `event_id`) and read the rehearsal flag
+//! [`WebhookDeliveryInfo::event_key`] (`event_id`, fallback `type:id:sequence`, from the signed body) and read the rehearsal flag
 //! from the signed body ([`WebhookDeliveryInfo::is_test`]).
 //!
 //! The event names, their kinds (the body's `type`) and the models of the kinds come from the
@@ -53,7 +53,7 @@ pub use crate::generated::webhooks::{WebhookEvent, KNOWN_EVENT_KINDS, WEBHOOK_EV
 pub use crate::generated::signing::{
     HEADER_WEBHOOK_EVENT, HEADER_WEBHOOK_EVENT_ID, HEADER_WEBHOOK_EVENT_TIME, HEADER_WEBHOOK_ID,
     HEADER_WEBHOOK_SIGNATURE, HEADER_WEBHOOK_SIGNATURE_PREV, HEADER_WEBHOOK_TEST,
-    HEADER_WEBHOOK_TIMESTAMP,
+    HEADER_WEBHOOK_TIMESTAMP, WEBHOOK_EVENT_ID_FIELD,
 };
 
 /// Default freshness window, seconds: the contract's `skew_seconds`.
@@ -208,18 +208,15 @@ pub struct WebhookDeliveryInfo {
     pub is_test: bool,
 }
 
-/// The signed body field that carries the id of the object state (the contract's
-/// `x-oblodai-signing.webhook.event_id_field`).
-const EVENT_ID_FIELD: &str = "event_id";
-
-/// The dedupe key of a verified event, from its signed body only: the body's `event_id` (the id of
+/// The dedupe key of a verified event, from its signed body only: the body field named by
+/// [`WEBHOOK_EVENT_ID_FIELD`] (`event_id`, the id of
 /// the object state, the same for every retry and resend of it), else — from a core that does not
 /// sign one yet — `type + ":" + id + ":" + sequence`. The same concept as `event_key` in every
 /// Oblodai SDK.
 pub fn event_key(event: &WebhookEvent) -> String {
     let body = serde_json::to_value(event).unwrap_or_default();
     if let Some(id) = body
-        .get(EVENT_ID_FIELD)
+        .get(WEBHOOK_EVENT_ID_FIELD)
         .and_then(serde_json::Value::as_str)
         .filter(|id| !id.is_empty())
     {
@@ -404,14 +401,6 @@ pub fn parse_webhook(raw_body: &[u8]) -> Result<WebhookEvent> {
     if !KNOWN_EVENT_KINDS.contains(&kind.as_str()) {
         // Unknown to this snapshot: hand it over raw so the receiver can 200 it and move on.
         return Ok(WebhookEvent::Other(value));
-    }
-    let mut value = value;
-    if let Some(body) = value.as_object_mut() {
-        // A core that predates the signed state id sends no `event_id`: read such a delivery with an
-        // empty one (and `event_key` falls back to `type:id:sequence`) rather than reject an authentic
-        // delivery as unreadable.
-        body.entry(EVENT_ID_FIELD)
-            .or_insert_with(|| serde_json::Value::String(String::new()));
     }
     serde_json::from_value(value)
         .map_err(|e| Error::bad_payload(format!("delivery body is not a valid {kind} event: {e}")))

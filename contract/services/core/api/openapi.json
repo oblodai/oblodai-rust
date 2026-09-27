@@ -413,7 +413,7 @@
     }
    ],
    "delivery_id_header": "X-Webhook-Id",
-   "description": "Only the body is signed: the signature covers \"<ts>.\" + the raw body, and no other header is authenticated. Deduplicate on the signed body's `event_id` (named by event_id_field): it is the id of the object state, the same across retries and resends of that state, and always equal to the X-Webhook-Event-Id header (event_id_header), which is kept for compatibility but is not signed — prefer the body field. Test deliveries (rehearsals) carry `\"test\": true` in the body; the X-Webhook-Test header (test_header) is not signed and marks nothing on its own.",
+   "description": "Only the body is signed: the signature covers \"<ts>.\" + the raw body, and no other header is authenticated. Deduplicate on the signed body's `event_id` (named by event_id_field): it is the id of the object state, the same across retries and resends of that state, and always equal to the X-Webhook-Event-Id header (event_id_header), which is kept for compatibility but is not signed — prefer the body field. Current cores always send it; a delivery from an older core may lack it — then deduplicate on type:id:sequence from the signed body. Test deliveries (rehearsals) carry `\"test\": true` in the body; the X-Webhook-Test header (test_header) is not signed and marks nothing on its own.",
    "event_id_field": "event_id",
    "event_id_header": "X-Webhook-Event-Id",
    "headers": [

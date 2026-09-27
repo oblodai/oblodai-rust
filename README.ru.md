@@ -449,8 +449,9 @@ match &delivery.event {
 }
 ```
 
-- **Дубли и порядок.** Дедуплицируйте по `delivery.event_key` — `event_id` из подписанного тела (от
-  старого ядра без него — `type:id:sequence`), одинаковому у всех повторов и переотправок одного
+- **Дубли и порядок.** Дедуплицируйте по `delivery.event_key` — по `event_id` (запасной ключ —
+  `type:id:sequence`), оба из подписанного тела (имя поля — `webhooks::WEBHOOK_EVENT_ID_FIELD`;
+  старое ядро `event_id` не шлёт), одинаковому у всех повторов и переотправок одного
   состояния. Заголовки `X-Webhook-Id`,
   `X-Webhook-Event-Id`, `X-Webhook-Event` и `X-Webhook-Test` **не подписаны**: они доступны только
   как `delivery.unverified_*` и ничего не должны решать. `event.sequence()` упорядочивает события;
