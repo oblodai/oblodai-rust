@@ -79,16 +79,26 @@ async fn onboard() -> Client {
         .as_str()
         .unwrap()
         .to_string();
-    let store = builder()
-        .build()
-        .unwrap()
-        .sandbox()
-        .onboard_store(merchant_id)
+    // Store onboarding is operator-only and the SDK refuses it (ruling R4); a dev stand opens it.
+    let answer = reqwest::Client::new()
+        .post(format!("{}/v1/merchants/{merchant_id}/sandbox", base_url()))
+        .header("content-type", "application/json")
+        .body("{}")
+        .send()
+        .await
+        .expect("sandbox onboarding is open on a dev stand")
+        .text()
         .await
         .unwrap();
+    let store: Value = serde_json::from_str(&answer).unwrap();
+    let key = &store["result"]["api_key"];
+    let (public_id, secret) = (
+        key["public_id"].as_str().unwrap().to_string(),
+        key["secret"].as_str().unwrap().to_string(),
+    );
     builder()
-        .public_id(store.api_key.public_id)
-        .secret(store.api_key.secret)
+        .public_id(public_id)
+        .secret(secret)
         .build()
         .unwrap()
 }

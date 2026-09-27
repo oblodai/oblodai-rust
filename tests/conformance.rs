@@ -425,9 +425,17 @@ fn webhook_deliveries_parse_and_expose_every_header() {
                 !delivery.event.object_id().is_empty(),
                 "{name}: no object id"
             );
+            // Ruling R1: the rehearsal header is not signed, so it is reported only as
+            // `unverified_test_header`; `is_test` follows the signed body (which the suite's
+            // bodies never flag).
             assert_eq!(
-                delivery.is_test, rehearsal,
-                "{name}: is_test (rehearsal header {test_header})"
+                delivery.unverified_test_header, rehearsal,
+                "{name}: unverified_test_header (rehearsal header {test_header})"
+            );
+            assert_eq!(
+                delivery.is_test,
+                delivery.event.is_test(),
+                "{name}: is_test comes from the signed body"
             );
             let fields = suite["fields"].as_object().expect("fields by role");
             assert_eq!(fields.len(), names.len(), "a field for every header role");
@@ -436,10 +444,10 @@ fn webhook_deliveries_parse_and_expose_every_header() {
                 let want = d["headers"][header].as_str().unwrap();
                 let got = match field.as_str().unwrap() {
                     "" => continue,
-                    "id" => delivery.id.clone(),
-                    "event_id" => delivery.event_id.clone(),
-                    "event_type" => delivery.event_type.clone(),
-                    "event_time" => delivery.event_time.map(|v| v.to_string()),
+                    "id" => delivery.unverified_delivery_id.clone(),
+                    "event_id" => delivery.unverified_event_id.clone(),
+                    "event_type" => delivery.unverified_event_type.clone(),
+                    "event_time" => delivery.unverified_event_time.map(|v| v.to_string()),
                     "sent_at" => Some(delivery.sent_at.to_string()),
                     other => {
                         panic!("{name}: the delivery info has no field {other:?} for {header}")

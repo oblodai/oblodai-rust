@@ -20,9 +20,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use super::logger::{is_sensitive, redact_url};
 use super::request::BuiltRequest;
 use super::route::RouteSpec;
-use super::signing::{HEADER_ADMIN_TOKEN, HEADER_SIGNATURE};
 use crate::error::Error;
 
 /// A hook on the attempt about to be sent.
@@ -35,8 +35,11 @@ pub type ResponseHook = Arc<dyn Fn(&ResponseInfo) + Send + Sync>;
 #[non_exhaustive]
 pub struct RequestInfo {
     pub method: &'static str,
+    /// The URL with bearer path segments (`/v1/claim/{token}`), signed-link query parameters and
+    /// userinfo replaced by `[redacted]`.
     pub url: String,
-    /// The headers as sent, with the signature and the admin token replaced by `[redacted]`.
+    /// The headers as sent, with the signature and every secret-bearing header replaced by
+    /// `[redacted]`.
     pub headers: Vec<(String, String)>,
     /// 1 for the first attempt, 2 for the first retry, and so on.
     pub attempt: u32,
@@ -55,7 +58,7 @@ impl RequestInfo {
     ) -> Self {
         Self {
             method: req.method,
-            url: req.url.clone(),
+            url: redact_url(&req.url, Some(route.path)),
             headers: redact_headers(&req.headers),
             attempt,
             request_id: request_id.to_string(),
@@ -116,13 +119,13 @@ impl Hooks {
     }
 }
 
-/// A copy with the signature and the admin token replaced by `[redacted]`.
+/// A copy with every secret-bearing header (the request signature, `Authorization`, `X-Api-Key`,
+/// `X-Admin-Token`, `X-Claim-Passcode`, cookies, …) replaced by `[redacted]`.
 pub fn redact_headers(headers: &[(String, String)]) -> Vec<(String, String)> {
     headers
         .iter()
         .map(|(k, v)| {
-            let secret = k.eq_ignore_ascii_case(HEADER_SIGNATURE)
-                || k.eq_ignore_ascii_case(HEADER_ADMIN_TOKEN);
+            let secret = is_sensitive(k);
             (
                 k.clone(),
                 if secret {

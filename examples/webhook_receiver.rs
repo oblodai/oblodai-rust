@@ -7,10 +7,11 @@
 //! ```
 //!
 //! 1. Verify over the **raw** request bytes. A re-serialized parse will not match the signature.
-//! 2. Deduplicate on `delivery.event_id` (header `HEADER_WEBHOOK_EVENT_ID`): retries AND resends
-//!    of one state carry the same id (`delivery.id`, `HEADER_WEBHOOK_ID`, changes on a resend).
+//! 2. Deduplicate on `delivery.event_key` (`type:id:sequence` from the signed body): retries AND
+//!    resends of one state carry the same key. The id headers are not signed; never dedupe on them.
 //! 3. Drop out-of-order events with `is_stale_event` — a retried `paid` can arrive after a refund.
-//! 4. Never act on a rehearsal (`delivery.is_test`) as if money moved: it is signed like a live one.
+//! 4. Always ignore a rehearsal (`delivery.is_test`, from the signed body): it is signed like a live
+//!    one, but no money moved.
 
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -88,12 +89,10 @@ impl Receiver {
             return (200, "ok");
         }
 
-        // A core that does not send the event id yet leaves the delivery id as the next best key.
-        if let Some(id) = delivery.event_id.as_ref().or(delivery.id.as_ref()) {
-            if !self.seen.insert(id.clone()) {
-                println!("duplicate event {id} — already handled");
-                return (200, "ok");
-            }
+        // The signed key: the id headers can be rewritten by anyone replaying a delivery.
+        if !self.seen.insert(delivery.event_key.clone()) {
+            println!("duplicate event {} — already handled", delivery.event_key);
+            return (200, "ok");
         }
 
         let event = &delivery.event;

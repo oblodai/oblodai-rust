@@ -32,8 +32,9 @@ synchronous client sits behind a feature flag, and with `--no-default-features` 
 money helpers, webhook verification and the `HttpBackend` seam build with no `reqwest` at all.
 
 > **Base URL.** Defaults to `https://api.oblodai.com`. Override `base_url` and supply your own keys
-> at initialisation if needed. The scheme must be `https://`; plain `http://` is accepted only for
-> loopback (`http://127.0.0.1:8095`) or with the explicit `allow_insecure_base_url` option.
+> at initialisation if needed. The scheme must be `https://`; plain `http://` (loopback included) is
+> accepted only with the explicit `allow_insecure_base_url` option (or `OBLODAI_ALLOW_INSECURE=1`).
+> A base URL with credentials (`user:pass@`) is refused.
 
 ## Installation
 
@@ -101,11 +102,13 @@ let client = oblodai::Client::builder()
 
 `Client::from_env()` reads `OBLODAI_PUBLIC_ID` / `OBLODAI_SECRET`. A **sandbox key** drives a
 chainless copy of the gateway — fake balance from a faucet, simulated deposits, real webhooks —
-from the dashboard or `sandbox().onboard_store(merchant_id)`. Integrate against it first.
+from the dashboard. Integrate against it first.
 
-A second credential, the **onboarding admin token**, exists only on a self-hosted gateway: it is
-sent as `X-Admin-Token` on the store provisioning route (`sandbox().onboard_store`) and nowhere
-else. Set it with `.admin_token(…)` or `OBLODAI_ADMIN_TOKEN`.
+Store onboarding (`sandbox().onboard_store`) is an operator-only operation: the gateway accepts it
+only over the operator signing channel, which the SDK does not implement. The call fails with
+`sdk.operator_channel_unsupported` (a config error) before anything is sent — use the dashboard.
+The SDK never sends a raw admin token: `.admin_token(…)` and `OBLODAI_ADMIN_TOKEN` are deprecated
+and ignored (setting one logs a one-time warning).
 
 Only a merchant onboarded long before the single-key cleanup can still hold a legacy split pair
 (`oblodai_pk_…` / `oblodai_wk_…`); such a pair is refused on the other half's routes with a 403
@@ -417,8 +420,9 @@ let deliveries = client
 client.sandbox().reset().await?;
 ```
 
-A rehearsal delivery carries `test: true` in the signed body and `X-Webhook-Test: true` in the
-headers, surfaced as `delivery.is_test` — never credit an order on one.
+A rehearsal delivery carries `test: true` in the signed body, surfaced as `delivery.is_test` —
+always acknowledge and ignore it, never credit an order on one. (Its `X-Webhook-Test` header is not
+signed and is only reported as `delivery.unverified_test_header`.)
 
 ## Webhooks
 
@@ -443,11 +447,11 @@ match &delivery.event {
 }
 ```
 
-- **Duplicates and order.** Deduplicate on `delivery.event_id` (`X-Webhook-Event-Id`): it names the
-  state and is the same for every retry and every resend of it. `delivery.id` (`X-Webhook-Id`) names
-  one delivery and changes on a resend (`webhooks().resend_payment()`, a sandbox replay) — keyed on
-  it, a resent `invoice.paid` is processed twice. `event.sequence()` orders events;
-  `is_stale_event` drops an out-of-order one.
+- **Duplicates and order.** Deduplicate on `delivery.event_key` — `type:id:sequence`, taken from the
+  signed body, the same for every retry and every resend of one state. The `X-Webhook-Id`,
+  `X-Webhook-Event-Id`, `X-Webhook-Event` and `X-Webhook-Test` headers are **not signed**: they are
+  exposed only as `delivery.unverified_*` and must never decide anything. `event.sequence()`
+  orders events; `is_stale_event` drops an out-of-order one.
 - **Rotation.** After `webhooks().rotate_secret()` pass `.previous_secret(old)` until
   `previous_secret_valid_until` has passed.
 - **Unknown event types** arrive as `WebhookEvent::Other(Value)` (the enum is `#[non_exhaustive]`);
@@ -500,7 +504,7 @@ Codes the SDK raises itself, never the gateway: `sdk.missing_credentials`, `sdk.
 - **When a retry happens.** Only when the API says `retryable: true`; answers without an API
   envelope (a proxy 502/503) and transport failures only when repeating is safe. `Retry-After` is
   honoured, otherwise exponential backoff with jitter. Defaults: 2 retries, 250 ms → 4 s.
-- **Clock skew** is corrected once, from the server's `Date` header, and reverted if it did not help.
+- **Clock skew** is corrected once, from the server's `Date` header (at most ±15 minutes), and kept only if the re-signed attempt succeeded.
 - **Redirects are never followed**; response bodies are capped (8 MiB JSON, 64 MiB documents).
 - **Bound a call with `.deadline(…)`, not by dropping the future**: the auto-generated key lives in
   that future. If a retry has to survive a restart, pass your own `.idempotency_key(…)`.
@@ -517,12 +521,12 @@ Codes the SDK raises itself, never the gateway: `sdk.missing_credentials`, `sdk.
 | `.max_retries(n)`, `.retry(…)`  | 2 retries                  | `0` disables retries                                      |
 | `.header(name, value)`          | —                          | an extra header on every request                          |
 | `.hooks(Hooks)`                 | none                       | `on_request` / `on_response`, once per attempt            |
-| `.admin_token(…)`               | —                          | `X-Admin-Token` on the provisioning route only            |
-| `.allow_insecure_base_url(…)`   | `false`                    | permit plain `http` beyond loopback                       |
+| `.admin_token(…)`               | —                          | deprecated, ignored (never sent)                          |
+| `.allow_insecure_base_url(…)`   | `false`                    | permit plain `http` (loopback included)                   |
 | `.logger(…)`                    | none                       | a structured logger; secrets are redacted before it       |
 | `.http_backend(…)`              | `reqwest`                  | replace the HTTP layer                                    |
 
-Environment: `OBLODAI_PUBLIC_ID`, `OBLODAI_SECRET`, `OBLODAI_BASE_URL`, `OBLODAI_ADMIN_TOKEN`,
+Environment: `OBLODAI_PUBLIC_ID`, `OBLODAI_SECRET`, `OBLODAI_BASE_URL`,
 `OBLODAI_LOG` (`debug|info|warn|error`), `OBLODAI_ALLOW_INSECURE` (`1`).
 
 ## Development

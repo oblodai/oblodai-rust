@@ -46,12 +46,27 @@ fn verifies_every_recorded_delivery() {
             delivery.event.object_id(),
             sample.body["uuid"].as_str().unwrap()
         );
-        assert_eq!(delivery.id.as_deref(), sample.header(HEADER_WEBHOOK_ID));
         assert_eq!(
-            delivery.event_id.as_deref(),
+            delivery.unverified_delivery_id.as_deref(),
+            sample.header(HEADER_WEBHOOK_ID)
+        );
+        assert_eq!(
+            delivery.unverified_event_id.as_deref(),
             sample.header(HEADER_WEBHOOK_EVENT_ID)
         );
-        assert_eq!(delivery.event_type.as_deref(), Some(event_name));
+        assert_eq!(delivery.unverified_event_type.as_deref(), Some(event_name));
+        assert_eq!(
+            delivery.event_key,
+            format!(
+                "{}:{}:{}",
+                sample.body["type"].as_str().unwrap(),
+                sample.body["uuid"].as_str().unwrap(),
+                sample.body["sequence"]
+                    .as_i64()
+                    .map(|s| s.to_string())
+                    .unwrap_or_default()
+            )
+        );
         assert_eq!(delivery.sent_at, ts);
         assert_eq!(
             delivery.event.event_kind(),
@@ -163,10 +178,38 @@ fn reads_the_event_id_apart_from_the_delivery_id() {
     headers.insert(HEADER_WEBHOOK_EVENT_ID, "e-1");
     let options = VerifyOptions::new("whsec").now(TS);
     let delivery = verify_webhook_delivery(&body(), &headers, &options).unwrap();
-    assert_eq!(delivery.id.as_deref(), Some("d-1"));
-    assert_eq!(delivery.event_id.as_deref(), Some("e-1"));
+    assert_eq!(delivery.unverified_delivery_id.as_deref(), Some("d-1"));
+    assert_eq!(delivery.unverified_event_id.as_deref(), Some("e-1"));
     let bare = verify_webhook_delivery(&body(), &headers_for("whsec"), &options).unwrap();
-    assert_eq!(bare.event_id, None);
+    assert_eq!(bare.unverified_event_id, None);
+}
+
+/// Ruling R1: the dedupe key comes from the signed body only; rewriting the unsigned id headers of
+/// a captured delivery (a replay with a "fresh" event id) does not change it.
+#[test]
+fn the_dedupe_key_comes_from_the_signed_body_not_the_headers() {
+    let options = VerifyOptions::new("whsec").now(TS);
+    let mut first = headers_for("whsec");
+    first.insert(HEADER_WEBHOOK_EVENT_ID, "e-1");
+    first.insert(HEADER_WEBHOOK_ID, "d-1");
+    let mut replay = headers_for("whsec");
+    replay.insert(HEADER_WEBHOOK_EVENT_ID, "e-forged");
+    replay.insert(HEADER_WEBHOOK_ID, "d-forged");
+    let a = verify_webhook_delivery(&body(), &first, &options).unwrap();
+    let b = verify_webhook_delivery(&body(), &replay, &options).unwrap();
+    assert_eq!(a.event_key, b.event_key);
+    assert_eq!(a.event_key, oblodai::event_key(&a.event));
+    assert!(a.event_key.ends_with(":7"), "{}", a.event_key);
+}
+
+/// Ruling M3: the options' Debug output never prints either webhook secret.
+#[test]
+fn verify_options_debug_redacts_both_secrets() {
+    let options = VerifyOptions::new("whsec-LIVE-SECRET").previous_secret("whsec-OLD-SECRET");
+    let printed = format!("{options:?} {options:#?}");
+    assert!(!printed.contains("LIVE-SECRET"), "{printed}");
+    assert!(!printed.contains("OLD-SECRET"), "{printed}");
+    assert!(printed.contains("[redacted]"));
 }
 
 #[test]
@@ -285,7 +328,7 @@ fn verifies_during_a_rotation_from_either_side() {
 }
 
 #[test]
-fn a_rehearsal_is_recognised_from_either_the_header_or_the_body() {
+fn a_rehearsal_is_recognised_from_the_signed_body_only() {
     // Neither: a live delivery.
     let delivery = verify_webhook_delivery(
         &body(),
@@ -296,14 +339,15 @@ fn a_rehearsal_is_recognised_from_either_the_header_or_the_body() {
     assert!(!delivery.is_test);
     assert!(!is_test_event(&delivery.event));
 
-    // The header alone — the body of an older rehearsal did not carry the flag.
+    // Ruling R1: the header alone is unsigned — a replayer adding `X-Webhook-Test: true` to a live
+    // delivery must not turn it into an ignored rehearsal.
     let mut with_header = headers_for("whsec");
     with_header.insert(HEADER_WEBHOOK_TEST, "true");
     let delivery =
         verify_webhook_delivery(&body(), &with_header, &VerifyOptions::new("whsec").now(TS))
             .unwrap();
-    assert!(delivery.is_test);
-    assert!(!is_test_event(&delivery.event), "the body carries no flag");
+    assert!(!delivery.is_test, "the unsigned header is not trusted");
+    assert!(delivery.unverified_test_header);
 
     // The body alone — the signed source of truth.
     let raw = String::from_utf8(body())

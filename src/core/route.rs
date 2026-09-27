@@ -43,7 +43,9 @@ pub enum RouteAuth {
     Public,
     /// Signed with the merchant's API key.
     Key,
-    /// Store provisioning: unsigned, gated by `X-Admin-Token` on a self-hosted gateway.
+    /// Operator-only (store provisioning): the core accepts only the operator HMAC channel, which
+    /// the SDK does not implement. Calls are refused with `sdk.operator_channel_unsupported`
+    /// before any network call; use the dashboard.
     Onboard,
 }
 

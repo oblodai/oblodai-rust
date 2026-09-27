@@ -373,7 +373,7 @@ async fn serializes_an_error_without_the_raw_body() {
 
 #[tokio::test]
 async fn re_signs_once_with_the_server_clock_when_a_401_reveals_skew() {
-    let server_now = oblodai::core::util::unix_now() + 3600;
+    let server_now = oblodai::core::util::unix_now() + 600;
     let date =
         httpdate::fmt_http_date(std::time::UNIX_EPOCH + Duration::from_secs(server_now as u64));
     let (client, mock) = harness(vec![
@@ -411,10 +411,9 @@ async fn ignores_the_date_header_on_a_401_that_is_not_a_signature_failure() {
 }
 
 #[tokio::test]
-async fn reverts_the_correction_when_the_re_signed_attempt_is_still_rejected() {
+async fn discards_the_correction_when_the_re_signed_attempt_is_still_rejected() {
     let date = httpdate::fmt_http_date(
-        std::time::UNIX_EPOCH
-            + Duration::from_secs((oblodai::core::util::unix_now() + 4000) as u64),
+        std::time::UNIX_EPOCH + Duration::from_secs((oblodai::core::util::unix_now() + 600) as u64),
     );
     let bad = || {
         api_error(
@@ -433,6 +432,86 @@ async fn reverts_the_correction_when_the_re_signed_attempt_is_still_rejected() {
         (ts - oblodai::core::util::unix_now()).abs() < 5,
         "one bad Date must not wedge the client"
     );
+}
+
+fn date_in(seconds: i64) -> String {
+    httpdate::fmt_http_date(
+        std::time::UNIX_EPOCH
+            + Duration::from_secs((oblodai::core::util::unix_now() + seconds) as u64),
+    )
+}
+
+fn ts_of(call: &support::Recorded) -> i64 {
+    call.header(HEADER_TIMESTAMP).unwrap().parse().unwrap()
+}
+
+/// Ruling R2: a 401 with a `Date` far away (+23 h) never moves the signing clock; the SDK does not
+/// even re-sign with it.
+#[tokio::test]
+async fn a_far_date_on_a_signature_failure_never_moves_the_clock() {
+    let (client, mock) = harness(vec![
+        api_error(
+            401,
+            json!({ "code": "merchant.bad_signature", "retryable": false }),
+        )
+        .header("date", date_in(23 * 3600)),
+        balance_ok(),
+    ]);
+    let err = client.account().get_balance().await.unwrap_err();
+    assert_eq!(err.code(), "merchant.bad_signature");
+    assert_eq!(mock.call_count(), 1, "no re-sign with an implausible Date");
+    client.account().get_balance().await.unwrap();
+    let now = oblodai::core::util::unix_now();
+    assert!((ts_of(&mock.calls()[1]) - now).abs() < 5);
+}
+
+/// Ruling R2: the measured offset is adopted only after the re-signed attempt succeeds; a
+/// 401 bad_signature + Date, then a 404, leaves the clock where it was.
+#[tokio::test]
+async fn a_measured_offset_is_discarded_unless_the_re_signed_attempt_succeeds() {
+    let (client, mock) = harness(vec![
+        api_error(
+            401,
+            json!({ "code": "merchant.bad_signature", "retryable": false }),
+        )
+        .header("date", date_in(600)),
+        api_error(
+            404,
+            json!({ "code": "payment.not_found", "retryable": false }),
+        ),
+        balance_ok(),
+    ]);
+    let err = client.account().get_balance().await.unwrap_err();
+    assert_eq!(err.code(), "payment.not_found");
+    client.account().get_balance().await.unwrap();
+    let calls = mock.calls();
+    let now = oblodai::core::util::unix_now();
+    assert!(
+        (ts_of(&calls[1]) - (now + 600)).abs() < 5,
+        "the re-signed attempt uses the server time"
+    );
+    assert!(
+        (ts_of(&calls[2]) - now).abs() < 5,
+        "the offset was discarded after the 404"
+    );
+}
+
+/// Ruling R2: a successful re-signed attempt makes the offset stick for later calls.
+#[tokio::test]
+async fn a_measured_offset_is_adopted_after_the_re_signed_attempt_succeeds() {
+    let (client, mock) = harness(vec![
+        api_error(
+            401,
+            json!({ "code": "merchant.bad_signature", "retryable": false }),
+        )
+        .header("date", date_in(600)),
+        balance_ok(),
+        balance_ok(),
+    ]);
+    client.account().get_balance().await.unwrap();
+    client.account().get_balance().await.unwrap();
+    let now = oblodai::core::util::unix_now();
+    assert!((ts_of(&mock.calls()[2]) - (now + 600)).abs() < 5);
 }
 
 #[tokio::test]
@@ -613,6 +692,63 @@ async fn reads_the_filename_from_content_disposition() {
         .await
         .unwrap();
     assert_eq!(file.filename.as_deref(), Some("statement.pdf"));
+}
+
+/// Ruling R6: a hostile `Content-Disposition` yields a bare, safe file name, and saving never
+/// overwrites an existing file and writes it owner-only.
+#[tokio::test]
+async fn a_hostile_filename_is_reduced_to_a_safe_base_name_and_saves_are_safe() {
+    for (header, want) in [
+        ("attachment; filename=\"../../etc/passwd\"", Some("passwd")),
+        (
+            "attachment; filename*=UTF-8''..%2F..%2Fx%0A.pdf",
+            Some("x.pdf"),
+        ),
+        ("attachment; filename=\"C:\\\\tmp\\\\a.csv\"", Some("a.csv")),
+        ("attachment; filename=\"..\"", None),
+        ("attachment; filename=\".\"", None),
+        ("attachment; filename=\"dir/\"", None),
+    ] {
+        let (client, _) = harness(vec![Scripted {
+            status: 200,
+            body: "%PDF".into(),
+            headers: vec![
+                ("content-type".into(), "application/pdf".into()),
+                ("content-disposition".into(), header.into()),
+            ],
+            ..Default::default()
+        }]);
+        let file = client
+            .documents()
+            .get_balance(oblodai::generated::resources::GetBalanceDocumentQuery::default())
+            .await
+            .unwrap();
+        assert_eq!(file.filename.as_deref(), want, "{header}");
+        if want == Some("passwd") {
+            let dir = std::env::temp_dir().join(format!(
+                "oblodai-r6-{}-{}",
+                std::process::id(),
+                oblodai::core::util::unix_now()
+            ));
+            std::fs::create_dir_all(&dir).unwrap();
+            let path = dir.join("doc.pdf");
+            std::fs::write(&path, b"keep").unwrap();
+            let err = file.write_to(&path).unwrap_err();
+            assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+            assert_eq!(std::fs::read(&path).unwrap(), b"keep");
+            let fresh = dir.join("new.pdf");
+            file.write_to(&fresh).unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mode = std::fs::metadata(&fresh).unwrap().permissions().mode();
+                assert_eq!(mode & 0o777, 0o600);
+            }
+            file.write_to_replacing(&path).unwrap();
+            assert_eq!(std::fs::read(&path).unwrap(), b"%PDF");
+            std::fs::remove_dir_all(&dir).unwrap();
+        }
+    }
 }
 
 #[tokio::test]

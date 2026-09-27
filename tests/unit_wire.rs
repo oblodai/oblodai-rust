@@ -91,20 +91,35 @@ async fn caller_headers_never_duplicate_the_ones_the_sdk_owns() {
     assert_eq!(count("x-admin-token"), 0, "not an onboard route");
 }
 
+/// Ruling R4: the SDK never sends a raw admin token, and the operator-only onboarding route is
+/// refused with a config error before any request goes out.
 #[tokio::test]
-async fn the_admin_token_goes_only_to_onboard_routes() {
+#[allow(deprecated)]
+async fn the_admin_token_is_never_sent_and_onboarding_is_refused_before_the_network() {
     let mock = MockBackend::new(vec![balance_ok()]);
     let client = client_with(mock.clone(), |b| b.admin_token("adm"));
     client.account().get_balance().await.unwrap();
     assert_eq!(mock.first().header("x-admin-token"), None);
 
-    let mock = MockBackend::new(vec![ok(json!({
-        "merchant_id": "m", "project_id": "p",
-        "api_key": {"public_id":"a","secret":"b"}
-    }))]);
-    let client = client_with(mock.clone(), |b| b.admin_token("adm"));
-    let _ = client.sandbox().onboard_store("m").await;
-    assert_eq!(mock.first().header("x-admin-token"), Some("adm"));
+    for configure in [
+        (|b: oblodai::ClientBuilder| b.admin_token("adm")) as fn(_) -> _,
+        |b: oblodai::ClientBuilder| b,
+    ] {
+        let mock = MockBackend::new(vec![ok(json!({
+            "merchant_id": "m", "project_id": "p",
+            "api_key": {"public_id":"a","secret":"b"}
+        }))]);
+        let client = client_with(mock.clone(), configure);
+        let err = client.sandbox().onboard_store("m").await.unwrap_err();
+        assert_eq!(err.code(), "sdk.operator_channel_unsupported");
+        assert_eq!(err.kind(), ErrorKind::Config);
+        assert!(
+            err.message().contains("use the dashboard"),
+            "{}",
+            err.message()
+        );
+        assert!(mock.calls().is_empty(), "no request went out");
+    }
 }
 
 #[tokio::test]
@@ -297,7 +312,7 @@ impl HttpBackend for SkewedCore {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn concurrent_calls_share_one_clock_correction() {
     let backend = Arc::new(SkewedCore {
-        server_now: oblodai::core::util::unix_now() + 3600,
+        server_now: oblodai::core::util::unix_now() + 600,
         refusals: Mutex::new(0),
     });
     let client = Client::builder()
@@ -425,4 +440,122 @@ async fn a_float_outside_the_non_money_numbers_never_leaves_the_process() {
     };
     client.batches().create_payment(req).await.unwrap();
     assert_eq!(mock.calls().len(), 1);
+}
+
+/// Ruling R10: a body over the contract's MaxBody is refused before anything is sent.
+#[tokio::test]
+async fn a_body_over_the_contract_limit_never_leaves_the_process() {
+    let mock = MockBackend::new(vec![ok(json!({}))]);
+    let client = client_with(mock.clone(), |b| b);
+    let huge = "9".repeat(oblodai::generated::signing::MAX_BODY + 1);
+    let err = client
+        .invoke(
+            "createPayment",
+            oblodai::InvokeInput {
+                body: Some(json!({ "amount": huge, "currency": "USDT" })),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), "sdk.body_too_large");
+    assert_eq!(err.kind(), ErrorKind::Config);
+    assert!(mock.calls().is_empty(), "nothing was sent");
+}
+
+// --- redaction (ruling R3) --------------------------------------------------------------------
+
+/// The claim token in `/v1/claim/{token}` never reaches a hook, and the hook's headers hide every
+/// secret-bearing header, including ones a proxy needs (`Authorization`, `X-Api-Key`).
+#[tokio::test]
+async fn hooks_never_see_a_claim_token_or_a_secret_header() {
+    let seen = Arc::new(Mutex::new(Vec::<String>::new()));
+    let sink = seen.clone();
+    let mock = MockBackend::new(vec![ok(json!({}))]);
+    let client = client_with(mock.clone(), |b| {
+        b.header("Authorization", "Bearer PROXY-TOKEN")
+            .header("X-Api-Key", "PROXY-KEY")
+            .header("X-Claim-Passcode", "PASS-1234")
+            .hooks(oblodai::Hooks::new().on_request(move |r| {
+                sink.lock()
+                    .unwrap()
+                    .push(format!("{} {:?} {r:?}", r.url, r.headers));
+            }))
+    });
+    let _ = client
+        .payout_links()
+        .get_payout_claim("CLAIMTOKEN_Xk3f9")
+        .await;
+    assert!(
+        mock.first().url.contains("CLAIMTOKEN_Xk3f9"),
+        "the wire has it"
+    );
+    let seen = seen.lock().unwrap().join("\n");
+    assert!(!seen.is_empty());
+    for secret in ["CLAIMTOKEN_Xk3f9", "PROXY-TOKEN", "PROXY-KEY", "PASS-1234"] {
+        assert!(!seen.contains(secret), "{secret} leaked: {seen}");
+    }
+    assert!(seen.contains("/v1/claim/[redacted]"), "{seen}");
+}
+
+/// L2: the public `HttpRequest` handed to a custom backend prints no signature, no admin/proxy
+/// header, no claim token and no body through `Debug` (an instrumented backend logs it).
+#[test]
+fn http_request_debug_redacts_secrets() {
+    let request = HttpRequest {
+        url: "https://u:p@api.test/v1/claim/CLAIMTOKEN_1?sig=SIGVALUE&exp=1&x=keep".into(),
+        method: "POST",
+        headers: vec![
+            (HEADER_SIGNATURE.into(), "SIGNATUREHEX".into()),
+            ("X-Admin-Token".into(), "GATEWAY-ADMIN-MASTER".into()),
+            ("authorization".into(), "Bearer T".into()),
+        ],
+        body: Some("{\"passcode\":\"PASS-1\"}".into()),
+        timeout: std::time::Duration::from_secs(1),
+        max_body_bytes: 1,
+    };
+    let printed = format!("{request:?}");
+    for secret in [
+        "SIGNATUREHEX",
+        "GATEWAY-ADMIN-MASTER",
+        "Bearer T",
+        "CLAIMTOKEN_1",
+        "SIGVALUE",
+        "PASS-1",
+        "u:p@",
+    ] {
+        assert!(!printed.contains(secret), "{secret} leaked: {printed}");
+    }
+    assert!(printed.contains("x=keep"));
+}
+
+/// L3 and R3: a device code, a claim URL and a signed document link never print through `Debug`.
+#[test]
+fn model_debug_redacts_device_codes_claim_urls_and_signed_links() {
+    let auth: oblodai::models::CLIDeviceAuthorization = serde_json::from_value(json!({
+        "device_code": "DEVICE-SECRET-q3X0", "expires_in": 600, "interval": 5,
+        "user_code": "ABCD-EFGH", "verification_uri": "https://pay.oblodai.com/cli",
+        "verification_uri_complete": "https://pay.oblodai.com/cli?code=ABCD-EFGH"
+    }))
+    .unwrap();
+    let printed = format!("{auth:?}");
+    assert!(!printed.contains("DEVICE-SECRET-q3X0"), "{printed}");
+
+    let link = PayoutLinkCreated {
+        claim_token: "CLAIMTOKEN_Xk3f9".into(),
+        claim_url: "https://pay.oblodai.com/claim/CLAIMTOKEN_Xk3f9".into(),
+        ..Default::default()
+    };
+    let printed = format!("{link:?}");
+    assert!(!printed.contains("CLAIMTOKEN_Xk3f9"), "{printed}");
+
+    let samples: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/webhook-samples.json")).unwrap();
+    let raw = samples[0]["raw"].as_str().unwrap();
+    assert!(raw.contains("sig=ac26f609"));
+    let event = oblodai::webhooks::parse_webhook(raw.as_bytes()).unwrap();
+    let printed = format!("{event:?}");
+    assert!(printed.contains("/v1/documents/payout/"), "{printed}");
+    assert!(!printed.contains("sig=ac26f609"), "{printed}");
 }

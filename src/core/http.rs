@@ -19,8 +19,9 @@ pub const MAX_JSON_BODY_BYTES: usize = 8 * 1024 * 1024;
 /// Largest `bare` document (PDF/CSV) the SDK buffers.
 pub const MAX_FILE_BODY_BYTES: usize = 64 * 1024 * 1024;
 
-/// One outgoing HTTP request, fully built and signed.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// One outgoing HTTP request, fully built and signed. Its `Debug` output redacts the secret-bearing
+/// headers, the bearer parts of the URL and the body.
+#[derive(Clone, PartialEq, Eq)]
 pub struct HttpRequest {
     pub url: String,
     pub method: &'static str,
@@ -32,6 +33,22 @@ pub struct HttpRequest {
     /// Refuse to buffer more than this many response bytes: [`MAX_JSON_BODY_BYTES`] on envelope
     /// routes, [`MAX_FILE_BODY_BYTES`] on `bare` document routes.
     pub max_body_bytes: usize,
+}
+
+impl std::fmt::Debug for HttpRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HttpRequest")
+            .field("url", &super::logger::redact_url(&self.url, None))
+            .field("method", &self.method)
+            .field("headers", &super::hooks::redact_headers(&self.headers))
+            .field(
+                "body",
+                &self.body.as_ref().map(|b| format!("[{} bytes]", b.len())),
+            )
+            .field("timeout", &self.timeout)
+            .field("max_body_bytes", &self.max_body_bytes)
+            .finish()
+    }
 }
 
 /// The answer was larger than the SDK is willing to hold in memory.
@@ -50,6 +67,8 @@ fn assert_not_redirected(requested: &str, final_url: &str) -> Result<()> {
     if requested == final_url {
         return Ok(());
     }
+    let requested = super::logger::redact_url(requested, None);
+    let final_url = super::logger::redact_url(final_url, None);
     Err(Error::contract(
         format!(
             "unexpected redirect: the HTTP client followed {requested} to {final_url}; the SDK \
@@ -92,6 +111,8 @@ fn collect(status: u16, headers: &reqwest::header::HeaderMap, body: Vec<u8>) -> 
 
 #[cfg(feature = "reqwest-client")]
 fn map_error(err: reqwest::Error) -> Error {
+    // The URL can carry a bearer secret (`/v1/claim/{token}`, a signed link): never in a message.
+    let err = err.without_url();
     if err.is_timeout() {
         Error::transport("transport.timeout", format!("request timed out: {err}"))
     } else {
@@ -132,6 +153,11 @@ impl ReqwestBackend {
     }
 
     /// Wrap a client you configured yourself (proxy, custom TLS roots, connection limits).
+    ///
+    /// **Build it with `.redirect(reqwest::redirect::Policy::none())`.** The SDK refuses a
+    /// redirected answer, but only after the client has followed it — and a following client has
+    /// by then re-sent the signed headers, the idempotency key and (on 307/308) the body to the
+    /// redirect target.
     pub fn with_client(client: reqwest::Client) -> Self {
         Self { client }
     }
@@ -198,6 +224,8 @@ impl ReqwestBlockingBackend {
         Ok(Self { client })
     }
 
+    /// Wrap a client you configured yourself. **Build it with
+    /// `.redirect(reqwest::redirect::Policy::none())`** — see [`ReqwestBackend::with_client`].
     pub fn with_client(client: reqwest::blocking::Client) -> Self {
         Self { client }
     }

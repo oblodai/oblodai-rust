@@ -386,6 +386,8 @@ fn answer(req: &Received) -> (u16, Vec<(String, String)>, Vec<u8>) {
 fn gateway_env(gateway: &FakeGateway) {
     // One test owns the process environment: `from_env()` is what the README shows.
     std::env::set_var("OBLODAI_BASE_URL", &gateway.base_url);
+    // A plain-http loopback gateway needs the explicit opt-in (ruling R8).
+    std::env::set_var("OBLODAI_ALLOW_INSECURE", "1");
     std::env::set_var("OBLODAI_PUBLIC_ID", "test_oblodai_readme");
     std::env::set_var("OBLODAI_SECRET", "oblodai_test_readme");
 }

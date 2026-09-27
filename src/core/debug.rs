@@ -1,11 +1,13 @@
 //! `Debug` of the generated models: the fields as `derive(Debug)` would print them, except that a
 //! value under a secret-looking name ([`is_sensitive`]) is printed as `[redacted]` — in the
 //! model's own fields and, at any depth, in its `extra` map. An absent (`None`) or empty secret is
-//! printed as it is, so a debug line still says whether the gateway returned one.
+//! printed as it is, so a debug line still says whether the gateway returned one. A URL value (a
+//! signed document link, a claim link) is printed through [`redact_url`]: its `sig`/`exp`/`token`
+//! query parameters and claim-token path segments never appear.
 
 use serde_json::Value;
 
-use super::logger::is_sensitive;
+use super::logger::{is_sensitive, redact_url};
 
 const REDACTED: &str = "[redacted]";
 
@@ -33,8 +35,24 @@ pub fn redact_value(value: &Value) -> Value {
                 .collect(),
         ),
         Value::Array(items) => Value::Array(items.iter().map(redact_value).collect()),
+        Value::String(text) if looks_like_url(text) => Value::String(redact_url(text, None)),
         other => other.clone(),
     }
+}
+
+fn looks_like_url(text: &str) -> bool {
+    text.starts_with("https://") || text.starts_with("http://")
+}
+
+/// A URL-valued field, printed with its bearer parts redacted.
+fn redacted_url_field(value: &dyn std::any::Any) -> Option<String> {
+    if let Some(text) = value.downcast_ref::<String>() {
+        return looks_like_url(text).then(|| redact_url(text, None));
+    }
+    if let Some(Some(text)) = value.downcast_ref::<Option<String>>() {
+        return looks_like_url(text).then(|| redact_url(text, None));
+    }
+    None
 }
 
 /// The `Debug` builder the generated models use (`impl Debug for Model`).
@@ -46,13 +64,17 @@ impl<'a, 'b: 'a> ModelDebug<'a, 'b> {
     }
 
     /// One field, by its wire name.
-    pub fn field<T: std::fmt::Debug>(&mut self, name: &str, value: &T) {
+    pub fn field<T: std::fmt::Debug + 'static>(&mut self, name: &str, value: &T) {
         if is_sensitive(name) {
             let shown = format!("{value:?}");
             if shown != "None" && shown != "\"\"" {
                 self.0.field(name, &Redacted);
                 return;
             }
+        }
+        if let Some(url) = redacted_url_field(value) {
+            self.0.field(name, &url);
+            return;
         }
         self.0.field(name, value);
     }

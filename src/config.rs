@@ -122,14 +122,19 @@ impl ClientBuilder {
         self
     }
 
-    /// Admin token of a self-hosted gateway; only the merchant-provisioning routes use it.
-    /// Falls back to `OBLODAI_ADMIN_TOKEN`.
+    /// Deprecated and ignored: the SDK never sends a raw admin token. Operator-only operations
+    /// (store onboarding) need the operator HMAC channel, which the SDK does not implement; they
+    /// fail with `sdk.operator_channel_unsupported` before any network call. Use the dashboard.
+    /// Setting it (or `OBLODAI_ADMIN_TOKEN`) logs a one-time warning.
+    #[deprecated(
+        note = "ignored: the SDK never sends a raw admin token; operator operations need the dashboard"
+    )]
     pub fn admin_token(mut self, value: impl Into<String>) -> Self {
         self.admin_token = Some(value.into());
         self
     }
 
-    /// Permit plain `http://` base URLs beyond loopback (a local core, CI). Falls back to
+    /// Permit plain `http://` base URLs, loopback included (a local core, CI). Falls back to
     /// `OBLODAI_ALLOW_INSECURE=1`.
     pub fn allow_insecure_base_url(mut self, value: bool) -> Self {
         self.allow_insecure_base_url = Some(value);
@@ -215,10 +220,18 @@ impl ClientBuilder {
         core.credentials = credentials;
         core.logger = logger;
         core.headers = self.headers.clone();
-        core.admin_token = self
-            .admin_token
-            .clone()
-            .or_else(|| self.var("OBLODAI_ADMIN_TOKEN"));
+        if self.admin_token.is_some() || self.var("OBLODAI_ADMIN_TOKEN").is_some() {
+            static WARNED: std::sync::Once = std::sync::Once::new();
+            let logger = core.logger.clone();
+            WARNED.call_once(|| {
+                logger.log(
+                    LogLevel::Warn,
+                    "admin_token / OBLODAI_ADMIN_TOKEN is deprecated and ignored: the SDK never \
+                     sends a raw admin token; operator operations need the dashboard",
+                    &[],
+                )
+            });
+        }
         if let Some(t) = self.timeout {
             core.timeout = t;
         }
@@ -318,26 +331,33 @@ fn pair(public_id: Option<String>, secret: Option<String>) -> Result<Option<Cred
 }
 
 fn assert_base_url(base_url: &str, allow_insecure: bool) -> Result<()> {
-    let parsed = Url::parse(base_url).map_err(|_| {
+    // Never echo the URL itself: it may carry credentials.
+    let parsed = Url::parse(base_url).map_err(|e| {
         Error::config(
             "sdk.bad_config",
-            format!("base_url is not a valid URL: {base_url}"),
+            format!("base_url is not a valid URL: {e}"),
             Some("base_url"),
         )
     })?;
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err(Error::config(
+            "sdk.bad_config",
+            "base_url must not carry credentials (user:pass@); the SDK signs requests itself",
+            Some("base_url"),
+        ));
+    }
     if parsed.scheme() == "https" {
         return Ok(());
     }
     let host = parsed.host_str().unwrap_or_default();
-    let local = host == "localhost" || host == "127.0.0.1" || host == "[::1]" || host == "::1";
-    if parsed.scheme() == "http" && (allow_insecure || local) {
+    if parsed.scheme() == "http" && allow_insecure {
         return Ok(());
     }
     Err(Error::config(
         "sdk.bad_config",
         format!(
-            "base_url must use https (got {}://{host}); call allow_insecure_base_url(true) for a \
-             local core",
+            "base_url must use https (got {}://{host}); call allow_insecure_base_url(true) (or set \
+             OBLODAI_ALLOW_INSECURE=1) for a local core",
             parsed.scheme()
         ),
         Some("base_url"),

@@ -37,8 +37,10 @@ OpenAPI contract into `src/generated/` (never edit by hand; `make sdk` in the ba
   `client.with_options(ClientOptions::new()…)` is a copy with other settings;
   `ClientBuilder::hooks(Hooks::new().on_request(..).on_response(..))` sees every attempt.
 - One API key. `public_id` + `secret` (or `OBLODAI_PUBLIC_ID` / `OBLODAI_SECRET`) sign every
-  merchant route. The admin token (`admin_token` / `OBLODAI_ADMIN_TOKEN`) goes only to
-  `sandbox().onboard_store` (`X-Admin-Token`); `checkout()` routes carry no credential.
+  merchant route. The SDK never sends a raw admin token (`admin_token` /
+  `OBLODAI_ADMIN_TOKEN` are deprecated and ignored); `sandbox().onboard_store` is operator-only and
+  fails with `sdk.operator_channel_unsupported` before the network. `checkout()` routes carry no
+  credential.
 
 ## Errors
 
@@ -77,9 +79,9 @@ let delivery = verify_webhook_delivery(raw_body, &Headers::from_pairs(headers),
 ```
 
 Verify over the **raw** bytes. `delivery.is_test` is true for rehearsal deliveries (`test: true` in
-the signed body, or `X-Webhook-Test: true`) — never treat them as money. Deduplicate on
-`delivery.event_id` (`X-Webhook-Event-Id`, stable across retries and resends), not `delivery.id`
-(a resend gets a new one); drop out-of-order events with
+the signed body) — always ignore them, never treat them as money. Deduplicate on
+`delivery.event_key` (`type:id:sequence` from the signed body); the id/event/test headers are not
+signed and appear only as `delivery.unverified_*`. Drop out-of-order events with
 `is_stale_event(&delivery.event, last_sequence)`. During a rotation pass `.previous_secret(old)`.
 `WebhookEvent` is `Payment` / `Payout` / `Wallet` / `Conversion` (generated `*Webhook` models) or
 `Other(Value)` — `#[non_exhaustive]`, match with a `_` arm. A verified body that cannot be read is
@@ -96,8 +98,8 @@ the public method names.
 
 ## Environment
 
-Six variables, all optional: `OBLODAI_PUBLIC_ID`, `OBLODAI_SECRET`, `OBLODAI_BASE_URL`,
-`OBLODAI_ADMIN_TOKEN`, `OBLODAI_ALLOW_INSECURE`, `OBLODAI_LOG`. `Client::from_env()` builds even
+Five variables, all optional: `OBLODAI_PUBLIC_ID`, `OBLODAI_SECRET`, `OBLODAI_BASE_URL`,
+`OBLODAI_ALLOW_INSECURE`, `OBLODAI_LOG` (`OBLODAI_ADMIN_TOKEN` is ignored). `Client::from_env()` builds even
 with none of them set and fails on the first signed call with `sdk.missing_credentials`.
 
 Secrets never print: sensitive-looking log fields are `[redacted]` before they reach any logger,

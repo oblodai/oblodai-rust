@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
-use super::clock::{Clock, SkewCorrectingClock, SystemClock};
+use super::clock::{Clock, SkewCorrectingClock, SystemClock, MAX_CLOCK_CORRECTION_SECONDS};
 use super::envelope::decode_envelope;
 use super::hooks::{Hooks, RequestInfo, ResponseInfo};
 use super::idempotency::{assert_idempotency_key, new_idempotency_key};
@@ -63,7 +63,7 @@ pub struct CallOptions {
     /// Ruling 10: the route takes the key as the body field `idempotency_key`, not as a header.
     pub idempotency_key_in_body: bool,
     /// Extra headers for this call only. They are merged over the client-wide ones; names the SDK
-    /// owns (signing, `Accept`, `Content-Type`, `User-Agent`, `X-Admin-Token`) still win.
+    /// owns (signing, `Accept`, `Content-Type`, `User-Agent`, `X-Admin-Token`) are dropped.
     pub headers: Vec<(String, String)>,
     /// Per-attempt timeout.
     pub timeout: Option<Duration>,
@@ -92,10 +92,10 @@ pub struct CallState {
     /// Offset that was applied when the current attempt was signed. Compared against a freshly
     /// measured one, so a concurrent correction by another call is not mistaken for drift.
     signed_offset: i64,
-    /// Offset in force before this call corrected the clock, and the one it installed — a revert
-    /// only happens when the shared offset is still the installed one.
-    skew_before: i64,
-    skew_installed: i64,
+    /// Offset measured from a signature-failure `Date`, used for this call's re-signed attempt
+    /// only. It becomes the shared clock offset once that attempt succeeds (2xx) and is discarded
+    /// otherwise: a single answer must never move the signing clock on its own.
+    pending_offset: Option<i64>,
     deadline_at: Instant,
     pub attempt_timeout: Duration,
     /// The attempt in flight, as the hooks see it (only kept when a hook is installed).
@@ -169,7 +169,6 @@ pub struct Core {
     pub retry: RetryOptions,
     pub logger: Arc<dyn Logger>,
     pub headers: Vec<(String, String)>,
-    pub admin_token: Option<String>,
     pub user_agent: String,
     pub clock: Arc<SkewCorrectingClock>,
     pub hooks: Hooks,
@@ -198,7 +197,6 @@ impl Core {
             retry: RetryOptions::default(),
             logger: Arc::new(NoopLogger),
             headers: Vec::new(),
-            admin_token: None,
             user_agent,
             clock: Arc::new(SkewCorrectingClock::new(
                 Arc::new(SystemClock) as Arc<dyn Clock>
@@ -209,6 +207,9 @@ impl Core {
 
     /// Validate the call, choose the idempotency key and the request id, start the deadline.
     pub fn prepare(&self, route: &'static RouteSpec, opts: CallOptions) -> Result<CallState> {
+        if route.auth == super::route::RouteAuth::Onboard {
+            return Err(super::request::operator_channel_unsupported(route));
+        }
         let mut body = opts.body;
         let mut key = opts.idempotency_key;
         if opts.idempotency_key_in_body {
@@ -237,6 +238,18 @@ impl Core {
             super::money::reject_float_amounts(b, "")?;
         }
         let body = serialize_body(body.as_ref(), route.method);
+        let max_body = crate::generated::signing::MAX_BODY;
+        if body.len() > max_body {
+            // The core refuses it anyway (413); refusing here keeps a huge body off the wire.
+            return Err(Error::config(
+                "sdk.body_too_large",
+                format!(
+                    "the request body is {} bytes; the gateway accepts at most {max_body}",
+                    body.len()
+                ),
+                Some("body"),
+            ));
+        }
         if let Some(k) = &key {
             assert_idempotency_key(k)?;
             if !route.idempotent {
@@ -286,8 +299,7 @@ impl Core {
             attempt: 0,
             skew_tried: false,
             signed_offset: 0,
-            skew_before: 0,
-            skew_installed: 0,
+            pending_offset: None,
             deadline_at: Instant::now() + opts.deadline.unwrap_or(self.deadline),
             attempt_timeout: opts.timeout.unwrap_or(self.timeout),
             attempt_info: None,
@@ -299,7 +311,8 @@ impl Core {
     pub fn build(&self, st: &mut CallState) -> Result<BuiltRequest> {
         // Read the shared offset once and remember it: what this attempt was signed with is what a
         // measured offset has to be compared against, not whatever another call installed since.
-        let signed_offset = self.clock.offset();
+        // A measured-but-unconfirmed offset applies to the re-signed attempt of this call only.
+        let signed_offset = st.pending_offset.unwrap_or_else(|| self.clock.offset());
         st.signed_offset = signed_offset;
         let req = build_request(BuildInput {
             base_url: &self.base_url,
@@ -311,7 +324,6 @@ impl Core {
             idempotency_key: st.idempotency_key.as_deref(),
             ts: self.clock.raw_now() + signed_offset,
             user_agent: &self.user_agent,
-            admin_token: self.admin_token.as_deref(),
             extra_headers: &st.headers,
             request_id: &st.request_id,
         })?;
@@ -360,7 +372,13 @@ impl Core {
 
     /// Decide what to do with an answer.
     pub fn on_response(&self, st: &mut CallState, raw: RawResponse) -> Result<Step> {
+        // A measured offset is adopted only when the attempt signed with it went through; any
+        // other answer discards it.
+        let pending = st.pending_offset.take();
         if (200..300).contains(&raw.status) {
+            if let Some(offset) = pending {
+                self.clock.correct(offset);
+            }
             self.emit_response(st, raw.status, &raw.headers, None);
             return Ok(Step::Return(raw));
         }
@@ -382,37 +400,34 @@ impl Core {
             ],
         );
 
-        // Clock skew: the core rejected the timestamp/MAC. Learn its time from the `Date` header,
-        // re-sign once, and keep the offset only if that attempt got past authentication.
+        // Clock skew: the core rejected the timestamp/MAC. Learn its time from the `Date` header
+        // (at most MAX_CLOCK_CORRECTION_SECONDS away) and re-sign once with it; the offset is
+        // adopted for every call only if that attempt succeeds.
         if raw.status == 401
+            && !st.skew_tried
             && SIGNATURE_FAILURE_CODES
                 .iter()
                 .any(|c| c.as_str() == failure.code())
         {
-            if !st.skew_tried {
-                if let Some(offset) = self.clock.observe_server_date(raw.header("date")) {
-                    // Against the offset THIS attempt was signed with: another call may already
-                    // have installed the very correction we are about to make.
-                    if (offset - st.signed_offset).abs() > SIGNATURE_SKEW_SECONDS / 2 {
-                        self.log(
-                            LogLevel::Warn,
-                            "clock skew detected; re-signing with server time",
-                            &[
-                                ("route", st.route.operation_id.to_string()),
-                                ("offset_sec", offset.to_string()),
-                            ],
-                        );
-                        st.skew_tried = true;
-                        st.skew_before = st.signed_offset;
-                        st.skew_installed = offset;
-                        self.clock.correct(offset);
-                        return Ok(Step::Resign);
-                    }
+            if let Some(offset) = self.clock.observe_server_date(raw.header("date")) {
+                // Against the offset THIS attempt was signed with: another call may already
+                // have installed the very correction we are about to make.
+                let delta = offset - st.signed_offset;
+                if delta.abs() > SIGNATURE_SKEW_SECONDS / 2
+                    && delta.abs() <= MAX_CLOCK_CORRECTION_SECONDS
+                {
+                    self.log(
+                        LogLevel::Warn,
+                        "clock skew detected; re-signing with server time",
+                        &[
+                            ("route", st.route.operation_id.to_string()),
+                            ("offset_sec", offset.to_string()),
+                        ],
+                    );
+                    st.skew_tried = true;
+                    st.pending_offset = Some(offset);
+                    return Ok(Step::Resign);
                 }
-            } else {
-                // The corrected timestamp did not help: it was not skew. Roll back only if the
-                // shared offset is still the one this call installed.
-                self.clock.revert(st.skew_installed, st.skew_before);
             }
         }
         self.decide_retry(st, failure)

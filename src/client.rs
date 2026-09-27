@@ -42,7 +42,7 @@ impl Client {
     }
 
     /// A client configured entirely from `OBLODAI_PUBLIC_ID`, `OBLODAI_SECRET`,
-    /// `OBLODAI_BASE_URL`, `OBLODAI_ADMIN_TOKEN`, `OBLODAI_LOG` and `OBLODAI_ALLOW_INSECURE`.
+    /// `OBLODAI_BASE_URL`, `OBLODAI_LOG` and `OBLODAI_ALLOW_INSECURE`.
     pub fn from_env() -> Result<Self> {
         ClientBuilder::new().build()
     }

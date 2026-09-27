@@ -6,6 +6,44 @@ All notable changes to this crate are recorded here. The format follows
 
 ## Unreleased
 
+### Security
+
+- **The raw admin token is never sent.** `sandbox().onboard_store` (and any operator-only route)
+  now fails with `sdk.operator_channel_unsupported` (a config error: "operator channel is not
+  supported by the SDK; use the dashboard") before any network call — the gateway accepts it only
+  over the operator signing channel, which the SDK does not implement. `ClientBuilder::admin_token`
+  is deprecated and ignored, `OBLODAI_ADMIN_TOKEN` is ignored; setting either logs a one-time
+  warning. `Core::admin_token` and `BuildInput::admin_token` are removed.
+- **Webhooks: dedupe and rehearsal come from the signed body only.** `WebhookDeliveryInfo` gains
+  `event_key` (`type:id:sequence` from the signed body; also `webhooks::event_key(&event)`), and
+  `is_test` now reads only the body's `test` flag. The unsigned `X-Webhook-*` headers moved to
+  `unverified_delivery_id`, `unverified_event_id`, `unverified_event_type`,
+  `unverified_event_time` and `unverified_test_header` (breaking: `id`, `event_id`, `event_type`
+  and `event_time` are gone). Docs and the receiver example dedupe on `event_key` and always ignore
+  test deliveries.
+- **Clock correction is bounded and confirmed.** A signature-failure `Date` more than ±900 s away
+  is ignored, and a measured offset is adopted for later calls only after the re-signed attempt
+  succeeds (2xx); otherwise it is discarded. `MAX_PLAUSIBLE_OFFSET_SECONDS` (24 h) is deprecated in
+  favour of `MAX_CLOCK_CORRECTION_SECONDS` (900).
+- **Redaction.** `VerifyOptions`, `HttpRequest` and `BuiltRequest` print no secret through `Debug`
+  (webhook secrets, signature/admin/proxy headers, bodies, claim tokens). Hook `RequestInfo::url`,
+  redirect and network error messages hide `/v1/claim/{token}`, `/v1/aml/{token}`, signed-link
+  query parameters (`sig`, `exp`, `token`) and URL userinfo; hook headers hide every
+  secret-bearing header (`Authorization`, `X-Api-Key`, `X-Claim-Passcode`, …). Model `Debug`
+  redacts `device_code` and signed links in URL fields (`document_url`).
+- **Base URL.** Credentials in the base URL (`user:pass@`) are refused, and plain `http` now needs
+  `allow_insecure_base_url(true)` / `OBLODAI_ALLOW_INSECURE=1` for loopback too.
+- **Request size.** A body over the contract's `MAX_BODY` is refused (`sdk.body_too_large`) before
+  it is sent.
+- **Files.** `FileResult::filename` is a bare base name (no directories or control characters,
+  never `.`/`..`). `FileResult::write_to` no longer overwrites an existing file and creates it
+  with 0600; `write_to_replacing` replaces explicitly.
+- **Pagination** stops only on an empty page or once the offset reaches `paginate.total`.
+- **CI/release** no longer check out the private backend: the conformance suite runs against a
+  vendored snapshot in `contract/` (`scripts/vendor_contract.sh`, checked by `make ci`), third-party
+  actions are pinned to commit SHAs, and no backend code runs in the job that holds the crates.io
+  token. `.env*` is git-ignored.
+
 ### Added
 
 - `client.cli_login()` — `start`, `poll`, `logout`: the browser login of the `oblodai` CLI

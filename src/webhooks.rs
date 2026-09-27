@@ -10,16 +10,23 @@
 //!   overlap.
 //! - [`HEADER_WEBHOOK_EVENT`] — the event name, one of [`WEBHOOK_EVENTS`] (invoice.paid, …).
 //! - [`HEADER_WEBHOOK_ID`] — the delivery: identical across its retries; a resend gets a new one.
-//! - [`HEADER_WEBHOOK_EVENT_ID`] — the state: identical across retries AND resends; your dedup key.
-//! - [`HEADER_WEBHOOK_EVENT_TIME`] — unix seconds the state change committed at (order by it).
-//! - [`HEADER_WEBHOOK_TEST`] — `"true"` on a rehearsal delivery; the body carries `test: true`.
+//! - [`HEADER_WEBHOOK_EVENT_ID`] — the state: identical across retries AND resends.
+//! - [`HEADER_WEBHOOK_EVENT_TIME`] — unix seconds the state change committed at.
+//! - [`HEADER_WEBHOOK_TEST`] — `"true"` on a rehearsal delivery.
+//!
+//! The signature covers only the timestamp and the body. The event, id, event-id, event-time and
+//! test headers are **not signed**: anyone replaying a captured delivery can change them. They are
+//! exposed only as `unverified_*` fields of [`WebhookDeliveryInfo`]. Deduplicate on
+//! [`WebhookDeliveryInfo::event_key`] (`type:id:sequence` from the signed body) and read the
+//! rehearsal flag from the signed body ([`WebhookDeliveryInfo::is_test`]).
 //!
 //! The event names, their kinds (the body's `type`) and the models of the kinds come from the
 //! contract: [`WebhookEvent`], [`KNOWN_EVENT_KINDS`] and [`WEBHOOK_EVENTS`] are generated
 //! (`crate::generated::webhooks`).
 //!
-//! A rehearsal delivery (`webhooks.test`, sandbox) is signed exactly like a live one. Check
-//! [`WebhookDeliveryInfo::is_test`] (or [`is_test_event`]) and never act on one as if money moved.
+//! A rehearsal delivery (`webhooks.test`, sandbox) is signed exactly like a live one. Always check
+//! [`WebhookDeliveryInfo::is_test`] (or [`is_test_event`]) and acknowledge a test delivery without
+//! acting on it: no money moved.
 //!
 //! Always verify over the **raw** request bytes; a re-serialized parse will not match.
 //!
@@ -107,8 +114,8 @@ impl<K: Into<String>, V: Into<String>> FromIterator<(K, V)> for Headers {
     }
 }
 
-/// How to verify a delivery.
-#[derive(Clone, Debug)]
+/// How to verify a delivery. Its `Debug` output redacts both secrets.
+#[derive(Clone)]
 pub struct VerifyOptions {
     /// The endpoint secret from `webhooks().register()` / `rotate_secret()`.
     pub secret: String,
@@ -121,6 +128,20 @@ pub struct VerifyOptions {
     pub tolerance_seconds: i64,
     /// Current unix time; override in tests.
     pub now: Option<i64>,
+}
+
+impl std::fmt::Debug for VerifyOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VerifyOptions")
+            .field("secret", &"[redacted]")
+            .field(
+                "previous_secret",
+                &self.previous_secret.as_ref().map(|_| "[redacted]"),
+            )
+            .field("tolerance_seconds", &self.tolerance_seconds)
+            .field("now", &self.now)
+            .finish()
+    }
 }
 
 impl VerifyOptions {
@@ -153,7 +174,11 @@ impl VerifyOptions {
     }
 }
 
-/// A verified delivery: the event plus the advisory headers worth keeping.
+/// A verified delivery: the event, its signed dedupe key, and the delivery headers.
+///
+/// Only `event`, `event_key`, `is_test` and `sent_at` are covered by the signature. The
+/// `unverified_*` fields are copied from headers the gateway does not sign: use them for logging
+/// and correlation, never for deduplication or for deciding whether money moved.
 ///
 /// `#[non_exhaustive]`: the gateway can add a delivery header without that being a breaking change
 /// here. Read the fields; do not construct one.
@@ -161,22 +186,47 @@ impl VerifyOptions {
 #[non_exhaustive]
 pub struct WebhookDeliveryInfo {
     pub event: WebhookEvent,
-    /// [`HEADER_WEBHOOK_ID`] — the delivery: identical across its retries, but a resend
-    /// (`webhooks().resend_payment()`, a sandbox replay) is a new delivery with a new id.
-    pub id: Option<String>,
-    /// [`HEADER_WEBHOOK_EVENT_ID`] — the state the delivery carries: identical for the original,
-    /// every retry and every resend of the same state, different once the state changes.
-    /// Deduplicate on it.
-    pub event_id: Option<String>,
-    /// [`HEADER_WEBHOOK_EVENT`] — the event name, one of [`WEBHOOK_EVENTS`].
-    pub event_type: Option<String>,
-    /// [`HEADER_WEBHOOK_EVENT_TIME`] — unix seconds when the state change committed.
-    pub event_time: Option<i64>,
-    /// [`HEADER_WEBHOOK_TIMESTAMP`] — unix seconds when this attempt was sent.
+    /// The dedupe key, from the signed body only: `type:id:sequence` (see [`event_key`]).
+    /// Identical for every retry and resend of one state, different once the state changes.
+    pub event_key: String,
+    /// [`HEADER_WEBHOOK_ID`], **not signed** — the delivery id.
+    pub unverified_delivery_id: Option<String>,
+    /// [`HEADER_WEBHOOK_EVENT_ID`], **not signed** — the state id the gateway names the delivery
+    /// with. Deduplicate on [`event_key`](Self::event_key) instead.
+    pub unverified_event_id: Option<String>,
+    /// [`HEADER_WEBHOOK_EVENT`], **not signed** — the event name.
+    pub unverified_event_type: Option<String>,
+    /// [`HEADER_WEBHOOK_EVENT_TIME`], **not signed** — unix seconds of the state change.
+    pub unverified_event_time: Option<i64>,
+    /// [`HEADER_WEBHOOK_TEST`] was `true`, **not signed**. Never decide on it: read
+    /// [`is_test`](Self::is_test).
+    pub unverified_test_header: bool,
+    /// [`HEADER_WEBHOOK_TIMESTAMP`] — unix seconds when this attempt was sent (signed).
     pub sent_at: i64,
-    /// A rehearsal delivery ([`HEADER_WEBHOOK_TEST`] `true` / body `test: true`): signed like a
-    /// live one, but no money moved.
+    /// A rehearsal delivery: `test: true` in the signed body. Signed like a live one, but no money
+    /// moved — acknowledge it and do nothing.
     pub is_test: bool,
+}
+
+/// The dedupe key of a verified event, from its signed body only: `type + ":" + id + ":" +
+/// sequence`. The same concept as `event_key` in every Oblodai SDK.
+pub fn event_key(event: &WebhookEvent) -> String {
+    let (kind, id) = match event {
+        WebhookEvent::Other(v) => (
+            event.event_kind().to_string(),
+            ["id", "uuid"]
+                .iter()
+                .find_map(|k| v.get(*k).and_then(serde_json::Value::as_str))
+                .unwrap_or_default()
+                .to_string(),
+        ),
+        _ => (
+            event.event_kind().to_string(),
+            event.object_id().to_string(),
+        ),
+    };
+    let sequence = event.sequence().map(|s| s.to_string()).unwrap_or_default();
+    format!("{kind}:{id}:{sequence}")
 }
 
 /// Verify the signature and freshness, then parse. Never returns an unverified body.
@@ -188,7 +238,8 @@ pub fn verify_webhook(
     Ok(verify_webhook_delivery(raw_body, headers, options)?.event)
 }
 
-/// Like [`verify_webhook`], and also returns the delivery and event ids, event type and times.
+/// Like [`verify_webhook`], and also returns the signed dedupe key and the (unsigned) delivery
+/// headers.
 pub fn verify_webhook_delivery(
     raw_body: &[u8],
     headers: &Headers,
@@ -262,12 +313,16 @@ pub fn verify_webhook_delivery(
 
     let event = parse_webhook(raw_body)?;
     Ok(WebhookDeliveryInfo {
-        is_test: headers.get(HEADER_WEBHOOK_TEST).map(str::trim) == Some("true") || event.is_test(),
+        // From the signed body only: the test header is not covered by the MAC, and trusting it
+        // would let a replayer turn a live payment into an ignored "rehearsal".
+        is_test: event.is_test(),
+        event_key: event_key(&event),
         event,
-        id: headers.get(HEADER_WEBHOOK_ID).map(str::to_string),
-        event_id: headers.get(HEADER_WEBHOOK_EVENT_ID).map(str::to_string),
-        event_type: headers.get(HEADER_WEBHOOK_EVENT).map(str::to_string),
-        event_time: headers
+        unverified_test_header: headers.get(HEADER_WEBHOOK_TEST).map(str::trim) == Some("true"),
+        unverified_delivery_id: headers.get(HEADER_WEBHOOK_ID).map(str::to_string),
+        unverified_event_id: headers.get(HEADER_WEBHOOK_EVENT_ID).map(str::to_string),
+        unverified_event_type: headers.get(HEADER_WEBHOOK_EVENT).map(str::to_string),
+        unverified_event_time: headers
             .get(HEADER_WEBHOOK_EVENT_TIME)
             .and_then(|v| v.trim().parse().ok()),
         sent_at: ts,

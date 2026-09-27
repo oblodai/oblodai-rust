@@ -12,6 +12,9 @@ export CARGO_TERM_COLOR="${CARGO_TERM_COLOR:-never}"
 echo "== generated code drift"
 ./scripts/check_generated.sh
 
+echo "== vendored contract snapshot (contract/, what CI runs the conformance suite against)"
+./scripts/vendor_contract.sh --check
+
 echo "== format"
 cargo fmt --all --check
 

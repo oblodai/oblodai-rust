@@ -41,16 +41,13 @@ pub struct BuildInput<'a> {
     /// Unix seconds; signed into [`HEADER_TIMESTAMP`].
     pub ts: i64,
     pub user_agent: &'a str,
-    /// Admin token of a self-hosted gateway. Sent on `onboard` routes and nowhere else, whatever
-    /// the caller configured.
-    pub admin_token: Option<&'a str>,
     pub extra_headers: &'a [(String, String)],
     /// `X-Request-ID` of the call, sent on every attempt.
     pub request_id: &'a str,
 }
 
-/// The request as it will go on the wire.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// The request as it will go on the wire. Its `Debug` output redacts secrets.
+#[derive(Clone, PartialEq, Eq)]
 pub struct BuiltRequest {
     pub url: String,
     pub method: &'static str,
@@ -60,10 +57,30 @@ pub struct BuiltRequest {
     pub request_uri: String,
 }
 
+impl std::fmt::Debug for BuiltRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BuiltRequest")
+            .field("url", &super::logger::redact_url(&self.url, None))
+            .field("method", &self.method)
+            .field("headers", &super::hooks::redact_headers(&self.headers))
+            .field(
+                "body",
+                &self.body.as_ref().map(|b| format!("[{} bytes]", b.len())),
+            )
+            .field(
+                "request_uri",
+                &super::logger::redact_url(&format!("http://x{}", self.request_uri), None)
+                    .trim_start_matches("http://x")
+                    .to_string(),
+            )
+            .finish()
+    }
+}
+
 /// Headers the SDK owns; a caller-supplied header with one of these names is dropped, compared
 /// case-insensitively. `Accept`, `User-Agent` and `X-Admin-Token` are here too: `reqwest` (like
-/// most clients) *appends* headers, so leaving them out put two `Accept` lines on the wire and let
-/// a caller header shadow the configured admin token.
+/// most clients) *appends* headers, so leaving them out put two `Accept` lines on the wire; and the
+/// SDK never sends a raw admin token, not even one a caller put in its own headers.
 /// The header naming one call (the same on every attempt), for matching the merchant's logs with
 /// the gateway's.
 pub const HEADER_REQUEST_ID: &str = "X-Request-ID";
@@ -167,9 +184,9 @@ pub fn build_request(input: BuildInput<'_>) -> Result<BuiltRequest> {
         headers.push((HEADER_IDEMPOTENCY_KEY.into(), key.into()));
     }
     if route.auth == RouteAuth::Onboard {
-        if let Some(token) = input.admin_token {
-            headers.push((HEADER_ADMIN_TOKEN.into(), token.into()));
-        }
+        // Ruling R4: the core accepts only the operator HMAC channel here, which the SDK does not
+        // implement; a raw admin token is never sent.
+        return Err(operator_channel_unsupported(route));
     }
 
     if route.auth == RouteAuth::Key {
@@ -210,6 +227,18 @@ pub fn build_request(input: BuildInput<'_>) -> Result<BuiltRequest> {
         },
         request_uri,
     })
+}
+
+/// The error for an operator-only (`onboard`) route: refused before any network call.
+pub fn operator_channel_unsupported(route: &RouteSpec) -> Error {
+    Error::config(
+        "sdk.operator_channel_unsupported",
+        format!(
+            "{} {}: operator channel is not supported by the SDK; use the dashboard",
+            route.method, route.path
+        ),
+        None,
+    )
 }
 
 /// Append a route path to the base URL, keeping any path prefix the base carries

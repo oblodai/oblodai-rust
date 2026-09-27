@@ -4,7 +4,9 @@
 //! ±[`SIGNATURE_SKEW_SECONDS`](super::signing::SIGNATURE_SKEW_SECONDS) from its own time; a host
 //! with a drifting clock would get `merchant.bad_signature` on every call. The transport learns
 //! the server's time from the `Date` header of a signature-failure response, re-signs once, and
-//! keeps the offset only if that re-signed attempt got past authentication.
+//! adopts the offset only if that re-signed attempt succeeded (2xx). Offsets beyond
+//! ±[`MAX_CLOCK_CORRECTION_SECONDS`] are never adopted: a hostile or broken responder could
+//! otherwise push every later signature hours into the future (delayed replay).
 
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
@@ -26,8 +28,13 @@ impl Clock for SystemClock {
     }
 }
 
-/// Offsets beyond this are implausible clock drift and are ignored (a broken proxy `Date`).
-pub const MAX_PLAUSIBLE_OFFSET_SECONDS: i64 = 24 * 3600;
+/// The largest correction the SDK ever applies, in seconds (15 minutes): an offset beyond it, or a
+/// move of the offset beyond it, is ignored (a broken proxy `Date`, or a hostile responder).
+pub const MAX_CLOCK_CORRECTION_SECONDS: i64 = 900;
+
+/// Kept for compatibility; equal to [`MAX_CLOCK_CORRECTION_SECONDS`].
+#[deprecated(note = "use MAX_CLOCK_CORRECTION_SECONDS")]
+pub const MAX_PLAUSIBLE_OFFSET_SECONDS: i64 = MAX_CLOCK_CORRECTION_SECONDS;
 
 /// A clock that can be nudged onto the server's time.
 pub struct SkewCorrectingClock {
@@ -58,8 +65,12 @@ impl SkewCorrectingClock {
         self.offset.load(Ordering::SeqCst)
     }
 
-    /// Install an offset for every call from now on.
+    /// Install an offset for every call from now on. Offsets beyond
+    /// ±[`MAX_CLOCK_CORRECTION_SECONDS`] are ignored.
     pub fn correct(&self, offset: i64) {
+        if offset.abs() > MAX_CLOCK_CORRECTION_SECONDS {
+            return;
+        }
         self.offset.store(offset, Ordering::SeqCst);
     }
 
@@ -79,7 +90,7 @@ impl SkewCorrectingClock {
     pub fn observe_server_date(&self, date_header: Option<&str>) -> Option<i64> {
         let server = parse_http_date(date_header?)?;
         let offset = server - self.base.now();
-        if offset.abs() > MAX_PLAUSIBLE_OFFSET_SECONDS {
+        if offset.abs() > MAX_CLOCK_CORRECTION_SECONDS {
             return None;
         }
         Some(offset)

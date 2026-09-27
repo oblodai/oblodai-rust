@@ -41,8 +41,8 @@
 //!   retries, so a timeout can never produce a second payout.
 //! - **Names every call** with an `X-Request-ID` (yours, or a fresh UUID), the same on every
 //!   attempt; errors print it: `[payout.insufficient_funds] … (request_id=…)`.
-//! - **Corrects clock skew** once, from the server's `Date` header, and reverts the correction if
-//!   it did not help.
+//! - **Corrects clock skew** once, from the server's `Date` header (at most ±15 minutes), and keeps
+//!   the correction only if the re-signed attempt succeeded.
 //! - **Follows long-running operations**: [`Request::job`] and [`Job::wait`] (see [`lro`]).
 //! - **Verifies webhooks** without a client: see [`webhooks`].
 //!
@@ -120,7 +120,7 @@ pub use resources::{
     from_json, FileResult, ItemStream, PageStream, Pager, RawApiResponse, Request, WithRawResponse,
 };
 pub use webhooks::{
-    is_known_event, is_stale_event, is_test_event, parse_webhook, verify_webhook,
+    event_key, is_known_event, is_stale_event, is_test_event, parse_webhook, verify_webhook,
     verify_webhook_delivery, VerifyOptions, WebhookDeliveryInfo, WebhookEvent,
 };
 

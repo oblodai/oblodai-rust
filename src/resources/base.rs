@@ -250,14 +250,41 @@ impl<T: DeserializeOwned> Decode for T {
 pub struct FileResult {
     pub bytes: Vec<u8>,
     pub content_type: String,
-    /// From `Content-Disposition`, when the gateway named the file.
+    /// From `Content-Disposition`, when the gateway named the file: a bare file name only (no
+    /// directories, no control characters, never `.` or `..`), safe to join onto a directory.
     pub filename: Option<String>,
 }
 
 impl FileResult {
-    /// Save the document.
+    /// Save the document to a NEW file, readable by the owner only (0600 on Unix). An existing file
+    /// is never overwritten: that is an `AlreadyExists` error. See
+    /// [`write_to_replacing`](Self::write_to_replacing).
     pub fn write_to(&self, path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
-        std::fs::write(path, &self.bytes)
+        self.write(path.as_ref(), false)
+    }
+
+    /// Save the document, replacing a file already at `path`; created with 0600 on Unix.
+    pub fn write_to_replacing(&self, path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
+        self.write(path.as_ref(), true)
+    }
+
+    fn write(&self, path: &std::path::Path, replace: bool) -> std::io::Result<()> {
+        use std::io::Write;
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true);
+        if replace {
+            options.create(true).truncate(true);
+        } else {
+            options.create_new(true);
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(path)?;
+        file.write_all(&self.bytes)?;
+        file.sync_all()
     }
 }
 
@@ -272,8 +299,25 @@ impl Decode for FileResult {
     }
 }
 
-/// `filename*=UTF-8''…` wins over `filename="…"`, as RFC 6266 asks.
+/// `filename*=UTF-8''…` wins over `filename="…"`, as RFC 6266 asks. The result is reduced to a
+/// safe base name ([`safe_filename`]).
 pub(crate) fn filename_from(disposition: Option<&str>) -> Option<String> {
+    raw_filename_from(disposition).and_then(|name| safe_filename(&name))
+}
+
+/// The last path component, with control characters dropped; `None` for an empty name, `.` or
+/// `..`. A hostile `Content-Disposition` cannot steer a save outside the caller's directory.
+pub(crate) fn safe_filename(name: &str) -> Option<String> {
+    let base = name.rsplit(['/', '\\']).next().unwrap_or_default();
+    let clean: String = base.chars().filter(|c| !c.is_control()).collect();
+    let clean = clean.trim().to_string();
+    if clean.is_empty() || clean == "." || clean == ".." {
+        return None;
+    }
+    Some(clean)
+}
+
+fn raw_filename_from(disposition: Option<&str>) -> Option<String> {
     let value = disposition?;
     let lower = value.to_ascii_lowercase();
     if let Some(i) = lower.find("filename*=utf-8''") {
@@ -478,9 +522,8 @@ impl<T: Decode> WithRawResponse<crate::core::transport::BlockingTransport, T> {
 /// A lazy walk over a paged list route (`{items, paginate}`).
 ///
 /// Nothing is requested until it is awaited (the first page), streamed (every item), walked page
-/// by page ([`by_page`](Self::by_page)) or collected ([`all`](Self::all)). `paginate.has_pages` is
-/// the server's own "there is more" flag, and a walk stops on it (or on an empty page); a *short*
-/// page does not end it.
+/// by page ([`by_page`](Self::by_page)) or collected ([`all`](Self::all)). A walk stops on an empty
+/// page or once the offset reaches `paginate.total`; a *short* page does not end it.
 ///
 /// ```no_run
 /// # async fn demo(client: &oblodai::Client) -> oblodai::Result<()> {
@@ -609,7 +652,9 @@ impl<Tr, T> Pager<Tr, T> {
     fn advance(&mut self, page: &Page<T>) {
         let got = page.items.len() as i64;
         self.offset += got;
-        if got == 0 || !page.paginate.has_pages {
+        // Ruling R11: only an empty page or reaching `total` ends the walk — not a short page,
+        // and not the `has_pages` flag alone.
+        if got == 0 || self.offset >= page.paginate.total {
             self.finished = true;
         }
     }

@@ -65,28 +65,28 @@ fn explicit_options_win_over_the_environment() {
     );
 }
 
+/// Ruling R8: plain http is refused everywhere, loopback included, unless allow-insecure is set.
 #[test]
-fn refuses_plain_http_except_for_loopback_or_when_allowed() {
-    let err = builder()
-        .base_url("http://api.oblodai.com")
-        .env(empty_env())
-        .build()
-        .unwrap_err();
-    assert_eq!(err.code(), "sdk.bad_config");
-    assert!(err.message().contains("https"));
-
-    for local in [
+fn refuses_plain_http_unless_explicitly_allowed() {
+    for url in [
+        "http://api.oblodai.com",
         "http://localhost:8095",
         "http://127.0.0.1:8095",
         "http://[::1]:8095",
     ] {
-        builder()
-            .base_url(local)
+        let err = builder()
+            .base_url(url)
             .env(empty_env())
             .build()
-            .unwrap_or_else(|e| {
-                panic!("{local} should be allowed: {e}");
-            });
+            .unwrap_err();
+        assert_eq!(err.code(), "sdk.bad_config", "{url}");
+        assert!(err.message().contains("https"));
+        builder()
+            .base_url(url)
+            .allow_insecure_base_url(true)
+            .env(empty_env())
+            .build()
+            .unwrap_or_else(|e| panic!("{url} should be allowed with the opt-in: {e}"));
     }
     builder()
         .base_url("http://10.0.0.1")
@@ -99,6 +99,24 @@ fn refuses_plain_http_except_for_loopback_or_when_allowed() {
         .env([("OBLODAI_ALLOW_INSECURE", "1")])
         .build()
         .unwrap();
+}
+
+/// Ruling R8: credentials in the base URL are refused, and the error never echoes them.
+#[test]
+fn refuses_userinfo_in_the_base_url() {
+    for url in [
+        "https://user:hunter2@api.oblodai.com",
+        "https://user@api.oblodai.com",
+    ] {
+        let err = builder()
+            .base_url(url)
+            .env(empty_env())
+            .build()
+            .unwrap_err();
+        assert_eq!(err.code(), "sdk.bad_config");
+        assert_eq!(err.field(), Some("base_url"));
+        assert!(!format!("{err} {err:?}").contains("hunter2"));
+    }
 }
 
 #[test]

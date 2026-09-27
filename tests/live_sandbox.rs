@@ -49,7 +49,7 @@ fn anonymous() -> Client {
 }
 
 /// Onboard a merchant (`POST /v1/merchants` — open on a dev stand, not part of the SDK) and take
-/// its sandbox key through the SDK's own `sandbox().onboard_store`.
+/// its sandbox key (`POST /v1/merchants/{id}/sandbox`, open on a dev stand).
 async fn onboard_sandbox() -> Client {
     let body = json!({"email": format!("sdk-live-{}@example.com", stamp()), "name": "SDK live"});
     let answer = reqwest::Client::new()
@@ -67,14 +67,26 @@ async fn onboard_sandbox() -> Client {
         .as_str()
         .unwrap()
         .to_string();
-    let sandbox = anonymous()
-        .sandbox()
-        .onboard_store(merchant_id)
+    // Store onboarding is operator-only and the SDK refuses it (ruling R4); a dev stand opens it.
+    let answer = reqwest::Client::new()
+        .post(format!("{}/v1/merchants/{merchant_id}/sandbox", base_url()))
+        .header("content-type", "application/json")
+        .body("{}")
+        .send()
+        .await
+        .expect("sandbox onboarding is open on a dev stand")
+        .text()
         .await
         .unwrap();
+    let store: Value = serde_json::from_str(&answer).unwrap();
+    let key = &store["result"]["api_key"];
+    let (public_id, secret) = (
+        key["public_id"].as_str().unwrap().to_string(),
+        key["secret"].as_str().unwrap().to_string(),
+    );
     Client::builder()
-        .public_id(sandbox.api_key.public_id)
-        .secret(sandbox.api_key.secret)
+        .public_id(public_id)
+        .secret(secret)
         .base_url(base_url())
         .allow_insecure_base_url(true)
         .env(Vec::<(String, String)>::new())
@@ -398,7 +410,7 @@ async fn live_webhook_delivery_verifies_against_the_endpoint_secret() {
         verify_webhook_delivery(&body, &headers, &VerifyOptions::new(&secret).now(ts)).unwrap();
     assert_eq!(delivery.event.event_kind(), "payment");
     assert_eq!(delivery.event.status(), "paid");
-    assert!(delivery.id.is_some(), "X-Webhook-Id is the dedup key");
+    assert!(!delivery.event_key.is_empty(), "the signed dedupe key");
 
     // The same bytes with the wrong secret must not verify.
     let err =

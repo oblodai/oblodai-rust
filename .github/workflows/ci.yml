@@ -1,26 +1,27 @@
+# Every gate `make ci` runs that needs no backend checkout (the backend repository is private). The
+# shared conformance suite runs against the vendored snapshot in contract/ (refreshed and checked by
+# ./scripts/vendor_contract.sh); the generated-code drift check needs the backend's generator and
+# runs locally (`make ci` with OBLODAI_BACKEND).
 name: CI
 on:
   push:
     branches: [main]
   pull_request:
+permissions:
+  contents: read
 jobs:
   ci:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # v1
         with:
-          repository: oblodai/oblodai-backend
-          path: oblodai-backend
-      - uses: dtolnay/rust-toolchain@1.97.1
-        with:
+          toolchain: 1.97.1
           components: rustfmt, clippy
-      - uses: dtolnay/rust-toolchain@1.86.0
-      - uses: actions/setup-go@v5
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # v1
         with:
-          go-version: '1.26.6'
+          toolchain: 1.86.0
       - name: Every gate
         run: make ci
         env:
-          OBLODAI_BACKEND: ${{ github.workspace }}/oblodai-backend
-          GOTOOLCHAIN: local
+          SDKGEN_CONFORMANCE: ${{ github.workspace }}/contract/tools/sdkgen/conformance
