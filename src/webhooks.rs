@@ -17,8 +17,8 @@
 //! The signature covers only the timestamp and the body. The event, id, event-id, event-time and
 //! test headers are **not signed**: anyone replaying a captured delivery can change them. They are
 //! exposed only as `unverified_*` fields of [`WebhookDeliveryInfo`]. Deduplicate on
-//! [`WebhookDeliveryInfo::event_key`] (`type:id:sequence` from the signed body) and read the
-//! rehearsal flag from the signed body ([`WebhookDeliveryInfo::is_test`]).
+//! [`WebhookDeliveryInfo::event_key`] (the signed body's `event_id`) and read the rehearsal flag
+//! from the signed body ([`WebhookDeliveryInfo::is_test`]).
 //!
 //! The event names, their kinds (the body's `type`) and the models of the kinds come from the
 //! contract: [`WebhookEvent`], [`KNOWN_EVENT_KINDS`] and [`WEBHOOK_EVENTS`] are generated
@@ -186,8 +186,8 @@ impl VerifyOptions {
 #[non_exhaustive]
 pub struct WebhookDeliveryInfo {
     pub event: WebhookEvent,
-    /// The dedupe key, from the signed body only: `type:id:sequence` (see [`event_key`]).
-    /// Identical for every retry and resend of one state, different once the state changes.
+    /// The dedupe key, from the signed body only: its `event_id`, else `type:id:sequence` (see
+    /// [`event_key`]). Identical for every retry and resend of one state.
     pub event_key: String,
     /// [`HEADER_WEBHOOK_ID`], **not signed** — the delivery id.
     pub unverified_delivery_id: Option<String>,
@@ -208,25 +208,33 @@ pub struct WebhookDeliveryInfo {
     pub is_test: bool,
 }
 
-/// The dedupe key of a verified event, from its signed body only: `type + ":" + id + ":" +
-/// sequence`. The same concept as `event_key` in every Oblodai SDK.
+/// The signed body field that carries the id of the object state (the contract's
+/// `x-oblodai-signing.webhook.event_id_field`).
+const EVENT_ID_FIELD: &str = "event_id";
+
+/// The dedupe key of a verified event, from its signed body only: the body's `event_id` (the id of
+/// the object state, the same for every retry and resend of it), else — from a core that does not
+/// sign one yet — `type + ":" + id + ":" + sequence`. The same concept as `event_key` in every
+/// Oblodai SDK.
 pub fn event_key(event: &WebhookEvent) -> String {
-    let (kind, id) = match event {
-        WebhookEvent::Other(v) => (
-            event.event_kind().to_string(),
-            ["id", "uuid"]
-                .iter()
-                .find_map(|k| v.get(*k).and_then(serde_json::Value::as_str))
-                .unwrap_or_default()
-                .to_string(),
-        ),
-        _ => (
-            event.event_kind().to_string(),
-            event.object_id().to_string(),
-        ),
+    let body = serde_json::to_value(event).unwrap_or_default();
+    if let Some(id) = body
+        .get(EVENT_ID_FIELD)
+        .and_then(serde_json::Value::as_str)
+        .filter(|id| !id.is_empty())
+    {
+        return id.to_string();
+    }
+    let id = match event {
+        WebhookEvent::Other(v) => ["id", "uuid"]
+            .iter()
+            .find_map(|k| v.get(*k).and_then(serde_json::Value::as_str))
+            .unwrap_or_default()
+            .to_string(),
+        _ => event.object_id().to_string(),
     };
     let sequence = event.sequence().map(|s| s.to_string()).unwrap_or_default();
-    format!("{kind}:{id}:{sequence}")
+    format!("{}:{id}:{sequence}", event.event_kind())
 }
 
 /// Verify the signature and freshness, then parse. Never returns an unverified body.
@@ -396,6 +404,14 @@ pub fn parse_webhook(raw_body: &[u8]) -> Result<WebhookEvent> {
     if !KNOWN_EVENT_KINDS.contains(&kind.as_str()) {
         // Unknown to this snapshot: hand it over raw so the receiver can 200 it and move on.
         return Ok(WebhookEvent::Other(value));
+    }
+    let mut value = value;
+    if let Some(body) = value.as_object_mut() {
+        // A core that predates the signed state id sends no `event_id`: read such a delivery with an
+        // empty one (and `event_key` falls back to `type:id:sequence`) rather than reject an authentic
+        // delivery as unreadable.
+        body.entry(EVENT_ID_FIELD)
+            .or_insert_with(|| serde_json::Value::String(String::new()));
     }
     serde_json::from_value(value)
         .map_err(|e| Error::bad_payload(format!("delivery body is not a valid {kind} event: {e}")))

@@ -15,12 +15,16 @@ All notable changes to this crate are recorded here. The format follows
   is deprecated and ignored, `OBLODAI_ADMIN_TOKEN` is ignored; setting either logs a one-time
   warning. `Core::admin_token` and `BuildInput::admin_token` are removed.
 - **Webhooks: dedupe and rehearsal come from the signed body only.** `WebhookDeliveryInfo` gains
-  `event_key` (`type:id:sequence` from the signed body; also `webhooks::event_key(&event)`), and
+  `event_key` (the signed body's `event_id`, else `type:id:sequence` from an older core; also
+  `webhooks::event_key(&event)`), and
   `is_test` now reads only the body's `test` flag. The unsigned `X-Webhook-*` headers moved to
   `unverified_delivery_id`, `unverified_event_id`, `unverified_event_type`,
   `unverified_event_time` and `unverified_test_header` (breaking: `id`, `event_id`, `event_type`
   and `event_time` are gone). Docs and the receiver example dedupe on `event_key` and always ignore
   test deliveries.
+- **Webhooks from an older core still verify.** A delivery body without the (now signed) `event_id`
+  is read with an empty one instead of being rejected as `webhook.bad_payload`; `event_key` then
+  falls back to `type:id:sequence`.
 - **Clock correction is bounded and confirmed.** A signature-failure `Date` more than ±900 s away
   is ignored, and a measured offset is adopted for later calls only after the re-signed attempt
   succeeds (2xx); otherwise it is discarded. `MAX_PLAUSIBLE_OFFSET_SECONDS` (24 h) is deprecated in

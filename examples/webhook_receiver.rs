@@ -7,7 +7,7 @@
 //! ```
 //!
 //! 1. Verify over the **raw** request bytes. A re-serialized parse will not match the signature.
-//! 2. Deduplicate on `delivery.event_key` (`type:id:sequence` from the signed body): retries AND
+//! 2. Deduplicate on `delivery.event_key` (the signed body's `event_id`): retries AND
 //!    resends of one state carry the same key. The id headers are not signed; never dedupe on them.
 //! 3. Drop out-of-order events with `is_stale_event` — a retried `paid` can arrive after a refund.
 //! 4. Always ignore a rehearsal (`delivery.is_test`, from the signed body): it is signed like a live

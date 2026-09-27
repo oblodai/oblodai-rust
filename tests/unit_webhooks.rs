@@ -55,9 +55,9 @@ fn verifies_every_recorded_delivery() {
             sample.header(HEADER_WEBHOOK_EVENT_ID)
         );
         assert_eq!(delivery.unverified_event_type.as_deref(), Some(event_name));
-        assert_eq!(
-            delivery.event_key,
-            format!(
+        let want_key = match sample.body["event_id"].as_str() {
+            Some(id) => id.to_string(),
+            None => format!(
                 "{}:{}:{}",
                 sample.body["type"].as_str().unwrap(),
                 sample.body["uuid"].as_str().unwrap(),
@@ -65,8 +65,9 @@ fn verifies_every_recorded_delivery() {
                     .as_i64()
                     .map(|s| s.to_string())
                     .unwrap_or_default()
-            )
-        );
+            ),
+        };
+        assert_eq!(delivery.event_key, want_key);
         assert_eq!(delivery.sent_at, ts);
         assert_eq!(
             delivery.event.event_kind(),
@@ -111,7 +112,12 @@ fn verifies_every_recorded_delivery() {
 fn a_recorded_delivery_re_serialized_still_carries_every_field() {
     for sample in load_webhook_samples() {
         let event: WebhookEvent = parse_webhook(&sample.raw_bytes()).unwrap();
-        let round_tripped = serde_json::to_value(&event).unwrap();
+        let mut round_tripped = serde_json::to_value(&event).unwrap();
+        // These deliveries come from a core that predates the signed `event_id`: it is read as empty.
+        if sample.body.get("event_id").is_none() {
+            let filled = round_tripped.as_object_mut().unwrap().remove("event_id");
+            assert_eq!(filled, Some(serde_json::json!("")));
+        }
         // An optional field that arrived as `null` is absent after the round trip: the models
         // keep "not there" and "null" as one `None`.
         let mut body = sample.body.clone();
@@ -200,6 +206,18 @@ fn the_dedupe_key_comes_from_the_signed_body_not_the_headers() {
     assert_eq!(a.event_key, b.event_key);
     assert_eq!(a.event_key, oblodai::event_key(&a.event));
     assert!(a.event_key.ends_with(":7"), "{}", a.event_key);
+
+    // A core that signs the state id: the body's `event_id` is the key, whatever the headers say.
+    let raw = String::from_utf8(body())
+        .unwrap()
+        .replace("\"sequence\":7", "\"sequence\":7,\"event_id\":\"st-42\"")
+        .into_bytes();
+    let mut headers = Headers::new();
+    headers.insert(HEADER_WEBHOOK_TIMESTAMP, TS.to_string());
+    headers.insert(HEADER_WEBHOOK_SIGNATURE, sign_webhook("whsec", TS, &raw));
+    headers.insert(HEADER_WEBHOOK_EVENT_ID, "e-forged");
+    let delivery = verify_webhook_delivery(&raw, &headers, &options).unwrap();
+    assert_eq!(delivery.event_key, "st-42");
 }
 
 /// Ruling M3: the options' Debug output never prints either webhook secret.

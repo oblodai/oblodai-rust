@@ -447,8 +447,9 @@ match &delivery.event {
 }
 ```
 
-- **Duplicates and order.** Deduplicate on `delivery.event_key` — `type:id:sequence`, taken from the
-  signed body, the same for every retry and every resend of one state. The `X-Webhook-Id`,
+- **Duplicates and order.** Deduplicate on `delivery.event_key` — the signed body's `event_id` (from
+  an older core without it, `type:id:sequence`), the same for every retry and every resend of one
+  state. The `X-Webhook-Id`,
   `X-Webhook-Event-Id`, `X-Webhook-Event` and `X-Webhook-Test` headers are **not signed**: they are
   exposed only as `delivery.unverified_*` and must never decide anything. `event.sequence()`
   orders events; `is_stale_event` drops an out-of-order one.
