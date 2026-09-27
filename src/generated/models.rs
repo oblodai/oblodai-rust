@@ -1338,6 +1338,11 @@ pub struct ConversionWebhook {
     pub document_url: String,
     /// When the event happened, UTC with milliseconds (ISO 8601).
     pub event_at: String,
+    /// The id of the object state this body carries — signed, and the key to deduplicate on: the
+    /// same for every retry and every resend (/v1/payment/resend) of the same state, different as
+    /// soon as the state changes (sequence, by contrast, grows on a resend). Always equal to the
+    /// X-Webhook-Event-Id header, which is not signed — prefer this field.
+    pub event_id: String,
     /// Conversion fee, in percent.
     pub fee_percent: Money,
     /// Source currency.
@@ -1367,7 +1372,8 @@ pub struct ConversionWebhook {
     pub received: Option<Money>,
     /// Present only on a rehearsal (/v1/test-webhook/*, /v1/payment/testing-webhook) and always
     /// true — inside the signature. A live event never carries this field: your handler must ignore
-    /// a body with test: true even if the signature is valid.
+    /// a body with test: true even if the signature is valid. This field, not the unsigned
+    /// X-Webhook-Test header, is what marks a rehearsal.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub test: Option<bool>,
     /// Fields this SDK version does not know yet; sent back as they are.
@@ -1382,6 +1388,7 @@ impl std::fmt::Debug for ConversionWebhook {
         d.field("created_at", &self.created_at);
         d.field("document_url", &self.document_url);
         d.field("event_at", &self.event_at);
+        d.field("event_id", &self.event_id);
         d.field("fee_percent", &self.fee_percent);
         d.field("from", &self.from);
         d.field("id", &self.id);
@@ -3808,6 +3815,11 @@ pub struct PaymentWebhook {
     pub currency: String,
     /// When the event happened, UTC with milliseconds (ISO 8601).
     pub event_at: String,
+    /// The id of the object state this body carries — signed, and the key to deduplicate on: the
+    /// same for every retry and every resend (/v1/payment/resend) of the same state, different as
+    /// soon as the state changes (sequence, by contrast, grows on a resend). Always equal to the
+    /// X-Webhook-Event-Id header, which is not signed — prefer this field.
+    pub event_id: String,
     /// true — the status is final, the payment will not change any further.
     pub is_final: bool,
     /// The network the money arrived on.
@@ -3839,7 +3851,8 @@ pub struct PaymentWebhook {
     pub uuid: String,
     /// Present only on a rehearsal (/v1/test-webhook/*, /v1/payment/testing-webhook) and always
     /// true — inside the signature. A live event never carries this field: your handler must ignore
-    /// a body with test: true even if the signature is valid.
+    /// a body with test: true even if the signature is valid. This field, not the unsigned
+    /// X-Webhook-Test header, is what marks a rehearsal.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub test: Option<bool>,
     /// Fields this SDK version does not know yet; sent back as they are.
@@ -3854,6 +3867,7 @@ impl std::fmt::Debug for PaymentWebhook {
         d.field("amount", &self.amount);
         d.field("currency", &self.currency);
         d.field("event_at", &self.event_at);
+        d.field("event_id", &self.event_id);
         d.field("is_final", &self.is_final);
         d.field("network", &self.network);
         d.field("order_id", &self.order_id);
@@ -5164,6 +5178,11 @@ pub struct PayoutWebhook {
     pub document_url: String,
     /// When the event happened, UTC with milliseconds (ISO 8601).
     pub event_at: String,
+    /// The id of the object state this body carries — signed, and the key to deduplicate on: the
+    /// same for every retry and every resend (/v1/payment/resend) of the same state, different as
+    /// soon as the state changes (sequence, by contrast, grows on a resend). Always equal to the
+    /// X-Webhook-Event-Id header, which is not signed — prefer this field.
+    pub event_id: String,
     /// Who paid the network fee: gateway — the gateway absorbed it (commission = 0); merchant — the
     /// debit amount was increased by the fee, the recipient gets the full requested amount
     /// (is_subtract=true, a payout link with fee_bearer=merchant); recipient — the fee was withheld
@@ -5210,7 +5229,8 @@ pub struct PayoutWebhook {
     pub refund_for: Option<String>,
     /// Present only on a rehearsal (/v1/test-webhook/*, /v1/payment/testing-webhook) and always
     /// true — inside the signature. A live event never carries this field: your handler must ignore
-    /// a body with test: true even if the signature is valid.
+    /// a body with test: true even if the signature is valid. This field, not the unsigned
+    /// X-Webhook-Test header, is what marks a rehearsal.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub test: Option<bool>,
     /// Fields this SDK version does not know yet; sent back as they are.
@@ -5229,6 +5249,7 @@ impl std::fmt::Debug for PayoutWebhook {
         d.field("currency", &self.currency);
         d.field("document_url", &self.document_url);
         d.field("event_at", &self.event_at);
+        d.field("event_id", &self.event_id);
         d.field("fee_bearer", &self.fee_bearer);
         d.field("is_final", &self.is_final);
         d.field("is_refund", &self.is_refund);
@@ -7654,6 +7675,11 @@ pub struct WalletWebhook {
     pub currency: String,
     /// When the event happened, UTC with milliseconds (ISO 8601).
     pub event_at: String,
+    /// The id of the object state this body carries — signed, and the key to deduplicate on: the
+    /// same for every retry and every resend (/v1/payment/resend) of the same state, different as
+    /// soon as the state changes (sequence, by contrast, grows on a resend). Always equal to the
+    /// X-Webhook-Event-Id header, which is not signed — prefer this field.
+    pub event_id: String,
     /// true — the status is final.
     pub is_final: bool,
     /// Blockchain network.
@@ -7677,7 +7703,8 @@ pub struct WalletWebhook {
     pub uuid: String,
     /// Present only on a rehearsal (/v1/test-webhook/*, /v1/payment/testing-webhook) and always
     /// true — inside the signature. A live event never carries this field: your handler must ignore
-    /// a body with test: true even if the signature is valid.
+    /// a body with test: true even if the signature is valid. This field, not the unsigned
+    /// X-Webhook-Test header, is what marks a rehearsal.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub test: Option<bool>,
     /// Fields this SDK version does not know yet; sent back as they are.
@@ -7691,6 +7718,7 @@ impl std::fmt::Debug for WalletWebhook {
         d.field("address", &self.address);
         d.field("currency", &self.currency);
         d.field("event_at", &self.event_at);
+        d.field("event_id", &self.event_id);
         d.field("is_final", &self.is_final);
         d.field("network", &self.network);
         d.field("order_id", &self.order_id);
